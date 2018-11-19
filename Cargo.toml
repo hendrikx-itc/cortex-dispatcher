@@ -1,0 +1,7 @@
+[package]
+name = "cortex"
+version = "0.1.0"
+authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
+
+[dependencies]
+inotify =  "0.6"
