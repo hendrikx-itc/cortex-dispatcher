@@ -1,0 +1,14 @@
+Source: cortex
+Section: misc
+Priority: optional
+Maintainer: Hendrikx ITC <info@hendrikx-itc.nl>
+Build-Depends: debhelper (>= 7)
+Standards-Version: 4.1.3
+Homepage: https://www.hendrikx-itc.nl
+
+Package: cortex
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Data destribution system
+ Cortex can currently monitor directories and publish files placed in those
+ directories to be moved into targets based on a regular expression pattern.
