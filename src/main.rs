@@ -1,9 +1,16 @@
-extern crate inotify;
+//#![cfg(feature = "yaml")]
 
-use std::env;
+extern crate config;
+extern crate inotify;
+extern crate regex;
+extern crate serde_regex;
+
+#[macro_use]
+extern crate serde_derive;
+
 use std::fs;
-use std::convert::AsRef;
 use std::path::Path;
+use std::collections::HashMap;
 
 use inotify::{
     EventMask,
@@ -11,25 +18,50 @@ use inotify::{
     Inotify
 };
 
+use regex::Regex;
+
+#[derive(Debug, Deserialize)]
+struct DataPath {
+    #[serde(with = "serde_regex")]
+    regex: Regex,
+    source_directory: String,
+    target_directory: String
+}
+
+#[derive(Debug, Deserialize)]
+struct Settings {
+    paths: Vec<DataPath>
+}
+
 fn main() {
+    let mut settings = config::Config::new();
+
+    settings.merge(
+        config::File::new("cortex", config::FileFormat::Yaml)
+    ).expect("Could not read config");
+
+    let s: Settings = settings.try_into().unwrap();
+
     let mut inotify = Inotify::init()
         .expect("Failed to initialize inotify");
 
-    let current_dir = env::current_dir()
-        .expect("Failed to determine current directory");
+    let mut watch_mapping = HashMap::new();
 
-    let curr_path: &Path = current_dir.as_path();
+    for path in s.paths {
+        let source_directory_str = path.source_directory.clone();
+        let source_directory = Path::new(&source_directory_str);
 
-    inotify
-        .add_watch(
-            curr_path,
-            WatchMask::CLOSE_WRITE
-        )
-        .expect("Failed to add inotify watch");
+        let watch = inotify
+            .add_watch(
+                source_directory,
+                WatchMask::CLOSE_WRITE
+            )
+            .expect("Failed to add inotify watch");
+
+        watch_mapping.insert(watch, path);
+    }
 
     let mut buffer = [0u8; 4096];
-
-    let target_dir = curr_path.join("target_dir");
 
     loop {
         let events = inotify
@@ -42,11 +74,21 @@ fn main() {
 
                 let name = event.name.expect("Could not decode name");
 
-                let target_path = target_dir.join(name);
+                let data_path = watch_mapping.get(&event.wd).unwrap();
 
-                println!("Move to: {:?}", target_path);
+                if data_path.regex.is_match(name.to_str().unwrap()) {
+                    let source_path = Path::new(&data_path.source_directory).join(name);
+                    let target_path = Path::new(&data_path.target_directory).join(name);
 
-                fs::rename(name, target_path);
+                    println!("Move to: {:?}", target_path);
+
+                    let rename_result = fs::rename(&source_path, &target_path);
+
+                    match rename_result {
+                        Err(e) => println!("Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
+                        Ok(_o) => println!("Successfully moved {:?} -> {:?}", source_path, target_path)
+                    }
+                }
             }
         }
     }

@@ -1,0 +1,4 @@
+paths:
+  - source_directory: ./source_dir
+    target_directory: ./target_dir
+    regex: ".*\\.txt"
