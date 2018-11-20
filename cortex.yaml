@@ -1,4 +1,8 @@
-paths:
-  - source_directory: ./source_dir
-    target_directory: ./target_dir
-    regex: ".*\\.txt"
+sources:
+  - directory: ./source_dir
+    targets:
+      - regex: "^[^\\.].*,MeContext=[^_,]+_statsfile\\.xml$"
+        directory: ./erbs_target
+      - regex: "^[^\\.].*,ManagedElement=[^_,]+_statsfile\\.xml$"
+        directory: ./baseband_target
+
