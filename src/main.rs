@@ -4,6 +4,7 @@ extern crate config;
 extern crate inotify;
 extern crate regex;
 extern crate serde_regex;
+extern crate clap;
 
 #[macro_use]
 extern crate serde_derive;
@@ -19,6 +20,8 @@ use inotify::{
 };
 
 use regex::Regex;
+
+use clap::{Arg, App};
 
 #[derive(Debug, Deserialize)]
 struct DataTarget {
@@ -39,10 +42,22 @@ struct Settings {
 }
 
 fn main() {
+    let matches = App::new("Cortex")
+        .version("1.0")
+        .author("Hendrikx ITC <info@hendrikx-itc.nl>")
+        .arg(Arg::with_name("config")
+             .short("c")
+             .value_name("CONFIG_FILE")
+             .help("Specify config file")
+             .takes_value(true))
+        .get_matches();
+
+    let config_file = matches.value_of("config").unwrap_or("/etc/cortex/cortex.yaml");
+
     let mut settings = config::Config::new();
 
     settings.merge(
-        config::File::new("cortex", config::FileFormat::Yaml)
+        config::File::new(config_file, config::FileFormat::Yaml)
     ).expect("Could not read config");
 
     let s: Settings = settings.try_into().unwrap();
