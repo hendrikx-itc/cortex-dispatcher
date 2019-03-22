@@ -9,6 +9,10 @@ extern crate clap;
 #[macro_use]
 extern crate serde_derive;
 
+#[macro_use]
+extern crate log;
+extern crate env_logger;
+
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
@@ -42,6 +46,8 @@ struct Settings {
 }
 
 fn main() {
+    env_logger::init();
+
     let matches = App::new("Cortex")
         .version("1.0")
         .author("Hendrikx ITC <info@hendrikx-itc.nl>")
@@ -55,6 +61,8 @@ fn main() {
     let config_file = matches.value_of("config").unwrap_or("/etc/cortex/cortex.yaml");
 
     let mut settings = config::Config::new();
+
+    info!("Loading configuration");
 
     settings.merge(
         config::File::new(config_file, config::FileFormat::Yaml)

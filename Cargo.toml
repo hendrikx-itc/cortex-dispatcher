@@ -2,8 +2,11 @@
 name = "cortex"
 version = "0.1.0"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
+edition = "2018"
 
 [dependencies]
+log = "0.4.0"
+env_logger = "0.6.1"
 inotify = "0.6"
 serde = "1.0"
 serde_derive = "1.0"
