@@ -49,7 +49,7 @@ fn main() {
     env_logger::init();
 
     let matches = App::new("Cortex")
-        .version("1.0")
+        .version("0.1.0")
         .author("Hendrikx ITC <info@hendrikx-itc.nl>")
         .arg(Arg::with_name("config")
              .short("c")
