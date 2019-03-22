@@ -14,7 +14,7 @@ node ('git') {
 
             // Credentials used should be stored in Jenkins under the name 'hitc-docker-registry'
             docker.withRegistry("https://${docker_registry}", 'hitc-docker-registry') {
-                docker.image('ubuntu-1604-packaging').inside("-v ${workspace}:/package/source -v ${workspace}/${buildDir}:/package/build") {
+                docker.image('ubuntu-1604-packaging').inside("-u root:root -v ${workspace}:/package/source -v ${workspace}/${buildDir}:/package/build") {
                     sh 'package'
                 }
             }
