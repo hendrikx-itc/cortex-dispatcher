@@ -3,6 +3,14 @@ name = "cortex"
 version = "0.1.0"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
+description = """
+Cortex is system for efficiently collecting and distributing files with a
+choice of multiple protocols
+"""
+license = "GPL-3.0-or-later"
+documentation = "https://github.com/hendrikx-itc/cortex"
+homepage = "https://github.com/hendrikx-itc/cortex"
+repository = "https://github.com/hendrikx-itc/cortex"
 
 [dependencies]
 log = "0.4.0"
