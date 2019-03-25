@@ -1,6 +1,6 @@
-# Cortex &emsp; [![Latest Version]][crates.io]
+# Cortex
 
-[crates.io]: https://crates.io/crates/cortex-dispatcher
+[![Crates.io](https://img.shields.io/crates/v/cortex-dispatcher.svg)](https://img.shields.io/crates/v/cortex-dispatcher.svg)
 
 Cortex is system for efficiently collecting and distributing files with a
 choice of multiple protocols
