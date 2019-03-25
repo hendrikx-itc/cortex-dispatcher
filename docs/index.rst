@@ -6,6 +6,9 @@
 Welcome to Cortex Dispatcher's documentation!
 =============================================
 
+Cortex is system for efficiently collecting and distributing files with a
+choice of multiple protocols.
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
