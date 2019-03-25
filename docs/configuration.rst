@@ -2,9 +2,9 @@ Configuration
 =============
 
 Cortex Dispatcher is configured using a `YAML <http://yaml.org/>`_ based
-configuration file. Here is an example configuration::
+configuration file. Here is an example configuration:
 
-.. codeblock:: yaml
+.. code-block:: yaml
 
     sources:
       - directory: /test-data
