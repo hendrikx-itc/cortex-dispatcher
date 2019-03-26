@@ -12,7 +12,8 @@ pub struct DataTarget {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct DataSource {
+pub struct DirectorySource {
+    pub name: String,
     pub directory: String,
     pub targets: Vec<DataTarget>
 }
@@ -29,7 +30,8 @@ pub struct SftpSource {
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
-    pub sources: Vec<DataSource>,
+    #[serde(rename = "directory-sources")]
+    pub directory_sources: Vec<DirectorySource>,
     #[serde(rename = "sftp-sources")]
     pub sftp_sources: Vec<SftpSource>
 }

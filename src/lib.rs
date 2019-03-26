@@ -24,10 +24,11 @@ pub fn run(settings: settings::Settings) -> () {
     let mut inotify = Inotify::init()
         .expect("Failed to initialize inotify");
 
-    let mut watch_mapping: HashMap<inotify::WatchDescriptor, settings::DataSource> = HashMap::new();
+    let mut watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = HashMap::new();
 
-    for data_source in settings.sources {
-        let source_directory_str = data_source.directory.clone();
+    for directory_source in settings.directory_sources {
+        info!("Directory source: {}", directory_source.name);
+        let source_directory_str = directory_source.directory.clone();
         let source_directory = Path::new(&source_directory_str);
 
         let watch = inotify
@@ -37,7 +38,7 @@ pub fn run(settings: settings::Settings) -> () {
             )
             .expect("Failed to add inotify watch");
 
-        watch_mapping.insert(watch, data_source);
+        watch_mapping.insert(watch, directory_source);
     }
 
     for sftp_source in settings.sftp_sources {
