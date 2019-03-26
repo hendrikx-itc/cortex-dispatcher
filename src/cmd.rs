@@ -1,4 +1,4 @@
-use clap::{App, Arg, crate_version, crate_description, crate_authors};
+use clap::{crate_authors, crate_description, crate_version, App, Arg};
 
 pub fn app() -> App<'static, 'static> {
     App::new("Cortex")
