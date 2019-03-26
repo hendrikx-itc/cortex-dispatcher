@@ -14,6 +14,8 @@ use inotify::{
     Inotify
 };
 
+#[macro_use]
+extern crate log;
 
 #[macro_use]
 extern crate serde_derive;
@@ -36,6 +38,10 @@ pub fn run(settings: settings::Settings) -> () {
             .expect("Failed to add inotify watch");
 
         watch_mapping.insert(watch, data_source);
+    }
+
+    for sftp_source in settings.sftp_sources {
+        info!("SFTP source: {}", sftp_source.name);
     }
 
     let mut buffer = [0u8; 4096];

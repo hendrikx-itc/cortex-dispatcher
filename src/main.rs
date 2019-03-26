@@ -30,5 +30,7 @@ fn main() {
 
     let settings: Settings = settings.try_into().unwrap();
 
+    info!("Configuration loaded");
+
     cortex_dispatcher::run(settings);
 }

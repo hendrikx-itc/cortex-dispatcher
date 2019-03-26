@@ -18,6 +18,18 @@ pub struct DataSource {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SftpSource {
+    pub name: String,
+    pub host: String,
+    pub username: String,
+    pub directory: String,
+    #[serde(with = "serde_regex")]
+    pub regex: Regex,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Settings {
-    pub sources: Vec<DataSource>
+    pub sources: Vec<DataSource>,
+    #[serde(rename = "sftp-sources")]
+    pub sftp_sources: Vec<SftpSource>
 }
