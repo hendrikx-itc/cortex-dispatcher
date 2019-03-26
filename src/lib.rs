@@ -1,6 +1,12 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
+use std::net::{TcpStream};
+use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc;
+use std::thread;
+
+use ssh2::{Session, Sftp};
 
 mod settings;
 
@@ -20,11 +26,60 @@ extern crate log;
 #[macro_use]
 extern crate serde_derive;
 
+
+fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, tx: Sender<Box<PathBuf>>) {
+    let sftp_scanner = thread::Builder::new().name("sftp-scanner".to_string()).spawn(move || {
+        // Setup connection once for the polling thread
+        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
+
+        let mut session = Session::new().unwrap();
+        session.handshake(&tcp).unwrap();
+
+        session.userauth_agent(&sftp_source.username);
+
+        let sftp: Sftp = session.sftp().unwrap();
+
+        loop {
+            info!("SFTP scanner: {}", sftp_scanner.name);
+            info!("Scanning remote directory '{}'", &sftp_scanner.directory);
+
+            let result = sftp.readdir(Path::new(&sftp_scanner.directory));
+
+            let paths = result.unwrap();
+
+            for (path, _stat) in paths {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+
+                let path_str = path.to_str().unwrap().to_string();
+
+                if sftp_scanner.regex.is_match(file_name) {
+                    info!(" - {} - matches!", path_str);
+                    let send_result = tx.send(Box::new(path));
+
+                    match send_result {
+                        Err(e) => error!("{}", e),
+                        Ok(v) => info!("message sent: {}", path_str)
+                    }
+                } else {
+                    info!(" - {} - no match", path_str);
+                }
+            }
+
+            thread::sleep(std::time::Duration::from_millis(1000));
+        }
+    });
+
+    sftp_scanner.unwrap();
+}
+
+
 pub fn run(settings: settings::Settings) -> () {
     let mut inotify = Inotify::init()
         .expect("Failed to initialize inotify");
 
     let mut watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = HashMap::new();
+
+    let settings_copy = settings.clone();
 
     for directory_source in settings.directory_sources {
         info!("Directory source: {}", directory_source.name);
@@ -41,9 +96,21 @@ pub fn run(settings: settings::Settings) -> () {
         watch_mapping.insert(watch, directory_source);
     }
 
-    for sftp_source in settings.sftp_sources {
-        info!("SFTP source: {}", sftp_source.name);
-    }
+    let sftp_sources_hash: HashMap<String, &settings::SftpSource> = settings.sftp_sources.iter().map(|sftp_source| {
+        (sftp_source.name.clone(), sftp_source)
+    }).collect();
+
+    let rxs: Vec<Receiver<Box<PathBuf>>> = settings_copy.sftp_scanners.iter().map(|scanner| {
+        let (tx, rx): (Sender<Box<PathBuf>>, Receiver<Box<PathBuf>>) = mpsc::channel();
+
+        let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap().clone();
+
+        let owned_sftp_source: settings::SftpSource = sftp_source.clone();
+
+        sftp_scanner(owned_sftp_source, scanner.clone(), tx.clone());
+
+        rx
+    }).collect();
 
     let mut buffer = [0u8; 4096];
 
