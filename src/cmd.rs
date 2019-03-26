@@ -1,10 +1,10 @@
-use clap::{App, Arg, crate_version, crate_description};
+use clap::{App, Arg, crate_version, crate_description, crate_authors};
 
 pub fn app() -> App<'static, 'static> {
     let app = App::new("Cortex")
         .version(crate_version!())
         .about(crate_description!())
-        .author("Hendrikx ITC <info@hendrikx-itc.nl>")
+        .author(crate_authors!())
         .arg(
             Arg::with_name("config")
                 .short("c")
