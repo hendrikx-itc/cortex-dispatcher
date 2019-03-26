@@ -1,8 +1,9 @@
-use clap::{App, Arg};
+use clap::{App, Arg, crate_version, crate_description};
 
 pub fn app() -> App<'static, 'static> {
     let app = App::new("Cortex")
-        .version("0.1.0")
+        .version(crate_version!())
+        .about(crate_description!())
         .author("Hendrikx ITC <info@hendrikx-itc.nl>")
         .arg(
             Arg::with_name("config")
