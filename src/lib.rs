@@ -27,17 +27,35 @@ extern crate log;
 extern crate serde_derive;
 
 
-fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, tx: Sender<Box<PathBuf>>) {
-    let sftp_scanner = thread::Builder::new().name("sftp-scanner".to_string()).spawn(move || {
-        // Setup connection once for the polling thread
-        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
+impl settings::SftpSource {
+    /// Return new session, authorized using the username
+    fn ssh_session(&self, tcp: &TcpStream) -> Session {
 
         let mut session = Session::new().unwrap();
         session.handshake(&tcp).unwrap();
 
-        session.userauth_agent(&sftp_source.username);
+        session.userauth_agent(&self.username);
 
-        let sftp: Sftp = session.sftp().unwrap();
+        session
+    }
+}
+
+
+fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, tx: Sender<Box<PathBuf>>) {
+    let sftp_scanner = thread::Builder::new().name("sftp-scanner".to_string()).spawn(move || {
+        // Setup connection once for the polling thread
+        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
+        let session = sftp_source.ssh_session(&tcp);
+
+        let result = session.sftp();
+
+        let sftp: Sftp = match result {
+            Err(e) => {
+                error!("E001 {}", e);
+                return;
+            },
+            Ok(sftp) => sftp
+        };
 
         loop {
             info!("SFTP scanner: {}", sftp_scanner.name);
@@ -58,7 +76,7 @@ fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpS
 
                     match send_result {
                         Err(e) => error!("{}", e),
-                        Ok(v) => info!("message sent: {}", path_str)
+                        Ok(_) => info!("message sent: {}", path_str)
                     }
                 } else {
                     info!(" - {} - no match", path_str);
@@ -73,28 +91,67 @@ fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpS
 }
 
 
+fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std::thread::JoinHandle<()> {
+    let builder = thread::Builder::new();
+    let handler = builder.name("sftp-scanner".to_string()).spawn(move || {
+        let mut inotify = Inotify::init()
+            .expect("Failed to initialize inotify");
+
+        let mut watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = HashMap::new();
+
+        for directory_source in directory_sources {
+            info!("Directory source: {}", directory_source.name);
+            let source_directory_str = directory_source.directory.clone();
+            let source_directory = Path::new(&source_directory_str);
+
+            let watch = inotify
+                .add_watch(
+                    source_directory,
+                    WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO
+                )
+                .expect("Failed to add inotify watch");
+
+            watch_mapping.insert(watch, directory_source);
+        }
+
+        let mut buffer = [0u8; 4096];
+
+        loop {
+            let events = inotify
+                .read_events_blocking(&mut buffer)
+                .expect("Failed to read inotify events");
+
+            for event in events {
+                if event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO) {
+                    println!("File detected: {:?}", event.name.expect("could not decode event name"));
+
+                    let name = event.name.expect("Could not decode name");
+
+                    let data_source = watch_mapping.get(&event.wd).unwrap();
+
+                    for data_target in &data_source.targets {
+                        if data_target.regex.is_match(name.to_str().unwrap()) {
+                            let source_path = Path::new(&data_source.directory).join(name);
+                            let target_path = Path::new(&data_target.directory).join(name);
+
+                            let rename_result = fs::rename(&source_path, &target_path);
+
+                            match rename_result {
+                                Err(e) => println!("Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
+                                Ok(_o) => println!("Moved {:?} -> {:?}", source_path, target_path)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }).unwrap();
+
+    handler
+}
+
 pub fn run(settings: settings::Settings) -> () {
-    let mut inotify = Inotify::init()
-        .expect("Failed to initialize inotify");
-
-    let mut watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = HashMap::new();
-
     let settings_copy = settings.clone();
-
-    for directory_source in settings.directory_sources {
-        info!("Directory source: {}", directory_source.name);
-        let source_directory_str = directory_source.directory.clone();
-        let source_directory = Path::new(&source_directory_str);
-
-        let watch = inotify
-            .add_watch(
-                source_directory,
-                WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO
-            )
-            .expect("Failed to add inotify watch");
-
-        watch_mapping.insert(watch, directory_source);
-    }
 
     let sftp_sources_hash: HashMap<String, &settings::SftpSource> = settings.sftp_sources.iter().map(|sftp_source| {
         (sftp_source.name.clone(), sftp_source)
@@ -112,35 +169,7 @@ pub fn run(settings: settings::Settings) -> () {
         rx
     }).collect();
 
-    let mut buffer = [0u8; 4096];
+    let join_handle = file_system_watcher(settings_copy.directory_sources);
 
-    loop {
-        let events = inotify
-            .read_events_blocking(&mut buffer)
-            .expect("Failed to read inotify events");
-
-        for event in events {
-            if event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO) {
-                println!("File detected: {:?}", event.name.expect("could not decode event name"));
-
-                let name = event.name.expect("Could not decode name");
-
-                let data_source = watch_mapping.get(&event.wd).unwrap();
-
-                for data_target in &data_source.targets {
-                    if data_target.regex.is_match(name.to_str().unwrap()) {
-                        let source_path = Path::new(&data_source.directory).join(name);
-                        let target_path = Path::new(&data_target.directory).join(name);
-
-                        let rename_result = fs::rename(&source_path, &target_path);
-
-                        match rename_result {
-                            Err(e) => println!("Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
-                            Ok(_o) => println!("Moved {:?} -> {:?}", source_path, target_path)
-                        }
-                    }
-                }
-            }
-        }
-    }
+    join_handle.join();
 }

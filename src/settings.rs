@@ -36,11 +36,22 @@ pub struct SftpScanner {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct SftpDownloader {
+    pub name: String,
+    #[serde(rename = "sftp-source")]
+    pub sftp_source: String,
+    #[serde(rename = "local-directory")]
+    pub local_directory: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     #[serde(rename = "directory-sources")]
     pub directory_sources: Vec<DirectorySource>,
     #[serde(rename = "sftp-sources")]
     pub sftp_sources: Vec<SftpSource>,
     #[serde(rename = "sftp-scanners")]
-    pub sftp_scanners: Vec<SftpScanner>
+    pub sftp_scanners: Vec<SftpScanner>,
+    #[serde(rename = "sftp-downloaders")]
+    pub sftp_downloaders: Vec<SftpDownloader>
 }
