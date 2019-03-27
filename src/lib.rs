@@ -123,9 +123,9 @@ fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std
 
             for event in events {
                 if event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO) {
-                    println!("File detected: {:?}", event.name.expect("could not decode event name"));
-
                     let name = event.name.expect("Could not decode name");
+
+                    info!!("File detected: {:?}", name);
 
                     let data_source = watch_mapping.get(&event.wd).unwrap();
 
@@ -137,8 +137,8 @@ fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std
                             let rename_result = fs::rename(&source_path, &target_path);
 
                             match rename_result {
-                                Err(e) => println!("Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
-                                Ok(_o) => println!("Moved {:?} -> {:?}", source_path, target_path)
+                                Err(e) => error!("Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
+                                Ok(_o) => info!("Moved {:?} -> {:?}", source_path, target_path)
                             }
                         }
                     }
