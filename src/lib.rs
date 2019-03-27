@@ -41,7 +41,7 @@ impl settings::SftpSource {
 }
 
 
-fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, tx: Sender<Box<PathBuf>>) {
+fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, tx: Sender<Box<PathBuf>>) -> std::thread::JoinHandle<()> {
     let sftp_scanner = thread::Builder::new().name("sftp-scanner".to_string()).spawn(move || {
         // Setup connection once for the polling thread
         let tcp = TcpStream::connect(&sftp_source.address).unwrap();
@@ -87,7 +87,7 @@ fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpS
         }
     });
 
-    sftp_scanner.unwrap();
+    sftp_scanner.unwrap()
 }
 
 
