@@ -75,7 +75,7 @@ fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpS
                     let send_result = tx.send(Box::new(path));
 
                     match send_result {
-                        Err(e) => error!("{}", e),
+                        Err(e) => error!("E002 {}", e),
                         Ok(_) => info!("message sent: {}", path_str)
                     }
                 } else {
@@ -137,7 +137,7 @@ fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std
                             let rename_result = fs::rename(&source_path, &target_path);
 
                             match rename_result {
-                                Err(e) => error!("Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
+                                Err(e) => error!("E003 Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
                                 Ok(_o) => info!("Moved {:?} -> {:?}", source_path, target_path)
                             }
                         }
