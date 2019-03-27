@@ -125,7 +125,7 @@ fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std
                 if event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO) {
                     let name = event.name.expect("Could not decode name");
 
-                    info!!("File detected: {:?}", name);
+                    info!("File detected: {:?}", name);
 
                     let data_source = watch_mapping.get(&event.wd).unwrap();
 
