@@ -31,19 +31,6 @@ extern crate log;
 extern crate serde_derive;
 
 
-impl settings::SftpSource {
-    /// Return new session, authorized using the username
-    fn ssh_session(&self, tcp: &TcpStream) -> Session {
-
-        let mut session = Session::new().unwrap();
-        session.handshake(&tcp).unwrap();
-
-        session.userauth_agent(&self.username).expect("authentication failed");
-
-        session
-    }
-}
-
 fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std::thread::JoinHandle<()> {
     let builder = thread::Builder::new();
     let handler = builder.name("sftp-scanner".to_string()).spawn(move || {
@@ -108,6 +95,24 @@ struct SftpConnection {
     sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>
 }
 
+impl SftpConnection {
+    fn new(sftp_source: &settings::SftpSource) -> SftpConnection {
+        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
+
+        let mut session = Box::new(Session::new().unwrap());
+        session.handshake(&tcp).unwrap();
+        session.userauth_agent(&sftp_source.username).expect("authentication failed");
+
+        // OwningHandle is needed to store a value and a reference to that value in the same struct
+        let sftp = OwningHandle::new_with_fn(
+            session,
+            unsafe { |s| Box::new((*s).sftp().unwrap()) }
+        );
+
+        return SftpConnection{tcp: tcp, sftp: sftp};
+    }
+}
+
 struct SftpScanner {
     sftp_scanner: settings::SftpScanner,
     sftp_connection: SftpConnection
@@ -121,16 +126,7 @@ impl Message for Scan {
 
 impl SftpScanner {
     fn new(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner) -> SftpScanner {
-        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
-
-        let session = Box::new(sftp_source.ssh_session(&tcp));
-
-        let sftp = OwningHandle::new_with_fn(
-            session,
-            unsafe { |s| Box::new((*s).sftp().unwrap()) }
-        );
-
-        let conn = SftpConnection{tcp: tcp, sftp: sftp};
+        let conn = SftpConnection::new(&sftp_source);
 
         return SftpScanner {
             sftp_scanner: sftp_scanner,
