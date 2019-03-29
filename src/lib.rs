@@ -1,18 +1,20 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
-use std::net::{TcpStream};
-use std::sync::mpsc::{Sender, Receiver};
-use std::sync::mpsc;
+use std::net::TcpStream;
 use std::thread;
 
-use ssh2::{Session, Sftp};
+use ssh2::Session;
 
 mod settings;
 
-pub use settings::Settings;
+pub use crate::settings::Settings;
 
 extern crate inotify;
+
+extern crate actix;
+use actix::prelude::*;
+use actix::{Actor, Addr, Context};
 
 use inotify::{
     EventMask,
@@ -34,62 +36,11 @@ impl settings::SftpSource {
         let mut session = Session::new().unwrap();
         session.handshake(&tcp).unwrap();
 
-        session.userauth_agent(&self.username);
+        session.userauth_agent(&self.username).expect("authentication failed");
 
         session
     }
 }
-
-
-fn sftp_scanner(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, tx: Sender<Box<PathBuf>>) -> std::thread::JoinHandle<()> {
-    let sftp_scanner = thread::Builder::new().name("sftp-scanner".to_string()).spawn(move || {
-        // Setup connection once for the polling thread
-        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
-        let session = sftp_source.ssh_session(&tcp);
-
-        let result = session.sftp();
-
-        let sftp: Sftp = match result {
-            Err(e) => {
-                error!("E001 {}", e);
-                return;
-            },
-            Ok(sftp) => sftp
-        };
-
-        loop {
-            info!("SFTP scanner: {}", sftp_scanner.name);
-            info!("Scanning remote directory '{}'", &sftp_scanner.directory);
-
-            let result = sftp.readdir(Path::new(&sftp_scanner.directory));
-
-            let paths = result.unwrap();
-
-            for (path, _stat) in paths {
-                let file_name = path.file_name().unwrap().to_str().unwrap();
-
-                let path_str = path.to_str().unwrap().to_string();
-
-                if sftp_scanner.regex.is_match(file_name) {
-                    info!(" - {} - matches!", path_str);
-                    let send_result = tx.send(Box::new(path));
-
-                    match send_result {
-                        Err(e) => error!("E002 {}", e),
-                        Ok(_) => info!("message sent: {}", path_str)
-                    }
-                } else {
-                    info!(" - {} - no match", path_str);
-                }
-            }
-
-            thread::sleep(std::time::Duration::from_millis(1000));
-        }
-    });
-
-    sftp_scanner.unwrap()
-}
-
 
 fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std::thread::JoinHandle<()> {
     let builder = thread::Builder::new();
@@ -150,26 +101,84 @@ fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std
     handler
 }
 
+struct SftpScanner {
+    sftp_source: settings::SftpSource,
+    sftp_scanner: settings::SftpScanner
+}
+
+struct Scan;
+
+impl Message for Scan {
+    type Result = i32;
+}
+
+impl Handler<Scan> for SftpScanner {
+    type Result = i32;
+
+    fn handle(&mut self, _msg: Scan, ctx: &mut Context<Self>) -> Self::Result {
+        info!("SftpScanner actor received scan message");
+
+        // Setup connection once for the polling thread
+        let tcp = TcpStream::connect(&self.sftp_source.address).unwrap();
+        let session = self.sftp_source.ssh_session(&tcp);
+
+        let result = session.sftp();
+
+        let sftp = result.unwrap();
+
+        info!("SFTP scanner: {}", self.sftp_scanner.name);
+        info!("Scanning remote directory '{}'", &self.sftp_scanner.directory);
+
+        let result = sftp.readdir(Path::new(&self.sftp_scanner.directory));
+
+        let paths = result.unwrap();
+
+        for (path, _stat) in paths {
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+
+            let path_str = path.to_str().unwrap().to_string();
+
+            if self.sftp_scanner.regex.is_match(file_name) {
+                info!(" - {} - matches!", path_str);
+            } else {
+                info!(" - {} - no match", path_str);
+            }
+        }
+
+        ctx.address().do_send(Scan);
+
+        return 16;
+    }
+}
+
+impl Actor for SftpScanner {
+    type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Self::Context) {
+        info!("SftpScanner actor started");
+    }
+}
+
 pub fn run(settings: settings::Settings) -> () {
-    let settings_copy = settings.clone();
+    let system = actix::System::new("cortex");
 
     let sftp_sources_hash: HashMap<String, &settings::SftpSource> = settings.sftp_sources.iter().map(|sftp_source| {
         (sftp_source.name.clone(), sftp_source)
     }).collect();
 
-    let rxs: Vec<Receiver<Box<PathBuf>>> = settings_copy.sftp_scanners.iter().map(|scanner| {
-        let (tx, rx): (Sender<Box<PathBuf>>, Receiver<Box<PathBuf>>) = mpsc::channel();
-
+    let _scanners: Vec<Addr<SftpScanner>> = settings.sftp_scanners.iter().map(|scanner| {
         let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap().clone();
-
         let owned_sftp_source: settings::SftpSource = sftp_source.clone();
 
-        sftp_scanner(owned_sftp_source, scanner.clone(), tx.clone());
+        let scanner_addr = SftpScanner{sftp_source: owned_sftp_source, sftp_scanner: scanner.clone()}.start();
+        let _scan_future = scanner_addr.do_send(Scan);
 
-        rx
+        scanner_addr
     }).collect();
 
-    let join_handle = file_system_watcher(settings_copy.directory_sources);
+    let join_handle = file_system_watcher(settings.directory_sources);
 
-    join_handle.join();
+    system.run();
+
+    join_handle.join().expect("failed to join file system watcher thread");
 }
