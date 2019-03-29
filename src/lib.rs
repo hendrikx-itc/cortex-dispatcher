@@ -4,7 +4,7 @@ use std::fs;
 use std::net::TcpStream;
 use std::thread;
 
-use ssh2::Session;
+use ssh2::{Session, Sftp};
 
 mod settings;
 
@@ -21,6 +21,8 @@ use inotify::{
     WatchMask,
     Inotify
 };
+
+use owning_ref::OwningHandle;
 
 #[macro_use]
 extern crate log;
@@ -101,9 +103,14 @@ fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std
     handler
 }
 
+struct SftpConnection {
+    tcp: TcpStream,
+    sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>
+}
+
 struct SftpScanner {
-    sftp_source: settings::SftpSource,
-    sftp_scanner: settings::SftpScanner
+    sftp_scanner: settings::SftpScanner,
+    sftp_connection: SftpConnection
 }
 
 struct Scan;
@@ -112,24 +119,34 @@ impl Message for Scan {
     type Result = i32;
 }
 
+impl SftpScanner {
+    fn new(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner) -> SftpScanner {
+        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
+
+        let session = Box::new(sftp_source.ssh_session(&tcp));
+
+        let sftp = OwningHandle::new_with_fn(
+            session,
+            unsafe { |s| Box::new((*s).sftp().unwrap()) }
+        );
+
+        let conn = SftpConnection{tcp: tcp, sftp: sftp};
+
+        return SftpScanner {
+            sftp_scanner: sftp_scanner,
+            sftp_connection: conn
+        };
+    }
+}
+
 impl Handler<Scan> for SftpScanner {
     type Result = i32;
 
     fn handle(&mut self, _msg: Scan, ctx: &mut Context<Self>) -> Self::Result {
-        info!("SftpScanner actor received scan message");
-
-        // Setup connection once for the polling thread
-        let tcp = TcpStream::connect(&self.sftp_source.address).unwrap();
-        let session = self.sftp_source.ssh_session(&tcp);
-
-        let result = session.sftp();
-
-        let sftp = result.unwrap();
-
         info!("SFTP scanner: {}", self.sftp_scanner.name);
         info!("Scanning remote directory '{}'", &self.sftp_scanner.directory);
 
-        let result = sftp.readdir(Path::new(&self.sftp_scanner.directory));
+        let result = self.sftp_connection.sftp.readdir(Path::new(&self.sftp_scanner.directory));
 
         let paths = result.unwrap();
 
@@ -145,7 +162,7 @@ impl Handler<Scan> for SftpScanner {
             }
         }
 
-        ctx.address().do_send(Scan);
+        ctx.notify(Scan);
 
         return 16;
     }
@@ -170,7 +187,10 @@ pub fn run(settings: settings::Settings) -> () {
         let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap().clone();
         let owned_sftp_source: settings::SftpSource = sftp_source.clone();
 
-        let scanner_addr = SftpScanner{sftp_source: owned_sftp_source, sftp_scanner: scanner.clone()}.start();
+        let scanner_addr = SftpScanner::new(
+            owned_sftp_source, scanner.clone()
+        ).start();
+
         let _scan_future = scanner_addr.do_send(Scan);
 
         scanner_addr
