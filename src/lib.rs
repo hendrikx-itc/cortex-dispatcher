@@ -254,7 +254,7 @@ pub fn run(settings: settings::Settings) -> () {
 
     // For now let the default downloader be the first.
     // Need to implement looking up the right one.
-    let default_downloader = downloaders[0];
+    let default_downloader = downloaders[0].clone();
 
     let _scanners: Vec<Addr<SftpScanner>> = settings.sftp_scanners.iter().map(|scanner| {
         let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap();
