@@ -3,6 +3,8 @@ use std::path::Path;
 use std::fs;
 use std::net::TcpStream;
 use std::thread;
+use std::io;
+use std::fs::File;
 
 use ssh2::{Session, Sftp};
 
@@ -29,7 +31,6 @@ extern crate log;
 
 #[macro_use]
 extern crate serde_derive;
-
 
 fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std::thread::JoinHandle<()> {
     let builder = thread::Builder::new();
@@ -113,9 +114,66 @@ impl SftpConnection {
     }
 }
 
+struct SftpDownloader {
+    config: settings::SftpDownloader,
+    sftp_connection: SftpConnection,
+}
+
+impl SftpDownloader {
+    fn new(sftp_source: settings::SftpSource, config: settings::SftpDownloader) -> SftpDownloader {
+        let conn = SftpConnection::new(&sftp_source);
+
+        return SftpDownloader {
+            config: config,
+            sftp_connection: conn
+        };
+    }
+}
+
+struct Download {
+    path: String
+}
+
+impl Message for Download {
+    type Result = bool;
+}
+
+impl Handler<Download> for SftpDownloader {
+    type Result = bool;
+
+    fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
+        info!("{} downloading '{}'", self.config.name, msg.path);
+
+        let path = Path::new(&msg.path);
+
+        let mut remote_file = self.sftp_connection.sftp.open(&path).unwrap();
+
+        let mut local_file = File::create("/tmp/test.txt").unwrap();
+
+        let copy_result = io::copy(&mut remote_file, &mut local_file);
+
+        info!("{} downloaded '{}'", self.config.name, msg.path);
+
+
+        match copy_result {
+            Ok(_) => return true,
+            Err(_e) => return false
+        }
+    }
+}
+
+impl Actor for SftpDownloader {
+    type Context = SyncContext<Self>;
+
+    fn started(&mut self, _ctx: &mut Self::Context) {
+        info!("SftpDownloader actor started");
+    }
+}
+
 struct SftpScanner {
     sftp_scanner: settings::SftpScanner,
-    sftp_connection: SftpConnection
+    sftp_connection: SftpConnection,
+    downloader: Addr<SftpDownloader>
 }
 
 struct Scan;
@@ -125,12 +183,13 @@ impl Message for Scan {
 }
 
 impl SftpScanner {
-    fn new(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner) -> SftpScanner {
+    fn new(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, downloader: Addr<SftpDownloader>) -> SftpScanner {
         let conn = SftpConnection::new(&sftp_source);
 
         return SftpScanner {
             sftp_scanner: sftp_scanner,
-            sftp_connection: conn
+            sftp_connection: conn,
+            downloader: downloader
         };
     }
 }
@@ -138,9 +197,8 @@ impl SftpScanner {
 impl Handler<Scan> for SftpScanner {
     type Result = i32;
 
-    fn handle(&mut self, _msg: Scan, ctx: &mut Context<Self>) -> Self::Result {
-        info!("SFTP scanner: {}", self.sftp_scanner.name);
-        info!("Scanning remote directory '{}'", &self.sftp_scanner.directory);
+    fn handle(&mut self, _msg: Scan, _ctx: &mut Context<Self>) -> Self::Result {
+        info!("{} scanning remote directory '{}'", self.sftp_scanner.name, &self.sftp_scanner.directory);
 
         let result = self.sftp_connection.sftp.readdir(Path::new(&self.sftp_scanner.directory));
 
@@ -152,13 +210,14 @@ impl Handler<Scan> for SftpScanner {
             let path_str = path.to_str().unwrap().to_string();
 
             if self.sftp_scanner.regex.is_match(file_name) {
+                self.downloader.do_send(Download{path: path_str.clone()});
                 info!(" - {} - matches!", path_str);
             } else {
                 info!(" - {} - no match", path_str);
             }
         }
 
-        ctx.notify(Scan);
+        //ctx.notify(Scan);
 
         return 16;
     }
@@ -179,18 +238,37 @@ pub fn run(settings: settings::Settings) -> () {
         (sftp_source.name.clone(), sftp_source)
     }).collect();
 
+    let downloaders: Vec<Addr<SftpDownloader>> = settings.sftp_downloaders.iter().map(|downloader| {
+        let sftp_source = sftp_sources_hash.get(&downloader.sftp_source).unwrap();
+        let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
+
+        let downloader_settings = downloader.clone();
+
+        let addr = SyncArbiter::start(
+            2,
+            move || SftpDownloader::new(owned_sftp_source.clone(), downloader_settings.clone())
+        );
+
+        addr
+    }).collect();
+
+    // For now let the default downloader be the first.
+    // Need to implement looking up the right one.
+    let default_downloader = downloaders[0];
+
     let _scanners: Vec<Addr<SftpScanner>> = settings.sftp_scanners.iter().map(|scanner| {
-        let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap().clone();
-        let owned_sftp_source: settings::SftpSource = sftp_source.clone();
+        let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap();
+        let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
 
         let scanner_addr = SftpScanner::new(
-            owned_sftp_source, scanner.clone()
+            owned_sftp_source, scanner.clone(), default_downloader.clone()
         ).start();
 
         let _scan_future = scanner_addr.do_send(Scan);
 
         scanner_addr
     }).collect();
+
 
     let join_handle = file_system_watcher(settings.directory_sources);
 

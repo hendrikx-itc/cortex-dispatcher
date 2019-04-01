@@ -45,7 +45,13 @@ pub struct SftpDownloader {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Storage {
+    pub directory: String
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
+    pub storage: Storage,
     #[serde(rename = "directory-sources")]
     pub directory_sources: Vec<DirectorySource>,
     #[serde(rename = "sftp-sources")]

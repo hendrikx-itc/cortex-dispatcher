@@ -12,7 +12,9 @@ use cortex_dispatcher::Settings;
 mod cmd;
 
 fn main() {
-    env_logger::init();
+    env_logger::builder()
+        .default_format_timestamp(false)
+        .init();
 
     let matches = cmd::app().get_matches();
 
