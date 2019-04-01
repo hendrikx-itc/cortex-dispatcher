@@ -245,7 +245,7 @@ pub fn run(settings: settings::Settings) -> () {
         let downloader_settings = downloader.clone();
 
         let addr = SyncArbiter::start(
-            2,
+            downloader_settings.thread_count,
             move || SftpDownloader::new(owned_sftp_source.clone(), downloader_settings.clone())
         );
 

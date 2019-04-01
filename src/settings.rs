@@ -42,6 +42,8 @@ pub struct SftpDownloader {
     pub sftp_source: String,
     #[serde(rename = "local-directory")]
     pub local_directory: String,
+    #[serde(rename = "thread-count")]
+    pub thread_count: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]
