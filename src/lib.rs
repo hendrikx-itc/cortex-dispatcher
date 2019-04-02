@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::fs;
 use std::net::TcpStream;
-use std::thread;
 use std::io;
 use std::fs::File;
 
@@ -32,64 +30,8 @@ extern crate log;
 #[macro_use]
 extern crate serde_derive;
 
-fn file_system_watcher(directory_sources: Vec<settings::DirectorySource>) -> std::thread::JoinHandle<()> {
-    let builder = thread::Builder::new();
-    let handler = builder.name("sftp-scanner".to_string()).spawn(move || {
-        let mut inotify = Inotify::init()
-            .expect("Failed to initialize inotify");
+use futures::stream::{Stream};
 
-        let mut watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = HashMap::new();
-
-        for directory_source in directory_sources {
-            info!("Directory source: {}", directory_source.name);
-            let source_directory_str = directory_source.directory.clone();
-            let source_directory = Path::new(&source_directory_str);
-
-            let watch = inotify
-                .add_watch(
-                    source_directory,
-                    WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO
-                )
-                .expect("Failed to add inotify watch");
-
-            watch_mapping.insert(watch, directory_source);
-        }
-
-        let mut buffer = [0u8; 4096];
-
-        loop {
-            let events = inotify
-                .read_events_blocking(&mut buffer)
-                .expect("Failed to read inotify events");
-
-            for event in events {
-                if event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO) {
-                    let name = event.name.expect("Could not decode name");
-
-                    info!("File detected: {:?}", name);
-
-                    let data_source = watch_mapping.get(&event.wd).unwrap();
-
-                    for data_target in &data_source.targets {
-                        if data_target.regex.is_match(name.to_str().unwrap()) {
-                            let source_path = Path::new(&data_source.directory).join(name);
-                            let target_path = Path::new(&data_target.directory).join(name);
-
-                            let rename_result = fs::rename(&source_path, &target_path);
-
-                            match rename_result {
-                                Err(e) => error!("E003 Error moving {:?} -> {:?}: {:?}", source_path, target_path, e),
-                                Ok(_o) => info!("Moved {:?} -> {:?}", source_path, target_path)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }).unwrap();
-
-    handler
-}
 
 struct SftpConnection {
     tcp: TcpStream,
@@ -231,12 +173,82 @@ impl Actor for SftpScanner {
     }
 }
 
+struct FileSystemEvent {
+    path: String
+}
+
+impl Message for FileSystemEvent {
+    type Result = bool;
+}
+
+struct LocalSource {
+    sources: Vec<settings::DirectorySource>,
+    inotify: Inotify
+}
+
+impl StreamHandler<FileSystemEvent, io::Error> for LocalSource {
+    fn handle(&mut self, item: FileSystemEvent, _ctx: &mut Context<LocalSource>) {
+        info!("file system event: {}", item.path);
+    }
+}
+
+
+impl Actor for LocalSource {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let sources = self.sources.clone();
+        let watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = sources.iter().map(|directory_source| {
+            info!("Directory source: {}", directory_source.name);
+            let source_directory_str = directory_source.directory.clone();
+            let source_directory = Path::new(&source_directory_str);
+
+            let watch = self.inotify
+                .add_watch(
+                    source_directory,
+                    WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO
+                )
+                .expect("Failed to add inotify watch");
+
+            (watch, directory_source.clone())
+        }).collect();
+
+        let buffer: Vec<u8> = Vec::with_capacity(4096);
+
+        let event_stream = self.inotify
+            .event_stream(buffer)
+            .filter(|event| {
+                info!("Filesystem event");
+                event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO)
+            })
+            .map(move |event: inotify::Event<std::ffi::OsString>| -> FileSystemEvent {
+                let name = event.name.expect("Could not decode name");
+
+                info!("File detected: {:?}", name);
+
+                let data_source = watch_mapping.get(&event.wd).unwrap();
+
+                let source_path = Path::new(&data_source.directory).join(name);
+
+                return FileSystemEvent { path: source_path.to_str().unwrap().to_string() };
+            });
+
+        LocalSource::add_stream(event_stream, ctx);
+
+        info!("LocalSource actor started");
+    }
+}
+
+
 pub fn run(settings: settings::Settings) -> () {
     let system = actix::System::new("cortex");
 
-    let sftp_sources_hash: HashMap<String, &settings::SftpSource> = settings.sftp_sources.iter().map(|sftp_source| {
-        (sftp_source.name.clone(), sftp_source)
-    }).collect();
+    let sftp_sources_hash: HashMap<String, &settings::SftpSource> = settings
+        .sftp_sources
+        .iter()
+        .map(|sftp_source| {
+            (sftp_source.name.clone(), sftp_source)
+        }).collect();
 
     let downloaders: Vec<Addr<SftpDownloader>> = settings.sftp_downloaders.iter().map(|downloader| {
         let sftp_source = sftp_sources_hash.get(&downloader.sftp_source).unwrap();
@@ -269,10 +281,19 @@ pub fn run(settings: settings::Settings) -> () {
         scanner_addr
     }).collect();
 
+    let init_result = Inotify::init();
 
-    let join_handle = file_system_watcher(settings.directory_sources);
+    let inotify = match init_result {
+        Ok(i) => i,
+        Err(e) => panic!("Could not initialize inotify: {}", e)
+    };
+
+    let local_source = LocalSource {
+        sources: settings.directory_sources,
+        inotify: inotify
+    };
+
+    local_source.start();
 
     system.run();
-
-    join_handle.join().expect("failed to join file system watcher thread");
 }
