@@ -39,8 +39,20 @@ pub struct SftpDownloader {
     pub name: String,
     pub sftp_source: String,
     pub local_directory: String,
+    #[serde(default = "default_false")]
     pub remove_after_download: bool,
+    #[serde(default = "default_thread_count")]
     pub thread_count: usize,
+}
+
+/// A generic default value function that returns false
+fn default_false() -> bool {
+    return false;
+}
+
+/// Default Sftp scanner thread count
+fn default_thread_count() -> usize {
+    return 1;
 }
 
 #[derive(Debug, Deserialize, Clone)]
