@@ -62,7 +62,8 @@ struct SftpDownloader {
 }
 
 struct Download {
-    path: String
+    path: String,
+    size: Option<u64>
 }
 
 impl Message for Download {
@@ -73,7 +74,7 @@ impl Handler<Download> for SftpDownloader {
     type Result = bool;
 
     fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
-        info!("{} downloading '{}'", self.config.name, msg.path);
+        info!("{} downloading '{}' {} bytes", self.config.name, msg.path, msg.size.unwrap());
 
         let path = Path::new(&msg.path);
 
@@ -84,7 +85,6 @@ impl Handler<Download> for SftpDownloader {
         let copy_result = io::copy(&mut remote_file, &mut local_file);
 
         info!("{} downloaded '{}'", self.config.name, msg.path);
-
 
         match copy_result {
             Ok(_) => return true,
@@ -123,13 +123,18 @@ impl Handler<Scan> for SftpScanner {
 
         let paths = result.unwrap();
 
-        for (path, _stat) in paths {
+        for (path, stat) in paths {
             let file_name = path.file_name().unwrap().to_str().unwrap();
 
             let path_str = path.to_str().unwrap().to_string();
 
             if self.sftp_scanner.regex.is_match(file_name) {
-                self.downloader.do_send(Download{path: path_str.clone()});
+                let msg = Download{
+                    path: path_str.clone(),
+                    size: stat.size
+                };
+
+                self.downloader.do_send(msg);
                 info!(" - {} - matches!", path_str);
             } else {
                 info!(" - {} - no match", path_str);
@@ -169,7 +174,6 @@ impl StreamHandler<FileSystemEvent, io::Error> for LocalSource {
     }
 }
 
-
 impl Actor for LocalSource {
     type Context = Context<Self>;
 
@@ -186,6 +190,8 @@ impl Actor for LocalSource {
                     WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO
                 )
                 .expect("Failed to add inotify watch");
+
+            info!("Added watch on {}", source_directory_str);
 
             (watch, directory_source.clone())
         }).collect();
