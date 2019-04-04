@@ -76,11 +76,12 @@ impl Handler<Download> for SftpDownloader {
     fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
         info!("{} downloading '{}' {} bytes", self.config.name, msg.path, msg.size.unwrap());
 
-        let path = Path::new(&msg.path);
+        let remote_path = Path::new(&msg.path);
+        let local_path = Path::new("/tmp").join(remote_path.file_name().unwrap());
 
-        let mut remote_file = self.sftp_connection.sftp.open(&path).unwrap();
+        let mut remote_file = self.sftp_connection.sftp.open(&remote_path).unwrap();
 
-        let mut local_file = File::create("/tmp/test.txt").unwrap();
+        let mut local_file = File::create(local_path).unwrap();
 
         let copy_result = io::copy(&mut remote_file, &mut local_file);
 
