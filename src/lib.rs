@@ -61,17 +61,6 @@ struct SftpDownloader {
     sftp_connection: SftpConnection,
 }
 
-impl SftpDownloader {
-    fn new(sftp_source: settings::SftpSource, config: settings::SftpDownloader) -> SftpDownloader {
-        let conn = SftpConnection::new(&sftp_source);
-
-        return SftpDownloader {
-            config: config,
-            sftp_connection: conn
-        };
-    }
-}
-
 struct Download {
     path: String
 }
@@ -122,18 +111,6 @@ struct Scan;
 
 impl Message for Scan {
     type Result = i32;
-}
-
-impl SftpScanner {
-    fn new(sftp_source: settings::SftpSource, sftp_scanner: settings::SftpScanner, downloader: Addr<SftpDownloader>) -> SftpScanner {
-        let conn = SftpConnection::new(&sftp_source);
-
-        return SftpScanner {
-            sftp_scanner: sftp_scanner,
-            sftp_connection: conn,
-            downloader: downloader
-        };
-    }
 }
 
 impl Handler<Scan> for SftpScanner {
@@ -258,7 +235,14 @@ pub fn run(settings: settings::Settings) -> () {
 
         let addr = SyncArbiter::start(
             downloader_settings.thread_count,
-            move || SftpDownloader::new(owned_sftp_source.clone(), downloader_settings.clone())
+            move || {
+                let conn = SftpConnection::new(&owned_sftp_source.clone());
+
+                return SftpDownloader {
+                    config: downloader_settings.clone(),
+                    sftp_connection: conn
+                };
+            }
         );
 
         addr
@@ -272,9 +256,15 @@ pub fn run(settings: settings::Settings) -> () {
         let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap();
         let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
 
-        let scanner_addr = SftpScanner::new(
-            owned_sftp_source, scanner.clone(), default_downloader.clone()
-        ).start();
+        let conn = SftpConnection::new(&owned_sftp_source.clone());
+
+        let scanner = SftpScanner {
+            sftp_scanner: scanner.clone(),
+            sftp_connection: conn,
+            downloader: default_downloader.clone()
+        };
+
+        let scanner_addr = scanner.start();
 
         let _scan_future = scanner_addr.do_send(Scan);
 
