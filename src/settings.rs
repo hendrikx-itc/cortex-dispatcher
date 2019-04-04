@@ -39,6 +39,7 @@ pub struct SftpDownloader {
     pub name: String,
     pub sftp_source: String,
     pub local_directory: String,
+    pub remove_after_download: bool,
     pub thread_count: usize,
 }
 

@@ -87,11 +87,21 @@ impl Handler<Download> for SftpDownloader {
 
         let copy_result = io::copy(&mut remote_file, &mut local_file);
 
-        info!("{} downloaded '{}'", self.config.name, msg.path);
-
         match copy_result {
-            Ok(_) => return true,
-            Err(_e) => return false
+            Ok(_) => {
+                info!("{} downloaded '{}'", self.config.name, msg.path);
+
+                if self.config.remove_after_download {
+                    self.sftp_connection.sftp.unlink(&remote_path).unwrap();
+
+                    info!("{} removed '{}'", self.config.name, msg.path);
+                }
+                return true;
+            },
+            Err(e) => {
+                error!("{} error downloading '{}': {}", self.config.name, msg.path, e);
+                return false
+            }
         }
     }
 }
