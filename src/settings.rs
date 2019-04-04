@@ -28,7 +28,6 @@ pub struct SftpSource {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SftpScanner {
     pub name: String,
-    #[serde(rename = "sftp-source")]
     pub sftp_source: String,
     pub directory: String,
     #[serde(with = "serde_regex")]
@@ -38,11 +37,8 @@ pub struct SftpScanner {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SftpDownloader {
     pub name: String,
-    #[serde(rename = "sftp-source")]
     pub sftp_source: String,
-    #[serde(rename = "local-directory")]
     pub local_directory: String,
-    #[serde(rename = "thread-count")]
     pub thread_count: usize,
 }
 
@@ -54,12 +50,8 @@ pub struct Storage {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub storage: Storage,
-    #[serde(rename = "directory-sources")]
     pub directory_sources: Vec<DirectorySource>,
-    #[serde(rename = "sftp-sources")]
     pub sftp_sources: Vec<SftpSource>,
-    #[serde(rename = "sftp-scanners")]
     pub sftp_scanners: Vec<SftpScanner>,
-    #[serde(rename = "sftp-downloaders")]
     pub sftp_downloaders: Vec<SftpDownloader>
 }

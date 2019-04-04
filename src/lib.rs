@@ -44,6 +44,7 @@ impl SftpConnection {
         let tcp = TcpStream::connect(&sftp_source.address).unwrap();
 
         let mut session = Box::new(Session::new().unwrap());
+        session.set_compress(true);
         session.handshake(&tcp).unwrap();
         session.userauth_agent(&sftp_source.username).expect("authentication failed");
 
