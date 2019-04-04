@@ -3,6 +3,7 @@ use std::path::Path;
 use std::net::TcpStream;
 use std::io;
 use std::fs::File;
+use std::time::Duration;
 
 use ssh2::{Session, Sftp};
 
@@ -108,6 +109,12 @@ struct SftpScanner {
     downloader: Addr<SftpDownloader>
 }
 
+impl SftpScanner {
+    fn scan(&mut self, context: &mut Context<Self>) {
+        context.notify(Scan);
+    }
+}
+
 struct Scan;
 
 impl Message for Scan {
@@ -142,8 +149,6 @@ impl Handler<Scan> for SftpScanner {
             }
         }
 
-        //ctx.notify(Scan);
-
         return 16;
     }
 }
@@ -151,7 +156,8 @@ impl Handler<Scan> for SftpScanner {
 impl Actor for SftpScanner {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.run_interval(Duration::from_millis(1000), Self::scan);
         info!("SftpScanner actor started");
     }
 }
