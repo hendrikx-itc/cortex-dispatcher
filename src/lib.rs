@@ -168,7 +168,7 @@ impl Actor for SftpScanner {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.run_interval(Duration::from_millis(1000), Self::scan);
+        ctx.run_interval(Duration::from_millis(self.sftp_scanner.interval), Self::scan);
         info!("SftpScanner actor started");
     }
 }

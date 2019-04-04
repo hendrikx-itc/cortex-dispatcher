@@ -25,6 +25,11 @@ pub struct SftpSource {
     pub username: String
 }
 
+/// Default Sftp scan interval in milliseconds
+fn default_interval() -> u64 {
+    return 60000;
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct SftpScanner {
     pub name: String,
@@ -32,6 +37,8 @@ pub struct SftpScanner {
     pub directory: String,
     #[serde(with = "serde_regex")]
     pub regex: Regex,
+    #[serde(default = "default_interval")]
+    pub interval: u64
 }
 
 #[derive(Debug, Deserialize, Clone)]
