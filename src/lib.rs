@@ -1,14 +1,19 @@
 use std::collections::HashMap;
-use std::path::Path;
-use std::net::TcpStream;
-use std::io;
 use std::fs::File;
+use std::io;
+use std::net::TcpStream;
+use std::path::Path;
 use std::time::Duration;
+use std::thread;
+use std::fmt;
 
 use ssh2::{Session, Sftp};
 
 mod settings;
 
+mod amqp_consumer;
+
+pub use crate::amqp_consumer::AmqpListener;
 pub use crate::settings::Settings;
 
 extern crate inotify;
@@ -17,11 +22,7 @@ extern crate actix;
 use actix::prelude::*;
 use actix::{Actor, Addr, Context};
 
-use inotify::{
-    EventMask,
-    WatchMask,
-    Inotify
-};
+use inotify::{Inotify, WatchMask};
 
 use owning_ref::OwningHandle;
 
@@ -31,30 +32,73 @@ extern crate log;
 #[macro_use]
 extern crate serde_derive;
 
-use futures::stream::{Stream};
+use futures::stream::Stream;
+
+extern crate failure;
+extern crate lapin_futures;
 
 
 struct SftpConnection {
     tcp: TcpStream,
-    sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>
+    sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>,
+}
+
+#[derive(Debug)]
+struct SftpError {
+    description: String
+}
+
+impl SftpError {
+    pub fn new(description: String) -> SftpError {
+        SftpError { description: description }
+    }
+}
+
+impl fmt::Display for SftpError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SftpError: {}", self.description)
+    }
+}
+
+impl std::error::Error for SftpError {
 }
 
 impl SftpConnection {
-    fn new(sftp_source: &settings::SftpSource) -> SftpConnection {
-        let tcp = TcpStream::connect(&sftp_source.address).unwrap();
+    fn new(sftp_source: &settings::SftpSource) -> Result<SftpConnection, SftpError> {
+        let tcp_connect_result = TcpStream::connect(&sftp_source.address);
+
+        let tcp = match tcp_connect_result {
+            Ok(v) => v,
+            Err(e) => return Err(SftpError::new(e.to_string()))
+        };
 
         let mut session = Box::new(Session::new().unwrap());
         session.set_compress(true);
-        session.handshake(&tcp).unwrap();
-        session.userauth_agent(&sftp_source.username).expect("authentication failed");
+        let handshake_result = session.handshake(&tcp);
+
+        match handshake_result {
+            Ok(()) => debug!("SSH handshake succeeded"),
+            Err(e) => return Err(SftpError::new(e.to_string()))
+        }
+
+        let auth_result = session
+            .userauth_agent(&sftp_source.username);
+
+        info!("authorizing using ssh agent");
+
+        match auth_result {
+            Ok(()) => debug!("SSH authorization succeeded"),
+            Err(e) => return Err(SftpError::new(e.to_string()))
+        }
 
         // OwningHandle is needed to store a value and a reference to that value in the same struct
-        let sftp = OwningHandle::new_with_fn(
-            session,
-            unsafe { |s| Box::new((*s).sftp().unwrap()) }
-        );
+        let sftp =
+            OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
-        return SftpConnection{tcp: tcp, sftp: sftp};
+        return Ok(SftpConnection {
+            tcp: tcp,
+            sftp: sftp,
+        });
     }
 }
 
@@ -65,7 +109,7 @@ struct SftpDownloader {
 
 struct Download {
     path: String,
-    size: Option<u64>
+    size: Option<u64>,
 }
 
 impl Message for Download {
@@ -76,7 +120,12 @@ impl Handler<Download> for SftpDownloader {
     type Result = bool;
 
     fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
-        info!("{} downloading '{}' {} bytes", self.config.name, msg.path, msg.size.unwrap());
+        info!(
+            "{} downloading '{}' {} bytes",
+            self.config.name,
+            msg.path,
+            msg.size.unwrap()
+        );
 
         let remote_path = Path::new(&msg.path);
         let local_path = Path::new("/tmp").join(remote_path.file_name().unwrap());
@@ -97,10 +146,13 @@ impl Handler<Download> for SftpDownloader {
                     info!("{} removed '{}'", self.config.name, msg.path);
                 }
                 return true;
-            },
+            }
             Err(e) => {
-                error!("{} error downloading '{}': {}", self.config.name, msg.path, e);
-                return false
+                error!(
+                    "{} error downloading '{}': {}",
+                    self.config.name, msg.path, e
+                );
+                return false;
             }
         }
     }
@@ -117,7 +169,7 @@ impl Actor for SftpDownloader {
 struct SftpScanner {
     sftp_scanner: settings::SftpScanner,
     sftp_connection: SftpConnection,
-    downloader: Addr<SftpDownloader>
+    downloader: Addr<SftpDownloader>,
 }
 
 impl SftpScanner {
@@ -136,9 +188,15 @@ impl Handler<Scan> for SftpScanner {
     type Result = i32;
 
     fn handle(&mut self, _msg: Scan, _ctx: &mut Context<Self>) -> Self::Result {
-        info!("{} scanning remote directory '{}'", self.sftp_scanner.name, &self.sftp_scanner.directory);
+        info!(
+            "{} scanning remote directory '{}'",
+            self.sftp_scanner.name, &self.sftp_scanner.directory
+        );
 
-        let result = self.sftp_connection.sftp.readdir(Path::new(&self.sftp_scanner.directory));
+        let result = self
+            .sftp_connection
+            .sftp
+            .readdir(Path::new(&self.sftp_scanner.directory));
 
         let paths = result.unwrap();
 
@@ -148,9 +206,9 @@ impl Handler<Scan> for SftpScanner {
             let path_str = path.to_str().unwrap().to_string();
 
             if self.sftp_scanner.regex.is_match(file_name) {
-                let msg = Download{
+                let msg = Download {
                     path: path_str.clone(),
-                    size: stat.size
+                    size: stat.size,
                 };
 
                 self.downloader.do_send(msg);
@@ -168,13 +226,16 @@ impl Actor for SftpScanner {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.run_interval(Duration::from_millis(self.sftp_scanner.interval), Self::scan);
+        ctx.run_interval(
+            Duration::from_millis(self.sftp_scanner.interval),
+            Self::scan,
+        );
         info!("SftpScanner actor started");
     }
 }
 
 struct FileSystemEvent {
-    path: String
+    path: String,
 }
 
 impl Message for FileSystemEvent {
@@ -183,7 +244,7 @@ impl Message for FileSystemEvent {
 
 struct LocalSource {
     sources: Vec<settings::DirectorySource>,
-    inotify: Inotify
+    inotify: Inotify,
 }
 
 impl StreamHandler<FileSystemEvent, io::Error> for LocalSource {
@@ -197,32 +258,31 @@ impl Actor for LocalSource {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         let sources = self.sources.clone();
-        let watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = sources.iter().map(|directory_source| {
-            info!("Directory source: {}", directory_source.name);
-            let source_directory_str = directory_source.directory.clone();
-            let source_directory = Path::new(&source_directory_str);
+        let watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = sources
+            .iter()
+            .map(|directory_source| {
+                info!("Directory source: {}", directory_source.name);
+                let source_directory_str = directory_source.directory.clone();
+                let source_directory = Path::new(&source_directory_str);
 
-            let watch = self.inotify
-                .add_watch(
-                    source_directory,
-                    WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO
-                )
-                .expect("Failed to add inotify watch");
+                let watch = self
+                    .inotify
+                    .add_watch(
+                        source_directory,
+                        WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+                    )
+                    .expect("Failed to add inotify watch");
 
-            info!("Added watch on {}", source_directory_str);
+                info!("Added watch on {}", source_directory_str);
 
-            (watch, directory_source.clone())
-        }).collect();
+                (watch, directory_source.clone())
+            })
+            .collect();
 
         let buffer: Vec<u8> = Vec::with_capacity(4096);
 
-        let event_stream = self.inotify
-            .event_stream(buffer)
-            .filter(|event| {
-                info!("Filesystem event");
-                event.mask.contains(EventMask::CLOSE_WRITE) | event.mask.contains(EventMask::MOVED_TO)
-            })
-            .map(move |event: inotify::Event<std::ffi::OsString>| -> FileSystemEvent {
+        let event_stream = self.inotify.event_stream(buffer).map(
+            move |event: inotify::Event<std::ffi::OsString>| -> FileSystemEvent {
                 let name = event.name.expect("Could not decode name");
 
                 info!("File detected: {:?}", name);
@@ -231,8 +291,11 @@ impl Actor for LocalSource {
 
                 let source_path = Path::new(&data_source.directory).join(name);
 
-                return FileSystemEvent { path: source_path.to_str().unwrap().to_string() };
-            });
+                return FileSystemEvent {
+                    path: source_path.to_str().unwrap().to_string(),
+                };
+            },
+        );
 
         LocalSource::add_stream(event_stream, ctx);
 
@@ -240,74 +303,103 @@ impl Actor for LocalSource {
     }
 }
 
-
 pub fn run(settings: settings::Settings) -> () {
     let system = actix::System::new("cortex");
 
     let sftp_sources_hash: HashMap<String, &settings::SftpSource> = settings
         .sftp_sources
         .iter()
-        .map(|sftp_source| {
-            (sftp_source.name.clone(), sftp_source)
-        }).collect();
+        .map(|sftp_source| (sftp_source.name.clone(), sftp_source))
+        .collect();
 
-    let downloaders: Vec<Addr<SftpDownloader>> = settings.sftp_downloaders.iter().map(|downloader| {
-        let sftp_source = sftp_sources_hash.get(&downloader.sftp_source).unwrap();
-        let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
+    let downloaders: Vec<Addr<SftpDownloader>> = settings
+        .sftp_downloaders
+        .iter()
+        .map(|downloader| {
+            let sftp_source = sftp_sources_hash.get(&downloader.sftp_source).unwrap();
+            let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
 
-        let downloader_settings = downloader.clone();
+            let downloader_settings = downloader.clone();
 
-        let addr = SyncArbiter::start(
-            downloader_settings.thread_count,
-            move || {
-                let conn = SftpConnection::new(&owned_sftp_source.clone());
+            let addr = SyncArbiter::start(downloader_settings.thread_count, move || {
+                let conn = loop {
+                    let conn_result = SftpConnection::new(&owned_sftp_source.clone());
+
+                    match conn_result {
+                        Ok(c) => break c,
+                        Err(e) => error!("Could not connect: {}", e)
+                    }
+
+                    thread::sleep(Duration::from_millis(1000));
+                };
 
                 return SftpDownloader {
                     config: downloader_settings.clone(),
-                    sftp_connection: conn
+                    sftp_connection: conn,
                 };
-            }
-        );
+            });
 
-        addr
-    }).collect();
+            addr
+        })
+        .collect();
 
     // For now let the default downloader be the first.
     // Need to implement looking up the right one.
     let default_downloader = downloaders[0].clone();
 
-    let _scanners: Vec<Addr<SftpScanner>> = settings.sftp_scanners.iter().map(|scanner| {
-        let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap();
-        let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
+    let _scanners: Vec<Addr<SftpScanner>> = settings
+        .sftp_scanners
+        .iter()
+        .map(|scanner| {
+            let sftp_source = sftp_sources_hash.get(&scanner.sftp_source).unwrap();
+            let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
 
-        let conn = SftpConnection::new(&owned_sftp_source.clone());
+            let conn = loop {
+                let conn_result = SftpConnection::new(&owned_sftp_source.clone());
 
-        let scanner = SftpScanner {
-            sftp_scanner: scanner.clone(),
-            sftp_connection: conn,
-            downloader: default_downloader.clone()
-        };
+                match conn_result {
+                    Ok(c) => break c,
+                    Err(e) => error!("Could not connect: {}", e)
+                }
 
-        let scanner_addr = scanner.start();
+                thread::sleep(Duration::from_millis(1000));
+            };
 
-        let _scan_future = scanner_addr.do_send(Scan);
+            let scanner = SftpScanner {
+                sftp_scanner: scanner.clone(),
+                sftp_connection: conn,
+                downloader: default_downloader.clone(),
+            };
 
-        scanner_addr
-    }).collect();
+            let scanner_addr = scanner.start();
+
+            let _scan_future = scanner_addr.do_send(Scan);
+
+            scanner_addr
+        })
+        .collect();
 
     let init_result = Inotify::init();
 
     let inotify = match init_result {
         Ok(i) => i,
-        Err(e) => panic!("Could not initialize inotify: {}", e)
+        Err(e) => panic!("Could not initialize inotify: {}", e),
     };
 
     let local_source = LocalSource {
         sources: settings.directory_sources,
-        inotify: inotify
+        inotify: inotify,
     };
 
     local_source.start();
 
+    let listener = AmqpListener {
+        addr: settings.command_queue.address,
+    };
+
+    let join_handle = listener.start_consumer();
+
     system.run();
+
+    join_handle.join().unwrap();
 }
