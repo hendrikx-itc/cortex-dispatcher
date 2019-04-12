@@ -19,7 +19,7 @@ use futures::{future, Future};
 
 
 pub struct SftpDownloader {
-    pub config: settings::SftpDownloader,
+    pub config: settings::SftpSource,
     pub sftp_connection: SftpConnection,
 }
 
@@ -64,7 +64,9 @@ impl Handler<Download> for SftpDownloader {
             Ok(_) => {
                 info!("{} downloaded '{}'", self.config.name, msg.path);
 
-                if self.config.remove_after_download {
+                let remove_after_download = true;
+
+                if remove_after_download {
                     self.sftp_connection.sftp.unlink(&remote_path).unwrap();
 
                     info!("{} removed '{}'", self.config.name, msg.path);

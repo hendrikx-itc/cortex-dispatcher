@@ -29,17 +29,16 @@ impl Cortex {
         Cortex { settings: settings }
     }
 
-    fn start_sftp_downloaders(sftp_downloaders: Vec<settings::SftpDownloader>, sftp_sources_hash: HashMap<String, &settings::SftpSource>) -> HashMap<String, Addr<SftpDownloader>> {
-        let downloaders_map: HashMap<String, Addr<SftpDownloader>> = sftp_downloaders
+    fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>) -> HashMap<String, Addr<SftpDownloader>> {
+        let downloaders_map: HashMap<String, Addr<SftpDownloader>> = sftp_sources
             .iter()
-            .map(|downloader| {
-                let sftp_source_name = downloader.sftp_source.clone();
-                let sftp_source = sftp_sources_hash.get(&sftp_source_name).unwrap();
+            .map(|sftp_source| {
+                let sftp_source_name = sftp_source.name.clone();
                 let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
 
-                let downloader_settings = downloader.clone();
+                let sftp_source_settings = sftp_source.clone();
 
-                let addr = SyncArbiter::start(downloader_settings.thread_count, move || {
+                let addr = SyncArbiter::start(sftp_source_settings.thread_count, move || {
                     let conn = loop {
                         let conn_result = SftpConnection::new(&owned_sftp_source.clone());
 
@@ -52,7 +51,7 @@ impl Cortex {
                     };
 
                     return SftpDownloader {
-                        config: downloader_settings.clone(),
+                        config: sftp_source_settings.clone(),
                         sftp_connection: conn,
                     };
                 });
@@ -67,13 +66,7 @@ impl Cortex {
     pub fn run(self) -> () {
         let system = actix::System::new("cortex");
 
-        let sftp_sources_hash: HashMap<String, &settings::SftpSource> = self.settings
-            .sftp_sources
-            .iter()
-            .map(|sftp_source| (sftp_source.name.clone(), sftp_source))
-            .collect();
-
-        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_downloaders, sftp_sources_hash);
+        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources);
 
         let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map: downloaders_map };
 
