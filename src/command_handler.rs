@@ -5,8 +5,8 @@ pub struct CommandHandler {
 }
 
 impl CommandHandler {
-    pub fn sftp_download(&mut self, path: String) {
-        self.sftp_download_dispatcher.dispatch_download(&String::from("local-test"), path.clone());
+    pub fn sftp_download(&mut self, sftp_source: String, path: String) {
+        self.sftp_download_dispatcher.dispatch_download(&sftp_source, path.clone());
         info!("sftp_download: {}", path);
     }
 
