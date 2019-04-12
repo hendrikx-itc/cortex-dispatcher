@@ -5,11 +5,20 @@ extern crate config;
 extern crate log;
 extern crate env_logger;
 
-extern crate cortex_dispatcher;
-
-use cortex_dispatcher::Settings;
-
+mod settings;
 mod cmd;
+mod cortex;
+mod amqp_consumer;
+mod command_handler;
+mod sftp_downloader;
+mod sftp_connection;
+mod local_source;
+
+use settings::Settings;
+use cortex::Cortex;
+
+#[macro_use]
+extern crate serde_derive;
 
 fn main() {
     env_logger::builder()
@@ -34,5 +43,5 @@ fn main() {
 
     info!("Configuration loaded");
 
-    cortex_dispatcher::run(settings);
+    Cortex::new(settings).run();
 }

@@ -4,10 +4,10 @@ use std::thread;
 use lapin_futures::channel::{BasicConsumeOptions, QueueDeclareOptions};
 use lapin_futures::client::ConnectionOptions;
 use lapin_futures::types::FieldTable;
+use lapin_futures as lapin;
 
 use failure::Error;
-use lapin_futures as lapin;
-use log::{debug, info};
+use log::info;
 use tokio;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
@@ -15,20 +15,40 @@ use tokio::runtime::current_thread::block_on_all;
 
 use serde_json;
 
+use crate::command_handler::CommandHandler;
 
+/// The set of commands that can be consumed from the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 enum Command {
     SftpDownload { path: String },
     HttpDownload { url: String }
 }
 
+trait CommandDispatch {
+    fn dispatch(&mut self, target: &mut CommandHandler);
+}
+
+impl CommandDispatch for Command {
+    fn dispatch(&mut self, target: &mut CommandHandler) {
+        match self {
+            Command::SftpDownload { path } => target.sftp_download(path.clone()),
+            Command::HttpDownload { url } => target.http_download(url.clone())
+        }
+    }
+}
+
 pub struct AmqpListener {
     pub addr: String,
+    pub command_handler: CommandHandler
 }
 
 impl AmqpListener {
-    pub fn start_consumer(self) -> thread::JoinHandle<()> {
-        thread::spawn(move || -> () {
+    /// Starts a new thread running the command consumer
+    pub fn start_consumer(mut self) -> thread::JoinHandle<()> {
+        let builder = thread::Builder::new()
+            .name("amqp_listener".into());
+
+        builder.spawn(move || -> () {
             let addr: SocketAddr = self.addr.parse().unwrap();
 
             block_on_all(
@@ -65,14 +85,13 @@ impl AmqpListener {
                         info!("got consumer stream");
 
                         stream.for_each(move |message| {
-                            debug!("got message: {:?}", message);
-                            let decoded_message = std::str::from_utf8(&message.data).unwrap();
-                            info!("decoded message: {}", decoded_message);
-
                             let deserialize_result: serde_json::Result<Command> = serde_json::from_slice(message.data.as_slice());
 
                             match deserialize_result {
-                                Ok(command) => info!("{:?}", command),
+                                Ok(mut command) => {
+                                    info!("{:?}", command);
+                                    command.dispatch(&mut self.command_handler);
+                                },
                                 Err(e) => error!("Error deserializing command: {}", e)
                             }
 
@@ -81,6 +100,6 @@ impl AmqpListener {
                     }).map_err(Error::from)
                 })
             ).expect("runtime failure");
-        })
+        }).unwrap()
     }
 }
