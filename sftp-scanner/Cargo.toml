@@ -1,0 +1,18 @@
+[package]
+name = "sftp-scanner"
+version = "0.1.0"
+authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
+edition = "2018"
+
+[dependencies]
+clap = "2.33"
+config = "0.9"
+env_logger = "0.6.1"
+failure = "0.1.5"
+futures = "0.1"
+lapin-futures = "0.18.0"
+log = "0.4.0"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+tokio = "0.1.18"
