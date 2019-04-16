@@ -5,7 +5,7 @@ use env_logger;
 use failure::Error;
 use futures::future::Future;
 use lapin_futures as lapin;
-use log::info;
+use log::{info, error};
 use tokio;
 use tokio::net::TcpStream;
 use tokio::runtime::Runtime;
@@ -39,11 +39,20 @@ fn main() {
 
     let mut settings = config::Config::new();
 
-    info!("Loading configuration");
+    info!("Loading configuration from file {}", config_file);
 
-    settings
-        .merge(config::File::new(config_file, config::FileFormat::Yaml))
-        .expect("Could not read config");
+    let merge_result = settings
+        .merge(config::File::new(config_file, config::FileFormat::Yaml));
+
+    match merge_result {
+        Ok(_config) => {
+            info!("Configuration loaded from file {}", config_file);
+        },
+        Err(e) => {
+            error!("Error loading configuration: {}", e);
+            ::std::process::exit(1);
+        }
+    }
 
     let settings: Settings = settings.try_into().unwrap();
 
