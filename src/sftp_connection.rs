@@ -12,8 +12,6 @@ use owning_ref::OwningHandle;
 extern crate failure;
 extern crate lapin_futures;
 
-use crate::settings;
-
 
 pub struct SftpConnection {
     tcp: TcpStream,
@@ -41,8 +39,8 @@ impl std::error::Error for SftpError {
 }
 
 impl SftpConnection {
-    pub fn new(sftp_source: &settings::SftpSource) -> Result<SftpConnection, SftpError> {
-        let tcp_connect_result = TcpStream::connect(&sftp_source.address);
+    pub fn new(address: &String, username: &String) -> Result<SftpConnection, SftpError> {
+        let tcp_connect_result = TcpStream::connect(address);
 
         let tcp = match tcp_connect_result {
             Ok(v) => v,
@@ -59,7 +57,7 @@ impl SftpConnection {
         }
 
         let auth_result = session
-            .userauth_agent(&sftp_source.username);
+            .userauth_agent(username);
 
         info!("authorizing using ssh agent");
 
