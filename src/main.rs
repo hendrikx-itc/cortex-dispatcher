@@ -35,9 +35,18 @@ fn main() {
 
     info!("Loading configuration");
 
-    settings
-        .merge(config::File::new(config_file, config::FileFormat::Yaml))
-        .expect("Could not read config");
+    let merge_result = settings
+        .merge(config::File::new(config_file, config::FileFormat::Yaml));
+
+    match merge_result {
+        Ok(_config) => {
+            info!("Configuration loaded from file {}", config_file);
+        },
+        Err(e) => {
+            error!("Error loading configuration: {}", e);
+            ::std::process::exit(1);
+        }
+    }
 
     let settings: Settings = settings.try_into().unwrap();
 
