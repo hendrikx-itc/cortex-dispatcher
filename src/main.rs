@@ -20,6 +20,8 @@ use cortex::Cortex;
 #[macro_use]
 extern crate serde_derive;
 
+extern crate chrono;
+
 fn main() {
     env_logger::builder()
         .default_format_timestamp(false)

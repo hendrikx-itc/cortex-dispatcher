@@ -1,14 +1,18 @@
+use std::path::Path;
+use std::{thread, time};
+
 use crate::lapin::channel::{BasicProperties, BasicPublishOptions, QueueDeclareOptions};
 use crate::lapin::client::ConnectionOptions;
 use crate::lapin::types::FieldTable;
 use env_logger;
 use failure::Error;
-use futures::future::Future;
+use futures::Future;
+use futures::stream::Stream;
+use futures::sync::mpsc::channel;
 use lapin_futures as lapin;
 use log::{info, error};
 use tokio;
 use tokio::net::TcpStream;
-use tokio::runtime::Runtime;
 use serde_json;
 
 extern crate config;
@@ -16,16 +20,22 @@ extern crate config;
 #[macro_use]
 extern crate serde_derive;
 
+extern crate chrono;
+use chrono::prelude::*;
+
 mod cmd;
 mod settings;
+mod sftp_connection;
 
 use settings::Settings;
+use sftp_connection::SftpConnection;
+
 
 /// The set of commands that can be consumed from the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 enum Command {
-    SftpDownload { sftp_source: String, path: String },
-    HttpDownload { url: String }
+    SftpDownload { created: DateTime<Utc>, sftp_source: String, path: String },
+    HttpDownload { created: DateTime<Utc>, url: String }
 }
 
 fn main() {
@@ -58,52 +68,114 @@ fn main() {
 
     info!("Configuration loaded");
 
+	let (sender, receiver) = channel(4096);
+
+    let scanner_threads: Vec<thread::JoinHandle<()>> = settings.sftp_sources.clone().into_iter().map(|sftp_source| {
+		let mut sender_l = sender.clone();
+		thread::spawn(move || {
+			let conn_result = SftpConnection::new(&sftp_source.address.clone(), &sftp_source.username.clone());
+
+			let sftp_connection = conn_result.unwrap();
+
+			loop {
+				info!("{} scanning remote directory '{}'", &sftp_source.name, &sftp_source.directory);
+
+				let result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
+
+				let paths = result.unwrap();
+
+				for (path, stat) in paths {
+					let file_name = path.file_name().unwrap().to_str().unwrap();
+
+					let path_str = path.to_str().unwrap().to_string();
+
+					if sftp_source.regex.is_match(file_name) {
+						info!(" - {} - matches!", path_str);
+						let command = Command::SftpDownload {
+							created: Utc::now(),
+							sftp_source: sftp_source.name.clone(),
+							path: path_str
+						};
+
+						sender_l.try_send(command).unwrap();
+					} else {
+						info!(" - {} - no match", path_str);
+					}
+				}
+
+				thread::sleep(time::Duration::from_millis(1000));
+			}
+		})
+    }).collect();
+
     let addr = settings.command_queue.address.parse().unwrap();
 
-    Runtime::new()
-        .unwrap()
-        .block_on_all(
-            TcpStream::connect(&addr)
+    let future = TcpStream::connect(&addr)
+        .map_err(Error::from)
+        .and_then(|stream| {
+            info!("TcpStream connected");
+
+            lapin::client::Client::connect(stream, ConnectionOptions::default())
                 .map_err(Error::from)
-                .and_then(|stream| {
-                    // connect() returns a future of an AMQP Client
-                    // that resolves once the handshake is done
-                    lapin::client::Client::connect(stream, ConnectionOptions::default())
-                        .map_err(Error::from)
+        })
+        .and_then(|(client, _ /* heartbeat */)| {
+            // create_channel returns a future that is resolved
+            // once the channel is successfully created
+            client.create_channel().map_err(Error::from)
+        })
+        .and_then(|channel| {
+            let id = channel.id;
+            info!("created channel with id: {}", id);
+
+            let queue_name = settings.command_queue.queue_name;
+
+            // we using a "move" closure to reuse the channel
+            // once the queue is declared. We could also clone
+            // the channel
+            channel
+                .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new())
+                .map(move |queue| {
+                    info!("channel {} declared queue {}", id, queue.name());
+
+					let stream = receiver.for_each(move |cmd| {
+						let command_str = serde_json::to_string(&cmd).unwrap();
+
+						let future = channel.basic_publish(
+							"",
+							&queue.name(),
+							command_str.as_bytes().to_vec(),
+							BasicPublishOptions::default(),
+							BasicProperties::default(),
+						).and_then(|request_result| {
+							info!("command sent");
+							match request_result {
+								Some(request_id) => {
+									info!("confirmed: {}", request_id);
+								},
+								None => {
+									info!("not confirmed/nacked");
+								}
+							}
+							Ok(())
+						}).map_err(|e| {
+							info!("error sending command: {:?}", e);
+						});
+
+						tokio::spawn(future);
+
+						Ok(())
+					});
+
+					tokio::spawn(stream);
                 })
-                .and_then(|(client, _ /* heartbeat */)| {
-                    // create_channel returns a future that is resolved
-                    // once the channel is successfully created
-                    client.create_channel().map_err(Error::from)
-                })
-                .and_then(|channel| {
-                    let id = channel.id;
-                    info!("created channel with id: {}", id);
+                .map_err(Error::from)
+        })
+        .and_then(|_| {
+            Ok(())
+        })
+        .map_err(|e| {
+            error!("Error: {:?}", e)
+        });
 
-                    let queue_name = settings.command_queue.queue_name;
-
-                    // we using a "move" closure to reuse the channel
-                    // once the queue is declared. We could also clone
-                    // the channel
-                    channel
-                        .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new())
-                        .and_then(move |_| {
-                            info!("channel {} declared queue {}", id, queue_name);
-
-                            let command = Command::SftpDownload { sftp_source: "test".to_string(), path: "test_data/foo.txt".to_string() };
-
-                            let command_str = serde_json::to_string(&command).unwrap();
-
-                            channel.basic_publish(
-                                "",
-                                &queue_name,
-                                command_str.as_bytes().to_vec(),
-                                BasicPublishOptions::default(),
-                                BasicProperties::default(),
-                            )
-                        })
-                        .map_err(Error::from)
-                }),
-        )
-        .expect("runtime failure");
+    tokio::run(future);
 }
