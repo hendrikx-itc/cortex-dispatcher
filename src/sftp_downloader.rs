@@ -17,6 +17,9 @@ use crate::sftp_connection::SftpConnection;
 
 use futures::{future, Future};
 
+use tee::TeeReader;
+use sha2::{Sha256, Digest};
+
 
 pub struct SftpDownloader {
     pub config: settings::SftpSource,
@@ -58,7 +61,13 @@ impl Handler<Download> for SftpDownloader {
 
         let mut local_file = File::create(local_path).unwrap();
 
-        let copy_result = io::copy(&mut remote_file, &mut local_file);
+        let mut sha256 = Sha256::new();
+
+        let mut tee_reader = TeeReader::new(&mut remote_file, &mut sha256);
+
+        let copy_result = io::copy(&mut tee_reader, &mut local_file);
+
+        info!("{}: {:x}", msg.path, sha256.result());
 
         match copy_result {
             Ok(_) => {

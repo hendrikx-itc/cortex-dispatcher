@@ -22,3 +22,9 @@ serde_regex = "0.3"
 ssh2 = "0.3.3"
 tokio = "0.1.18"
 chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+incremental = false

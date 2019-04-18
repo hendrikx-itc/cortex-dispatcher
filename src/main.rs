@@ -21,6 +21,8 @@ use cortex::Cortex;
 extern crate serde_derive;
 
 extern crate chrono;
+extern crate tee;
+extern crate sha2;
 
 fn main() {
     env_logger::builder()
