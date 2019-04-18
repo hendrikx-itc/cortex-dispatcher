@@ -24,6 +24,7 @@ use sha2::{Sha256, Digest};
 pub struct SftpDownloader {
     pub config: settings::SftpSource,
     pub sftp_connection: SftpConnection,
+    pub local_storage_path: String
 }
 
 pub struct Download {
@@ -47,7 +48,7 @@ impl Handler<Download> for SftpDownloader {
         );
 
         let remote_path = Path::new(&msg.path);
-        let local_path = Path::new("/tmp").join(remote_path.file_name().unwrap());
+        let local_path = Path::new(&self.local_storage_path).join(remote_path.file_name().unwrap());
 
         let open_result = self.sftp_connection.sftp.open(&remote_path);
 

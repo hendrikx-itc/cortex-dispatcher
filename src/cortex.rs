@@ -53,6 +53,7 @@ impl Cortex {
                     return SftpDownloader {
                         config: sftp_source_settings.clone(),
                         sftp_connection: conn,
+                        local_storage_path: String::from("/tmp")
                     };
                 });
 
