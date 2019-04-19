@@ -13,6 +13,7 @@ mod command_handler;
 mod sftp_downloader;
 mod sftp_connection;
 mod local_source;
+mod metrics;
 
 use settings::Settings;
 use cortex::Cortex;
@@ -23,6 +24,12 @@ extern crate serde_derive;
 extern crate chrono;
 extern crate tee;
 extern crate sha2;
+
+#[macro_use]
+extern crate prometheus;
+
+#[macro_use]
+extern crate lazy_static;
 
 fn main() {
     env_logger::builder()

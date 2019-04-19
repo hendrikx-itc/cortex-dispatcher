@@ -14,6 +14,7 @@ extern crate lapin_futures;
 
 use crate::settings;
 use crate::sftp_connection::SftpConnection;
+use crate::metrics;
 
 use futures::{future, Future};
 
@@ -71,8 +72,10 @@ impl Handler<Download> for SftpDownloader {
         info!("{}: {:x}", msg.path, sha256.result());
 
         match copy_result {
-            Ok(_) => {
-                info!("{} downloaded '{}'", self.config.name, msg.path);
+            Ok(bytes_copied) => {
+                info!("{} downloaded '{}', {} bytes", self.config.name, msg.path, bytes_copied);
+                metrics::FILE_DOWNLOAD_COUNTER.inc();
+                metrics::BYTES_DOWNLOADED_COUNTER.inc_by(bytes_copied as i64);
 
                 let remove_after_download = true;
 

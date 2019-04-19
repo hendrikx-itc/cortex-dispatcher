@@ -20,6 +20,8 @@ use crate::sftp_downloader::{SftpDownloader, SftpDownloadDispatcher};
 use crate::sftp_connection::SftpConnection;
 use crate::local_source::LocalSource;
 
+use prometheus;
+
 pub struct Cortex {
     pub settings: settings::Settings
 }
@@ -64,10 +66,41 @@ impl Cortex {
         downloaders_map
     }
 
-    pub fn run(self) -> () {
+    fn start_metrics_collector(&mut self) -> () {
+        let address = "127.0.0.1:9091";
+
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(2));
+
+                let metric_families = prometheus::gather();
+                let push_result = prometheus::push_metrics(
+                    "cortex-dispatcher",
+                    labels! {"instance".to_owned() => "HAL-9000".to_owned(),},
+                    &address,
+                    metric_families,
+                    Some(prometheus::BasicAuthentication {
+                        username: "user".to_owned(),
+                        password: "pass".to_owned(),
+                    }),
+                );
+                
+                match push_result {
+                    Ok(_) => {
+                        info!("Pushed metrics to Prometheus Gateway");
+                    },
+                    Err(e) => {
+                        error!("Error pushing metrics to Prometheus Gateway: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn run(&mut self) -> () {
         let system = actix::System::new("cortex");
 
-        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources);
+        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources.clone());
 
         let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map: downloaders_map };
 
@@ -79,7 +112,7 @@ impl Cortex {
         };
 
         let local_source = LocalSource {
-            sources: self.settings.directory_sources,
+            sources: self.settings.directory_sources.clone(),
             inotify: inotify,
         };
 
@@ -90,9 +123,11 @@ impl Cortex {
         };
 
         let listener = AmqpListener {
-            addr: self.settings.command_queue.address,
+            addr: self.settings.command_queue.address.clone(),
             command_handler: command_handler
         };
+
+        self.start_metrics_collector();
 
         let join_handle = listener.start_consumer();
 

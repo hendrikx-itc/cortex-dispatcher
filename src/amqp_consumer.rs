@@ -13,7 +13,7 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::runtime::current_thread::block_on_all;
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 
 use serde_json;
 
@@ -34,9 +34,13 @@ impl CommandDispatch for Command {
     fn dispatch(&mut self, target: &mut CommandHandler) {
         match self {
             Command::SftpDownload { created, sftp_source, path } => {
+                info!("dispatch SftpDownload created at {}", created);
+
                 target.sftp_download(sftp_source.clone(), path.clone())
             },
             Command::HttpDownload { created, url } => {
+                info!("dispatch HttpDownload created at {}", created);
+
                 target.http_download(url.clone())
             }
         }
