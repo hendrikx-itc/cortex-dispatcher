@@ -59,7 +59,15 @@ fn main() {
         }
     }
 
-    let settings: Settings = settings.try_into().unwrap();
+    let into_result = settings.try_into();
+
+    let settings: Settings = match into_result {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Error loading configuration: {}", e);
+            ::std::process::exit(1);
+        }
+    };
 
     info!("Configuration loaded");
 

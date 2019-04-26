@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::{thread, time};
+use std::time::Duration;
 
 use crate::lapin::channel::{BasicProperties, BasicPublishOptions, QueueDeclareOptions};
 use crate::lapin::client::ConnectionOptions;
@@ -10,7 +11,7 @@ use futures::Future;
 use futures::stream::Stream;
 use futures::sync::mpsc::channel;
 use lapin_futures as lapin;
-use log::{info, error};
+use log::{info, error, debug};
 use tokio;
 use tokio::net::TcpStream;
 use serde_json;
@@ -20,12 +21,19 @@ extern crate config;
 #[macro_use]
 extern crate serde_derive;
 
+#[macro_use]
+extern crate prometheus;
+
+#[macro_use]
+extern crate lazy_static;
+
 extern crate chrono;
 use chrono::prelude::*;
 
 mod cmd;
 mod settings;
 mod sftp_connection;
+mod metrics;
 
 use settings::Settings;
 use sftp_connection::SftpConnection;
@@ -64,7 +72,15 @@ fn main() {
         }
     }
 
-    let settings: Settings = settings.try_into().unwrap();
+    let into_result = settings.try_into();
+
+    let settings: Settings = match into_result {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Error loading configuration: {}", e);
+            ::std::process::exit(1);
+        }
+    };
 
     info!("Configuration loaded");
 
@@ -90,7 +106,7 @@ fn main() {
 					let path_str = path.to_str().unwrap().to_string();
 
 					if sftp_source.regex.is_match(file_name) {
-						info!(" - {} - matches!", path_str);
+						debug!(" - {} - matches!", path_str);
 						let command = Command::SftpDownload {
 							created: Utc::now(),
 							sftp_source: sftp_source.name.clone(),
@@ -99,30 +115,25 @@ fn main() {
 
 						sender_l.try_send(command).unwrap();
 					} else {
-						info!(" - {} - no match", path_str);
+						debug!(" - {} - no match", path_str);
 					}
 				}
 
-				thread::sleep(time::Duration::from_millis(1000));
+                metrics::DIR_SCAN_COUNTER.inc();
+
+				thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
 			}
 		})
     }).collect();
 
+    start_metrics_collector(
+        settings.prometheus.push_gateway.clone(),
+        settings.prometheus.push_interval
+    );
+
     let addr = settings.command_queue.address.parse().unwrap();
 
-    let future = TcpStream::connect(&addr)
-        .map_err(Error::from)
-        .and_then(|stream| {
-            info!("TcpStream connected");
-
-            lapin::client::Client::connect(stream, ConnectionOptions::default())
-                .map_err(Error::from)
-        })
-        .and_then(|(client, _ /* heartbeat */)| {
-            // create_channel returns a future that is resolved
-            // once the channel is successfully created
-            client.create_channel().map_err(Error::from)
-        })
+    let future = connect_channel(&addr)
         .and_then(|channel| {
             let id = channel.id;
             info!("created channel with id: {}", id);
@@ -150,10 +161,10 @@ fn main() {
 							info!("command sent");
 							match request_result {
 								Some(request_id) => {
-									info!("confirmed: {}", request_id);
+									debug!("confirmed: {}", request_id);
 								},
 								None => {
-									info!("not confirmed/nacked");
+									debug!("not confirmed/nacked");
 								}
 							}
 							Ok(())
@@ -177,5 +188,53 @@ fn main() {
             error!("Error: {:?}", e)
         });
 
+
     tokio::run(future);
+}
+
+fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin::channel::Channel<TcpStream>, Error = Error> + Send + 'static {
+    TcpStream::connect(addr)
+        .map_err(Error::from)
+        .and_then(|stream| {
+            info!("TcpStream connected");
+
+            lapin::client::Client::connect(stream, ConnectionOptions::default())
+                .map_err(Error::from)
+        })
+        .and_then(|(client, heartbeat)| {
+            tokio::spawn(heartbeat.map_err(|_e| ()));
+
+            // create_channel returns a future that is resolved
+            // once the channel is successfully created
+            client.create_channel().map_err(Error::from)
+        })
+}
+
+fn start_metrics_collector(address: String, push_interval: u64) -> () {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(push_interval));
+
+            let metric_families = prometheus::gather();
+            let push_result = prometheus::push_metrics(
+                "cortex-sftp-scanner",
+                labels! {},
+                &address,
+                metric_families,
+                Some(prometheus::BasicAuthentication {
+                    username: "user".to_owned(),
+                    password: "pass".to_owned(),
+                }),
+            );
+            
+            match push_result {
+                Ok(_) => {
+                    debug!("Pushed metrics to Prometheus Gateway");
+                },
+                Err(e) => {
+                    error!("Error pushing metrics to Prometheus Gateway: {}", e);
+                }
+            }
+        }
+    });
 }

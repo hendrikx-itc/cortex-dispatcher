@@ -56,7 +56,7 @@ impl Handler<Download> for SftpDownloader {
         let mut remote_file = match open_result {
             Ok(remote_file) => remote_file,
             Err(e) => {
-                error!("Error opening remote file: {}", e);
+                error!("Error opening remote file {}: {}", msg.path, e);
                 return false
             }
         };
@@ -80,9 +80,16 @@ impl Handler<Download> for SftpDownloader {
                 let remove_after_download = true;
 
                 if remove_after_download {
-                    self.sftp_connection.sftp.unlink(&remote_path).unwrap();
-
-                    info!("{} removed '{}'", self.config.name, msg.path);
+                    let unlink_result = self.sftp_connection.sftp.unlink(&remote_path);
+                    
+                    match unlink_result {
+                        Ok(_) => {
+                            info!("{} removed '{}'", self.config.name, msg.path);
+                        },
+                        Err(e) => {
+                            info!("{} error removing '{}': {}", self.config.name, msg.path, e);
+                        }
+                    }
                 }
                 return true;
             }

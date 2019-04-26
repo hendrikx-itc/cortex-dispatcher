@@ -43,9 +43,16 @@ pub struct CommandQueue {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Prometheus {
+    pub push_gateway: String,
+    pub push_interval: u64
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub storage: Storage,
     pub command_queue: CommandQueue,
     pub directory_sources: Vec<DirectorySource>,
     pub sftp_sources: Vec<SftpSource>,
+    pub prometheus: Prometheus
 }

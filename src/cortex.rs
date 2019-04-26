@@ -66,36 +66,6 @@ impl Cortex {
         downloaders_map
     }
 
-    fn start_metrics_collector(&mut self) -> () {
-        let address = "127.0.0.1:9091";
-
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_secs(2));
-
-                let metric_families = prometheus::gather();
-                let push_result = prometheus::push_metrics(
-                    "cortex-dispatcher",
-                    labels! {"instance".to_owned() => "HAL-9000".to_owned(),},
-                    &address,
-                    metric_families,
-                    Some(prometheus::BasicAuthentication {
-                        username: "user".to_owned(),
-                        password: "pass".to_owned(),
-                    }),
-                );
-                
-                match push_result {
-                    Ok(_) => {
-                        info!("Pushed metrics to Prometheus Gateway");
-                    },
-                    Err(e) => {
-                        error!("Error pushing metrics to Prometheus Gateway: {}", e);
-                    }
-                }
-            }
-        });
-    }
 
     pub fn run(&mut self) -> () {
         let system = actix::System::new("cortex");
@@ -127,7 +97,10 @@ impl Cortex {
             command_handler: command_handler
         };
 
-        self.start_metrics_collector();
+        start_metrics_collector(
+            self.settings.prometheus.push_gateway.clone(),
+            self.settings.prometheus.push_interval
+        );
 
         let join_handle = listener.start_consumer();
 
@@ -135,4 +108,33 @@ impl Cortex {
 
         join_handle.join().unwrap();
     }
+}
+
+fn start_metrics_collector(address: String, push_interval: u64) -> () {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(push_interval));
+
+            let metric_families = prometheus::gather();
+            let push_result = prometheus::push_metrics(
+                "cortex-dispatcher",
+                labels! {},
+                &address,
+                metric_families,
+                Some(prometheus::BasicAuthentication {
+                    username: "user".to_owned(),
+                    password: "pass".to_owned(),
+                }),
+            );
+            
+            match push_result {
+                Ok(_) => {
+                    debug!("Pushed metrics to Prometheus Gateway");
+                },
+                Err(e) => {
+                    error!("Error pushing metrics to Prometheus Gateway: {}", e);
+                }
+            }
+        }
+    });
 }
