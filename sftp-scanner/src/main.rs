@@ -27,6 +27,8 @@ extern crate prometheus;
 #[macro_use]
 extern crate lazy_static;
 
+extern crate postgres;
+
 extern crate chrono;
 use chrono::prelude::*;
 
@@ -55,40 +57,27 @@ fn main() {
         .value_of("config")
         .unwrap_or("/etc/cortex/sftp-scanner.yaml");
 
-    let mut settings = config::Config::new();
-
-    info!("Loading configuration from file {}", config_file);
-
-    let merge_result = settings
-        .merge(config::File::new(config_file, config::FileFormat::Yaml));
-
-    match merge_result {
-        Ok(_config) => {
-            info!("Configuration loaded from file {}", config_file);
-        },
-        Err(e) => {
-            error!("Error loading configuration: {}", e);
-            ::std::process::exit(1);
-        }
-    }
-
-    let into_result = settings.try_into();
-
-    let settings: Settings = match into_result {
-        Ok(s) => s,
-        Err(e) => {
-            error!("Error loading configuration: {}", e);
-            ::std::process::exit(1);
-        }
-    };
-
-    info!("Configuration loaded");
+    let settings = load_settings(&config_file);
 
 	let (sender, receiver) = channel(4096);
 
     let scanner_threads: Vec<thread::JoinHandle<()>> = settings.sftp_sources.clone().into_iter().map(|sftp_source| {
 		let mut sender_l = sender.clone();
+        let db_url = settings.postgresql.url.clone();
 		thread::spawn(move || {
+            let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
+
+            let conn = match conn_result {
+                Ok(c) => {
+                    info!("Connected to database");
+                    c
+                },
+                Err(e) => {
+                    error!("Error connecting to database: {}", e);
+                    ::std::process::exit(2);
+                }
+            };
+
 			let conn_result = SftpConnection::new(&sftp_source.address.clone(), &sftp_source.username.clone());
 
 			let sftp_connection = conn_result.unwrap();
@@ -107,13 +96,28 @@ fn main() {
 
 					if sftp_source.regex.is_match(file_name) {
 						debug!(" - {} - matches!", path_str);
-						let command = Command::SftpDownload {
-							created: Utc::now(),
-							sftp_source: sftp_source.name.clone(),
-							path: path_str
-						};
 
-						sender_l.try_send(command).unwrap();
+                        let rows = conn.query(
+                            "select 1 from sftp_download where remote = $1 and path = $2",
+                            &[&sftp_source.name, &path_str]
+                        ).unwrap();
+
+                        if rows.is_empty() {
+                            let command = Command::SftpDownload {
+                                created: Utc::now(),
+                                sftp_source: sftp_source.name.clone(),
+                                path: path_str.clone()
+                            };
+
+                            sender_l.try_send(command).unwrap();
+
+                            conn.execute(
+                                "insert into sftp_download (remote, path) values ($1, $2)",
+                                &[&sftp_source.name, &path_str]
+                            ).unwrap();
+                        } else {
+                            debug!("{} already encountered {}", sftp_source.name, path_str);
+                        }
 					} else {
 						debug!(" - {} - no match", path_str);
 					}
@@ -208,6 +212,39 @@ fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin::cha
             // once the channel is successfully created
             client.create_channel().map_err(Error::from)
         })
+}
+
+fn load_settings(config_file: &str) -> Settings {
+    info!("Loading configuration from file {}", config_file);
+
+    let mut settings = config::Config::new();
+
+    let merge_result = settings
+        .merge(config::File::new(config_file, config::FileFormat::Yaml));
+
+    match merge_result {
+        Ok(_config) => {
+            info!("Configuration loaded from file {}", config_file);
+        },
+        Err(e) => {
+            error!("Error loading configuration: {}", e);
+            ::std::process::exit(1);
+        }
+    }
+
+    let into_result = settings.try_into();
+
+    let settings: Settings = match into_result {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Error loading configuration: {}", e);
+            ::std::process::exit(1);
+        }
+    };
+
+    info!("Configuration loaded");
+
+    settings
 }
 
 fn start_metrics_collector(address: String, push_interval: u64) -> () {
