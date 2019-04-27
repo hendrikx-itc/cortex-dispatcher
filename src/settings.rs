@@ -49,10 +49,16 @@ pub struct Prometheus {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Postgresql {
+    pub url: String
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub storage: Storage,
     pub command_queue: CommandQueue,
     pub directory_sources: Vec<DirectorySource>,
     pub sftp_sources: Vec<SftpSource>,
-    pub prometheus: Prometheus
+    pub prometheus: Prometheus,
+    pub postgresql: Postgresql
 }

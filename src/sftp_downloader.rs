@@ -25,6 +25,7 @@ use sha2::{Sha256, Digest};
 pub struct SftpDownloader {
     pub config: settings::SftpSource,
     pub sftp_connection: SftpConnection,
+    pub db_connection: postgres::Connection,
     pub local_storage_path: String
 }
 
@@ -69,11 +70,17 @@ impl Handler<Download> for SftpDownloader {
 
         let copy_result = io::copy(&mut tee_reader, &mut local_file);
 
-        info!("{}: {:x}", msg.path, sha256.result());
+        let hash = format!("{:x}", sha256.result());
+
+        info!("{}: {}", msg.path, hash);
 
         match copy_result {
             Ok(bytes_copied) => {
                 info!("{} downloaded '{}', {} bytes", self.config.name, msg.path, bytes_copied);
+                self.db_connection.execute(
+                    "insert into sftp_download (remote, path, hash) values ($1, $2, $3)",
+                    &[&self.config.name, &msg.path, &hash]
+                ).unwrap();
                 metrics::FILE_DOWNLOAD_COUNTER.inc();
                 metrics::BYTES_DOWNLOADED_COUNTER.inc_by(bytes_copied as i64);
 

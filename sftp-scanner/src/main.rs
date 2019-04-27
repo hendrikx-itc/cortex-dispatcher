@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::{thread, time};
 use std::time::Duration;
+use std::fmt;
 
 use crate::lapin::channel::{BasicProperties, BasicPublishOptions, QueueDeclareOptions};
 use crate::lapin::client::ConnectionOptions;
@@ -46,6 +47,19 @@ use sftp_connection::SftpConnection;
 enum Command {
     SftpDownload { created: DateTime<Utc>, sftp_source: String, path: String },
     HttpDownload { created: DateTime<Utc>, url: String }
+}
+
+impl fmt::Display for Command {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+            Command::SftpDownload { created, sftp_source, path } => {
+        		write!(f, "SftpDownload({}, {})", sftp_source, path)
+            },
+            Command::HttpDownload { created, url } => {
+        		write!(f, "HttpDownload({})", url)
+            }
+		}
+    }
 }
 
 fn main() {
@@ -98,7 +112,7 @@ fn main() {
 						debug!(" - {} - matches!", path_str);
 
                         let rows = conn.query(
-                            "select 1 from sftp_download where remote = $1 and path = $2",
+                            "select 1 from sftp_scan where remote = $1 and path = $2",
                             &[&sftp_source.name, &path_str]
                         ).unwrap();
 
@@ -112,7 +126,7 @@ fn main() {
                             sender_l.try_send(command).unwrap();
 
                             conn.execute(
-                                "insert into sftp_download (remote, path) values ($1, $2)",
+                                "insert into sftp_scan (remote, path) values ($1, $2)",
                                 &[&sftp_source.name, &path_str]
                             ).unwrap();
                         } else {
@@ -161,8 +175,9 @@ fn main() {
 							command_str.as_bytes().to_vec(),
 							BasicPublishOptions::default(),
 							BasicProperties::default(),
-						).and_then(|request_result| {
-							info!("command sent");
+						).and_then(move |request_result| {
+							info!("command sent: {}", cmd);
+
 							match request_result {
 								Some(request_id) => {
 									debug!("confirmed: {}", request_id);

@@ -21,6 +21,8 @@ use cortex::Cortex;
 #[macro_use]
 extern crate serde_derive;
 
+extern crate postgres;
+
 extern crate chrono;
 extern crate tee;
 extern crate sha2;

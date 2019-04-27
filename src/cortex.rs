@@ -31,11 +31,12 @@ impl Cortex {
         Cortex { settings: settings }
     }
 
-    fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>) -> HashMap<String, Addr<SftpDownloader>> {
-        let downloaders_map: HashMap<String, Addr<SftpDownloader>> = sftp_sources
+    fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>, db_url: String) -> HashMap<String, Addr<SftpDownloader>> {
+        sftp_sources
             .iter()
             .map(|sftp_source| {
                 let sftp_source_name = sftp_source.name.clone();
+                let db_url_l = db_url.clone();
                 let owned_sftp_source: settings::SftpSource = sftp_source.clone().clone();
 
                 let sftp_source_settings = sftp_source.clone();
@@ -52,25 +53,36 @@ impl Cortex {
                         thread::sleep(Duration::from_millis(1000));
                     };
 
+                    let db_conn_result = postgres::Connection::connect(db_url_l.clone(), postgres::TlsMode::None);
+
+                    let db_conn = match db_conn_result {
+                        Ok(c) => {
+                            info!("Connected to database");
+                            c
+                        },
+                        Err(e) => {
+                            error!("Error connecting to database: {}", e);
+                            ::std::process::exit(2);
+                        }
+                    };
+
                     return SftpDownloader {
                         config: sftp_source_settings.clone(),
                         sftp_connection: conn,
+                        db_connection: db_conn,
                         local_storage_path: String::from("/tmp")
                     };
                 });
 
                 (sftp_source_name, addr)
             })
-            .collect();
-
-        downloaders_map
+            .collect()
     }
-
 
     pub fn run(&mut self) -> () {
         let system = actix::System::new("cortex");
 
-        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources.clone());
+        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources.clone(), self.settings.postgresql.url.clone());
 
         let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map: downloaders_map };
 
