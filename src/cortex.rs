@@ -13,7 +13,7 @@ use inotify::{Inotify};
 extern crate failure;
 extern crate lapin_futures;
 
-use crate::amqp_consumer::AmqpListener;
+use crate::amqp_consumer::start_consumer;
 use crate::settings;
 use crate::command_handler::CommandHandler;
 use crate::sftp_downloader::{SftpDownloader, SftpDownloadDispatcher};
@@ -104,17 +104,15 @@ impl Cortex {
             sftp_download_dispatcher: sftp_download_dispatcher
         };
 
-        let listener = AmqpListener {
-            addr: self.settings.command_queue.address.clone(),
-            command_handler: command_handler
-        };
-
         start_metrics_collector(
             self.settings.prometheus.push_gateway.clone(),
             self.settings.prometheus.push_interval
         );
 
-        let join_handle = listener.start_consumer();
+        let join_handle = start_consumer(
+            self.settings.command_queue.address.clone(),
+            command_handler
+        );
 
         system.run();
 
@@ -122,7 +120,7 @@ impl Cortex {
     }
 }
 
-fn start_metrics_collector(address: String, push_interval: u64) -> () {
+fn start_metrics_collector(address: String, push_interval: u64) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_millis(push_interval));
@@ -148,5 +146,5 @@ fn start_metrics_collector(address: String, push_interval: u64) -> () {
                 }
             }
         }
-    });
+    })
 }
