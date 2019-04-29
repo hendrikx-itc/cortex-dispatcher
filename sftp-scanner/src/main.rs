@@ -103,7 +103,16 @@ fn main() {
         }
     }
 
-    metrics_collector_join_handle.join().unwrap();
+    let res = metrics_collector_join_handle.join();
+
+    match res {
+        Ok(()) => {
+            info!("metrics collector thread stopped")
+        },
+        Err(e) => {
+            error!("metrics collector thread stopped with error: {:?}", e)
+        }
+    }
 }
 
 fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpSource) -> thread::JoinHandle<()> {

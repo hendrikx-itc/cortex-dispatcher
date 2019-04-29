@@ -6,9 +6,7 @@ extern crate inotify;
 
 extern crate actix;
 use actix::prelude::*;
-use actix::{Actor, Addr};
-
-use inotify::{Inotify};
+use actix::{Addr};
 
 extern crate failure;
 extern crate lapin_futures;
@@ -18,7 +16,7 @@ use crate::settings;
 use crate::command_handler::CommandHandler;
 use crate::sftp_downloader::{SftpDownloader, SftpDownloadDispatcher};
 use crate::sftp_connection::SftpConnection;
-use crate::local_source::LocalSource;
+use crate::local_source::start_local_source_handler;
 
 use prometheus;
 
@@ -86,19 +84,7 @@ impl Cortex {
 
         let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map: downloaders_map };
 
-        let init_result = Inotify::init();
-
-        let inotify = match init_result {
-            Ok(i) => i,
-            Err(e) => panic!("Could not initialize inotify: {}", e),
-        };
-
-        let local_source = LocalSource {
-            sources: self.settings.directory_sources.clone(),
-            inotify: inotify,
-        };
-
-        local_source.start();
+        let local_source_handler = start_local_source_handler(self.settings.directory_sources.clone());
 
         let command_handler = CommandHandler {
             sftp_download_dispatcher: sftp_download_dispatcher
