@@ -10,7 +10,7 @@ use env_logger;
 use failure::Error;
 use futures::Future;
 use futures::stream::Stream;
-use futures::sync::mpsc::channel;
+use futures::sync::mpsc::{channel, Sender, Receiver};
 use lapin_futures as lapin;
 use log::{info, error, debug};
 use tokio;
@@ -38,7 +38,7 @@ mod settings;
 mod sftp_connection;
 mod metrics;
 
-use settings::Settings;
+use settings::{Settings, SftpSource};
 use sftp_connection::SftpConnection;
 
 
@@ -53,10 +53,10 @@ impl fmt::Display for Command {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
             Command::SftpDownload { created, sftp_source, path } => {
-        		write!(f, "SftpDownload({}, {})", sftp_source, path)
+                write!(f, "SftpDownload({}, {}, {})", created, sftp_source, path)
             },
             Command::HttpDownload { created, url } => {
-        		write!(f, "HttpDownload({})", url)
+                write!(f, "HttpDownload({}, {})", created, url)
             }
 		}
     }
@@ -73,142 +73,165 @@ fn main() {
 
     let settings = load_settings(&config_file);
 
-	let (sender, receiver) = channel(4096);
+	let (cmd_sender, cmd_receiver) = channel(4096);
 
     let scanner_threads: Vec<thread::JoinHandle<()>> = settings.sftp_sources.clone().into_iter().map(|sftp_source| {
-		let mut sender_l = sender.clone();
-        let db_url = settings.postgresql.url.clone();
-		thread::spawn(move || {
-            let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
-
-            let conn = match conn_result {
-                Ok(c) => {
-                    info!("Connected to database");
-                    c
-                },
-                Err(e) => {
-                    error!("Error connecting to database: {}", e);
-                    ::std::process::exit(2);
-                }
-            };
-
-			let conn_result = SftpConnection::new(&sftp_source.address.clone(), &sftp_source.username.clone());
-
-			let sftp_connection = conn_result.unwrap();
-
-			loop {
-				info!("{} scanning remote directory '{}'", &sftp_source.name, &sftp_source.directory);
-
-				let result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
-
-				let paths = result.unwrap();
-
-				for (path, stat) in paths {
-					let file_name = path.file_name().unwrap().to_str().unwrap();
-
-					let path_str = path.to_str().unwrap().to_string();
-
-					if sftp_source.regex.is_match(file_name) {
-						debug!(" - {} - matches!", path_str);
-
-                        let rows = conn.query(
-                            "select 1 from sftp_scan where remote = $1 and path = $2",
-                            &[&sftp_source.name, &path_str]
-                        ).unwrap();
-
-                        if rows.is_empty() {
-                            let command = Command::SftpDownload {
-                                created: Utc::now(),
-                                sftp_source: sftp_source.name.clone(),
-                                path: path_str.clone()
-                            };
-
-                            sender_l.try_send(command).unwrap();
-
-                            conn.execute(
-                                "insert into sftp_scan (remote, path) values ($1, $2)",
-                                &[&sftp_source.name, &path_str]
-                            ).unwrap();
-                        } else {
-                            debug!("{} already encountered {}", sftp_source.name, path_str);
-                        }
-					} else {
-						debug!(" - {} - no match", path_str);
-					}
-				}
-
-                metrics::DIR_SCAN_COUNTER.inc();
-
-				thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
-			}
-		})
+        start_scanner(cmd_sender.clone(), settings.postgresql.url.clone(), sftp_source)
     }).collect();
 
-    start_metrics_collector(
+    let metrics_collector_join_handle = start_metrics_collector(
         settings.prometheus.push_gateway.clone(),
         settings.prometheus.push_interval
     );
 
-    let addr = settings.command_queue.address.parse().unwrap();
+    let future = channel_to_amqp(
+        cmd_receiver, settings.command_queue.address, settings.command_queue.queue_name
+    );
 
-    let future = connect_channel(&addr)
-        .and_then(|channel| {
-            let id = channel.id;
-            info!("created channel with id: {}", id);
+    tokio::run(future);
 
-            let queue_name = settings.command_queue.queue_name;
+    for scanner_thread in scanner_threads {
+        let res = scanner_thread.join();
 
-            // we using a "move" closure to reuse the channel
-            // once the queue is declared. We could also clone
-            // the channel
-            channel
-                .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new())
-                .map(move |queue| {
-                    info!("channel {} declared queue {}", id, queue.name());
+        match res {
+            Ok(()) => {
+                info!("scanner thread stopped");
+            },
+            Err(e) => {
+                error!("scanner thread stopped with error: {:?}", e)
+            }
+        }
+    }
 
-					let stream = receiver.for_each(move |cmd| {
-						let command_str = serde_json::to_string(&cmd).unwrap();
+    metrics_collector_join_handle.join().unwrap();
+}
 
-						let future = channel.basic_publish(
-							"",
-							&queue.name(),
-							command_str.as_bytes().to_vec(),
-							BasicPublishOptions::default(),
-							BasicProperties::default(),
-						).and_then(move |request_result| {
-							info!("command sent: {}", cmd);
+fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpSource) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
 
-							match request_result {
-								Some(request_id) => {
-									debug!("confirmed: {}", request_id);
-								},
-								None => {
-									debug!("not confirmed/nacked");
-								}
-							}
-							Ok(())
-						}).map_err(|e| {
-							info!("error sending command: {:?}", e);
-						});
+        let conn = match conn_result {
+            Ok(c) => {
+                info!("Connected to database");
+                c
+            },
+            Err(e) => {
+                error!("Error connecting to database: {}", e);
+                ::std::process::exit(2);
+            }
+        };
 
-						tokio::spawn(future);
+        let conn_result = SftpConnection::new(&sftp_source.address.clone(), &sftp_source.username.clone());
 
-						Ok(())
-					});
+        let sftp_connection = conn_result.unwrap();
 
-					tokio::spawn(stream);
-                })
-                .map_err(Error::from)
+        loop {
+            info!("{} scanning remote directory '{}'", &sftp_source.name, &sftp_source.directory);
+
+            let result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
+
+            let paths = result.unwrap();
+
+            for (path, stat) in paths {
+                let file_name = path.file_name().unwrap().to_str().unwrap();
+
+                let path_str = path.to_str().unwrap().to_string();
+
+                if sftp_source.regex.is_match(file_name) {
+                    debug!(" - {} - matches!", path_str);
+
+                    let rows = conn.query(
+                        "select 1 from sftp_scan where remote = $1 and path = $2",
+                        &[&sftp_source.name, &path_str]
+                    ).unwrap();
+
+                    if rows.is_empty() {
+                        let command = Command::SftpDownload {
+                            created: Utc::now(),
+                            sftp_source: sftp_source.name.clone(),
+                            path: path_str.clone()
+                        };
+
+                        sender.try_send(command).unwrap();
+
+                        conn.execute(
+                            "insert into sftp_scan (remote, path) values ($1, $2)",
+                            &[&sftp_source.name, &path_str]
+                        ).unwrap();
+                    } else {
+                        debug!("{} already encountered {}", sftp_source.name, path_str);
+                    }
+                } else {
+                    debug!(" - {} - no match", path_str);
+                }
+            }
+
+            metrics::DIR_SCAN_COUNTER.inc();
+
+            thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
+        }
+    })
+}
+
+/// Connects a channel receiver to an AMQP queue.
+fn channel_to_amqp(receiver: Receiver<Command>, addr: std::net::SocketAddr, queue_name: String) -> impl Future<Item = (), Error = ()> + Send + 'static {
+    connect_queue(&addr, queue_name)
+        .map(move |(channel, queue)| {
+            info!("declared queue {}", queue.name());
+
+            let stream = receiver.for_each(move |cmd| {
+                let command_str = serde_json::to_string(&cmd).unwrap();
+
+                let future = channel.basic_publish(
+                    "",
+                    &queue.name(),
+                    command_str.as_bytes().to_vec(),
+                    BasicPublishOptions::default(),
+                    BasicProperties::default(),
+                ).and_then(move |request_result| {
+                    info!("command sent: {}", cmd);
+
+                    match request_result {
+                        Some(request_id) => {
+                            debug!("confirmed: {}", request_id);
+                        },
+                        None => {
+                            debug!("not confirmed/nacked");
+                        }
+                    }
+                    Ok(())
+                }).map_err(|e| {
+                    info!("error sending command: {:?}", e);
+                });
+
+                tokio::spawn(future);
+
+                Ok(())
+            });
+
+            tokio::spawn(stream);
         })
         .and_then(|_| {
             Ok(())
         })
         .map_err(|e| {
             error!("Error: {:?}", e)
-        });
+        })
+}
 
+fn connect_queue(addr: &std::net::SocketAddr, queue_name: String) -> impl Future<Item = (lapin::channel::Channel<TcpStream>, lapin::queue::Queue), Error = Error> + Send + 'static {
+    connect_channel(&addr)
+        .and_then(move |channel| {
+            info!("created channel with id: {}", channel.id);
 
-    tokio::run(future);
+            // we using a "move" closure to reuse the channel
+            // once the queue is declared. We could also clone
+            // the channel
+            channel
+                .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new())
+                .map(|queue| {(channel, queue)})
+                .map_err(Error::from)
+        })
 }
 
 fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin::channel::Channel<TcpStream>, Error = Error> + Send + 'static {
@@ -262,7 +285,7 @@ fn load_settings(config_file: &str) -> Settings {
     settings
 }
 
-fn start_metrics_collector(address: String, push_interval: u64) -> () {
+fn start_metrics_collector(address: String, push_interval: u64) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_millis(push_interval));
@@ -288,5 +311,5 @@ fn start_metrics_collector(address: String, push_interval: u64) -> () {
                 }
             }
         }
-    });
+    })
 }

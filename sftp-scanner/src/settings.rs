@@ -5,7 +5,7 @@ extern crate serde_regex;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandQueue {
-    pub address: String,
+    pub address: std::net::SocketAddr,
     pub queue_name: String
 }
 
