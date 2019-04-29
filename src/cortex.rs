@@ -84,7 +84,7 @@ impl Cortex {
 
         let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map: downloaders_map };
 
-        let local_source_handler = start_local_source_handler(self.settings.directory_sources.clone());
+        let local_source_handler_join_handle = start_local_source_handler(self.settings.directory_sources.clone());
 
         let command_handler = CommandHandler {
             sftp_download_dispatcher: sftp_download_dispatcher
@@ -103,6 +103,7 @@ impl Cortex {
         system.run();
 
         join_handle.join().unwrap();
+        local_source_handler_join_handle.join().unwrap();
     }
 }
 

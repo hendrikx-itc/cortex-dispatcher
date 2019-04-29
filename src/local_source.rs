@@ -17,7 +17,7 @@ use crate::settings;
 use tokio::runtime::current_thread::Runtime;
 
 struct FileSystemEvent {
-    path: String,
+    file_name: String,
     source: settings::DirectorySource
 }
 
@@ -48,26 +48,24 @@ pub fn event_stream_handler(sources: Vec<settings::DirectorySource>, inotify: In
             error!("Error: {}", e);
         })
         .for_each(|filesystem_event| {
-            info!("Filesystem event: {}", filesystem_event.path);
+            info!("Filesystem event: {}", filesystem_event.file_name);
 
-            let path = std::path::Path::new(&filesystem_event.path);
-
-            let filename = path.file_name().unwrap().to_str().unwrap();
+            let source_path = Path::new(&filesystem_event.source.directory).join(&filesystem_event.file_name);
 
             for target in filesystem_event.source.targets {
-                if target.regex.is_match(filename) {
+                if target.regex.is_match(&filesystem_event.file_name) {
                     info!("match: {}", filesystem_event.source.name);
 
-                    let target_path = std::path::Path::new(&target.directory).join(filename);
+                    let target_path = std::path::Path::new(&target.directory).join(&filesystem_event.file_name);
 
-                    let move_result = std::fs::rename(&filesystem_event.path, &target_path);
+                    let move_result = std::fs::rename(&source_path, &target_path);
 
                     match move_result {
-                        Ok(m) => {
-                            info!("moved {} -> {}", &filesystem_event.path, &target_path.to_str().unwrap());
+                        Ok(_) => {
+                            info!("moved {} -> {}", &source_path.to_str().unwrap(), &target_path.to_str().unwrap());
                         },
                         Err(e) => {
-                            error!("error moving {} -> {}: {}", &filesystem_event.path, &target_path.to_str().unwrap(), e);
+                            error!("error moving {} -> {}: {}", &source_path.to_str().unwrap(), &target_path.to_str().unwrap(), e);
                         }
                     }
                 }
@@ -108,10 +106,8 @@ fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -
 
             let data_source = watch_mapping.get(&event.wd).unwrap();
 
-            let source_path = Path::new(&data_source.directory).join(name);
-
             return FileSystemEvent {
-                path: source_path.to_str().unwrap().to_string(),
+                file_name: name.to_str().unwrap().to_string(),
                 source: data_source.clone()
             };
         }
