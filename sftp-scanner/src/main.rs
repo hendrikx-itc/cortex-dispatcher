@@ -150,7 +150,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
                     debug!(" - {} - matches!", path_str);
 
                     let rows = conn.query(
-                        "select 1 from sftp_scan where remote = $1 and path = $2",
+                        "select 1 from sftp_scanner.scan where remote = $1 and path = $2",
                         &[&sftp_source.name, &path_str]
                     ).unwrap();
 
@@ -164,7 +164,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
                         sender.try_send(command).unwrap();
 
                         conn.execute(
-                            "insert into sftp_scan (remote, path) values ($1, $2)",
+                            "insert into sftp_scanner.scan (remote, path) values ($1, $2)",
                             &[&sftp_source.name, &path_str]
                         ).unwrap();
                     } else {

@@ -77,7 +77,7 @@ impl Handler<Download> for SftpDownloader {
                 let hash = format!("{:x}", sha256.result());
 
                 self.db_connection.execute(
-                    "insert into sftp_download (remote, path, hash) values ($1, $2, $3)",
+                    "insert into dispatcher.sftp_download (remote, path, hash) values ($1, $2, $3)",
                     &[&self.config.name, &msg.path, &hash]
                 ).unwrap();
 
