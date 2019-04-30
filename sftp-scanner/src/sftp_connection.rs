@@ -20,7 +20,7 @@ pub struct SftpError {
 
 impl SftpError {
     pub fn new(description: String) -> SftpError {
-        SftpError { description: description }
+        SftpError { description }
     }
 }
 
@@ -34,7 +34,7 @@ impl std::error::Error for SftpError {
 }
 
 impl SftpConnection {
-    pub fn new(address: &String, username: &String) -> Result<SftpConnection, SftpError> {
+    pub fn new(address: &str, username: &str) -> Result<SftpConnection, SftpError> {
         let tcp_connect_result = TcpStream::connect(address);
 
         let tcp = match tcp_connect_result {
@@ -65,9 +65,6 @@ impl SftpConnection {
         let sftp =
             OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
-        return Ok(SftpConnection {
-            tcp: tcp,
-            sftp: sftp,
-        });
+        Ok(SftpConnection { tcp, sftp })
     }
 }
