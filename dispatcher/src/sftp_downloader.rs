@@ -70,7 +70,7 @@ impl Handler<Download> for SftpDownloader {
         let mut remote_file = match open_result {
             Ok(remote_file) => remote_file,
             Err(e) => {
-                error!("Error opening remote file {}: {}", msg.path, e);
+                warn!("Error opening remote file {}: {}", msg.path, e);
                 return false;
             }
         };
