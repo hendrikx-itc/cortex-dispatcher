@@ -11,6 +11,7 @@ CREATE TABLE dispatcher.sftp_download (
     created timestamptz not null default now(),
     remote text not null,
     path text not null,
+    size bigint not null,
     hash text not null,
     UNIQUE (remote, path)
 );

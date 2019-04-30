@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
 extern crate inotify;
 
@@ -77,8 +78,8 @@ impl Handler<Download> for SftpDownloader {
                 let hash = format!("{:x}", sha256.result());
 
                 self.db_connection.execute(
-                    "insert into dispatcher.sftp_download (remote, path, hash) values ($1, $2, $3)",
-                    &[&self.config.name, &msg.path, &hash]
+                    "insert into dispatcher.sftp_download (remote, path, size, hash) values ($1, $2, $3, $4)",
+                    &[&self.config.name, &msg.path, &i64::try_from(bytes_copied).unwrap(), &hash]
                 ).unwrap();
 
                 metrics::FILE_DOWNLOAD_COUNTER.inc();
