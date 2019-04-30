@@ -96,7 +96,7 @@ fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -
         })
         .collect();
 
-    let buffer = [0; 32];
+    let buffer: Vec<u8> = vec![0; 1024];
 
     inotify.event_stream(buffer).map(
         move |event: inotify::Event<std::ffi::OsString>| -> FileSystemEvent {
