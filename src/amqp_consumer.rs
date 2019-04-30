@@ -52,7 +52,7 @@ pub fn start_consumer(addr: String, mut command_handler: CommandHandler) -> thre
     let builder = thread::Builder::new()
         .name("amqp_listener".into());
 
-    builder.spawn(move || -> () {
+    builder.spawn(move || {
         let addr: SocketAddr = addr.parse().unwrap();
 
         block_on_all(

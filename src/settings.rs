@@ -28,7 +28,7 @@ pub struct SftpSource {
 
 /// Default Sftp scanner thread count
 fn default_thread_count() -> usize {
-    return 1;
+    1
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -58,7 +58,7 @@ impl Handler<Download> for SftpDownloader {
             Ok(remote_file) => remote_file,
             Err(e) => {
                 error!("Error opening remote file {}: {}", msg.path, e);
-                return false
+                return false;
             }
         };
 
@@ -98,14 +98,14 @@ impl Handler<Download> for SftpDownloader {
                         }
                     }
                 }
-                return true;
+                true
             }
             Err(e) => {
                 error!(
                     "{} error downloading '{}': {}",
                     self.config.name, msg.path, e
                 );
-                return false;
+                false
             }
         }
     }
@@ -125,12 +125,12 @@ pub struct SftpDownloadDispatcher {
 }
 
 impl SftpDownloadDispatcher {
-    pub fn dispatch_download(&mut self, sftp_source: &String, path: String) {
+    pub fn dispatch_download(&mut self, sftp_source: &str, path: String) {
         let result = self.downloaders_map.get(sftp_source);
 
         match result {
             Some(downloader) => {
-                let result = downloader.send(Download {path: path, size: None});
+                let result = downloader.send(Download {path, size: None});
 
                 Arbiter::spawn(result.then(|_r| {
                     future::result(Ok(()))

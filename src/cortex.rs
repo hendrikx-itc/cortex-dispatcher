@@ -26,7 +26,7 @@ pub struct Cortex {
 
 impl Cortex {
     pub fn new(settings: settings::Settings) -> Cortex {
-        Cortex { settings: settings }
+        Cortex { settings }
     }
 
     fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>, db_url: String) -> HashMap<String, Addr<SftpDownloader>> {
@@ -64,12 +64,12 @@ impl Cortex {
                         }
                     };
 
-                    return SftpDownloader {
+                    SftpDownloader {
                         config: sftp_source_settings.clone(),
                         sftp_connection: conn,
                         db_connection: db_conn,
                         local_storage_path: String::from("/tmp")
-                    };
+                    }
                 });
 
                 (sftp_source_name, addr)
@@ -77,18 +77,16 @@ impl Cortex {
             .collect()
     }
 
-    pub fn run(&mut self) -> () {
+    pub fn run(&mut self) {
         let system = actix::System::new("cortex");
 
         let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources.clone(), self.settings.postgresql.url.clone());
 
-        let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map: downloaders_map };
+        let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map };
 
         let local_source_handler_join_handle = start_local_source_handler(self.settings.directory_sources.clone());
 
-        let command_handler = CommandHandler {
-            sftp_download_dispatcher: sftp_download_dispatcher
-        };
+        let command_handler = CommandHandler { sftp_download_dispatcher };
 
         start_metrics_collector(
             self.settings.prometheus.push_gateway.clone(),

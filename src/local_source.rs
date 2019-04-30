@@ -104,12 +104,12 @@ fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -
 
             info!("File detected: {:?}", name);
 
-            let data_source = watch_mapping.get(&event.wd).unwrap();
+            let data_source = &watch_mapping[&event.wd];
 
-            return FileSystemEvent {
+            FileSystemEvent {
                 file_name: name.to_str().unwrap().to_string(),
                 source: data_source.clone()
-            };
+            }
         }
     )
 }
