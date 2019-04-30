@@ -11,7 +11,6 @@ mod cortex;
 mod amqp_consumer;
 mod command_handler;
 mod sftp_downloader;
-mod sftp_connection;
 mod local_source;
 mod metrics;
 

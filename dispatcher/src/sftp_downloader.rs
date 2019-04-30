@@ -14,8 +14,9 @@ extern crate failure;
 extern crate lapin_futures;
 
 use crate::settings;
-use crate::sftp_connection::SftpConnection;
 use crate::metrics;
+
+use cortex_core::sftp_connection::SftpConnection;
 
 use futures::{future, Future};
 

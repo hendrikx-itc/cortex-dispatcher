@@ -38,11 +38,10 @@ use cortex_core::Command;
 
 mod cmd;
 mod settings;
-mod sftp_connection;
 mod metrics;
 
 use settings::{Settings, SftpSource};
-use sftp_connection::SftpConnection;
+use cortex_core::sftp_connection::SftpConnection;
 
 fn main() {
     env_logger::init();

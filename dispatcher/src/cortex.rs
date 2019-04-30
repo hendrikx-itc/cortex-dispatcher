@@ -15,8 +15,9 @@ use crate::amqp_consumer::start_consumer;
 use crate::settings;
 use crate::command_handler::CommandHandler;
 use crate::sftp_downloader::{SftpDownloader, SftpDownloadDispatcher};
-use crate::sftp_connection::SftpConnection;
 use crate::local_source::start_local_source_handler;
+
+use cortex_core::sftp_connection::SftpConnection;
 
 use prometheus;
 

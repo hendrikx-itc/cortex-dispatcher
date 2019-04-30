@@ -3,15 +3,9 @@ use std::fmt;
 
 use ssh2::{Session, Sftp};
 
-extern crate inotify;
-
-extern crate actix;
-
 use owning_ref::OwningHandle;
 
-extern crate failure;
-extern crate lapin_futures;
-
+use log::{info, debug};
 
 pub struct SftpConnection {
     tcp: TcpStream,

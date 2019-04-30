@@ -6,6 +6,13 @@ extern crate serde_derive;
 extern crate chrono;
 use chrono::prelude::*;
 
+extern crate log;
+
+pub mod sftp_connection;
+
+pub use self::sftp_connection::SftpConnection;
+
+
 /// The set of commands that can be sent over the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub enum Command {
