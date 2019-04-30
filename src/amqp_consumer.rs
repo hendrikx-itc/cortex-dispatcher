@@ -22,8 +22,16 @@ use crate::command_handler::CommandHandler;
 /// The set of commands that can be consumed from the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 enum Command {
-    SftpDownload { created: DateTime<Utc>, sftp_source: String, path: String },
-    HttpDownload { created: DateTime<Utc>, url: String }
+    SftpDownload {
+        created: DateTime<Utc>,
+        size: Option<u64>,
+        sftp_source: String, path: String
+    },
+    HttpDownload {
+        created: DateTime<Utc>,
+        size: Option<u64>,
+        url: String
+    }
 }
 
 trait CommandDispatch {
@@ -33,15 +41,15 @@ trait CommandDispatch {
 impl CommandDispatch for Command {
     fn dispatch(&mut self, target: &mut CommandHandler) {
         match self {
-            Command::SftpDownload { created, sftp_source, path } => {
+            Command::SftpDownload { created, size, sftp_source, path } => {
                 info!("dispatch SftpDownload created at {}", created);
 
-                target.sftp_download(sftp_source.clone(), path.clone())
+                target.sftp_download(sftp_source.clone(), *size, path.clone())
             },
-            Command::HttpDownload { created, url } => {
+            Command::HttpDownload { created, size, url } => {
                 info!("dispatch HttpDownload created at {}", created);
 
-                target.http_download(url.clone())
+                target.http_download(*size, url.clone())
             }
         }
     }

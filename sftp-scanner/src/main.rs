@@ -46,17 +46,25 @@ use sftp_connection::SftpConnection;
 /// The set of commands that can be consumed from the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 enum Command {
-    SftpDownload { created: DateTime<Utc>, sftp_source: String, path: String },
-    HttpDownload { created: DateTime<Utc>, url: String }
+    SftpDownload {
+        created: DateTime<Utc>,
+        size: Option<u64>,
+        sftp_source: String, path: String
+    },
+    HttpDownload {
+        created: DateTime<Utc>,
+        size: Option<u64>,
+        url: String
+    }
 }
 
 impl fmt::Display for Command {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-            Command::SftpDownload { created, sftp_source, path } => {
+            Command::SftpDownload { created, size, sftp_source, path } => {
                 write!(f, "SftpDownload({}, {}, {})", created, sftp_source, path)
             },
-            Command::HttpDownload { created, url } => {
+            Command::HttpDownload { created, size, url } => {
                 write!(f, "HttpDownload({}, {})", created, url)
             }
 		}
@@ -145,9 +153,11 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
             for (path, stat) in paths {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
 
-                let cast_result = i64::try_from(stat.size.unwrap());
+                let file_size: u64 = stat.size.unwrap();
 
-                let file_size: i64 = match cast_result {
+                let cast_result = i64::try_from(file_size);
+
+                let file_size_db: i64 = match cast_result {
                     Ok(size) => size,
                     Err(e) => {
                         error!("Could not convert file size to type that can be stored in database: {}", e);
@@ -162,12 +172,13 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
 
                     let rows = conn.query(
                         "select 1 from sftp_scanner.scan where remote = $1 and path = $2 and size = $3",
-                        &[&sftp_source.name, &path_str, &file_size]
+                        &[&sftp_source.name, &path_str, &file_size_db]
                     ).unwrap();
 
                     if rows.is_empty() {
                         let command = Command::SftpDownload {
                             created: Utc::now(),
+                            size: stat.size,
                             sftp_source: sftp_source.name.clone(),
                             path: path_str.clone()
                         };
@@ -176,7 +187,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
 
                         conn.execute(
                             "insert into sftp_scanner.scan (remote, path, size) values ($1, $2, $3)",
-                            &[&sftp_source.name, &path_str, &file_size]
+                            &[&sftp_source.name, &path_str, &file_size_db]
                         ).unwrap();
                     } else {
                         debug!("{} already encountered {}", sftp_source.name, path_str);
