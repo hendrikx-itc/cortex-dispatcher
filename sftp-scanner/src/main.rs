@@ -2,6 +2,7 @@ use std::path::Path;
 use std::{thread, time};
 use std::time::Duration;
 use std::fmt;
+use std::convert::TryFrom;
 
 use crate::lapin::channel::{BasicProperties, BasicPublishOptions, QueueDeclareOptions};
 use crate::lapin::client::ConnectionOptions;
@@ -144,14 +145,24 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
             for (path, stat) in paths {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
 
+                let cast_result = i64::try_from(stat.size.unwrap());
+
+                let file_size: i64 = match cast_result {
+                    Ok(size) => size,
+                    Err(e) => {
+                        error!("Could not convert file size to type that can be stored in database: {}", e);
+                        break;
+                    }
+                };
+
                 let path_str = path.to_str().unwrap().to_string();
 
                 if sftp_source.regex.is_match(file_name) {
                     debug!(" - {} - matches!", path_str);
 
                     let rows = conn.query(
-                        "select 1 from sftp_scanner.scan where remote = $1 and path = $2",
-                        &[&sftp_source.name, &path_str]
+                        "select 1 from sftp_scanner.scan where remote = $1 and path = $2 and size = $3",
+                        &[&sftp_source.name, &path_str, &file_size]
                     ).unwrap();
 
                     if rows.is_empty() {
@@ -164,8 +175,8 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
                         sender.try_send(command).unwrap();
 
                         conn.execute(
-                            "insert into sftp_scanner.scan (remote, path) values ($1, $2)",
-                            &[&sftp_source.name, &path_str]
+                            "insert into sftp_scanner.scan (remote, path, size) values ($1, $2, $3)",
+                            &[&sftp_source.name, &path_str, &file_size]
                         ).unwrap();
                     } else {
                         debug!("{} already encountered {}", sftp_source.name, path_str);

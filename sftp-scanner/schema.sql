@@ -11,5 +11,6 @@ CREATE TABLE sftp_scanner.scan (
     created timestamptz not null default now(),
     remote text not null,
     path text not null,
+    size bigint not null,
     UNIQUE (remote, path)
 );
