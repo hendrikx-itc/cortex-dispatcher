@@ -43,12 +43,23 @@ impl Handler<Download> for SftpDownloader {
     type Result = bool;
 
     fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
-        info!(
-            "{} downloading '{}' {} bytes",
-            self.config.name,
-            msg.path,
-            msg.size.unwrap_or(0)
-        );
+        match msg.size {
+            Some(size) => {
+                info!(
+                    "{} downloading '{}' {} bytes",
+                    self.config.name,
+                    msg.path,
+                    size
+                );
+            },
+            None => {
+                info!(
+                    "{} downloading '{}' size unknown",
+                    self.config.name,
+                    msg.path
+                );
+            }
+        }
 
         let remote_path = Path::new(&msg.path);
         let local_path = Path::new(&self.local_storage_path).join(remote_path.file_name().unwrap());
