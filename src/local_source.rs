@@ -54,8 +54,6 @@ pub fn event_stream_handler(sources: Vec<settings::DirectorySource>, inotify: In
 
             for target in filesystem_event.source.targets {
                 if target.regex.is_match(&filesystem_event.file_name) {
-                    info!("match: {}", filesystem_event.source.name);
-
                     let target_path = std::path::Path::new(&target.directory).join(&filesystem_event.file_name);
 
                     let move_result = std::fs::rename(&source_path, &target_path);
@@ -101,8 +99,6 @@ fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -
     inotify.event_stream(buffer).map(
         move |event: inotify::Event<std::ffi::OsString>| -> FileSystemEvent {
             let name = event.name.expect("Could not decode name");
-
-            info!("File detected: {:?}", name);
 
             let data_source = &watch_mapping[&event.wd];
 
