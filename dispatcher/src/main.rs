@@ -35,11 +35,15 @@ extern crate lazy_static;
 extern crate cortex_core;
 
 fn main() {
-    env_logger::builder()
-        .default_format_timestamp(false)
-        .init();
-
     let matches = cmd::app().get_matches();
+
+    let mut env_logger_builder = env_logger::builder();
+
+    if matches.is_present("service") {
+        env_logger_builder.default_format_timestamp(false);
+    }
+
+    env_logger_builder.init();
 
     let config_file = matches
         .value_of("config")

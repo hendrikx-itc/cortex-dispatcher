@@ -44,9 +44,15 @@ use settings::{Settings, SftpSource};
 use cortex_core::sftp_connection::SftpConnection;
 
 fn main() {
-    env_logger::init();
-
     let matches = cmd::app().get_matches();
+
+    let mut env_logger_builder = env_logger::builder();
+
+    if matches.is_present("service") {
+        env_logger_builder.default_format_timestamp(false);
+    }
+
+    env_logger_builder.init();
 
     let config_file = matches
         .value_of("config")

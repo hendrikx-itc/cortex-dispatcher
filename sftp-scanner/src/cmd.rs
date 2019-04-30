@@ -13,4 +13,9 @@ pub fn app() -> App<'static, 'static> {
                 .help("Specify config file")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("service")
+                .long("service")
+                .help("Run in service mode")
+        )
 }
