@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "sftp-scanner",
+    "core",
+    "dispatcher"
+]

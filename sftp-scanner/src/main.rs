@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::{thread, time};
 use std::time::Duration;
-use std::fmt;
 use std::convert::TryFrom;
 
 use crate::lapin::channel::{BasicProperties, BasicPublishOptions, QueueDeclareOptions};
@@ -34,6 +33,9 @@ extern crate postgres;
 extern crate chrono;
 use chrono::prelude::*;
 
+extern crate cortex_core;
+use cortex_core::Command;
+
 mod cmd;
 mod settings;
 mod sftp_connection;
@@ -41,35 +43,6 @@ mod metrics;
 
 use settings::{Settings, SftpSource};
 use sftp_connection::SftpConnection;
-
-
-/// The set of commands that can be consumed from the command queue
-#[derive(Debug, Deserialize, Clone, Serialize)]
-enum Command {
-    SftpDownload {
-        created: DateTime<Utc>,
-        size: Option<u64>,
-        sftp_source: String, path: String
-    },
-    HttpDownload {
-        created: DateTime<Utc>,
-        size: Option<u64>,
-        url: String
-    }
-}
-
-impl fmt::Display for Command {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-            Command::SftpDownload { created, size, sftp_source, path } => {
-                write!(f, "SftpDownload({}, {}, {})", created, sftp_source, path)
-            },
-            Command::HttpDownload { created, size, url } => {
-                write!(f, "HttpDownload({}, {})", created, url)
-            }
-		}
-    }
-}
 
 fn main() {
     env_logger::init();

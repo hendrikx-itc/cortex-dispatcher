@@ -33,6 +33,8 @@ extern crate prometheus;
 #[macro_use]
 extern crate lazy_static;
 
+extern crate cortex_core;
+
 fn main() {
     env_logger::builder()
         .default_format_timestamp(false)

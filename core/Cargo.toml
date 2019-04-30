@@ -1,0 +1,10 @@
+[package]
+name = "cortex-core"
+version = "0.1.2"
+authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
+edition = "2018"
+
+[dependencies]
+serde = "1.0"
+serde_derive = "1.0"
+chrono = { version = "0.4", features = ["serde"] }

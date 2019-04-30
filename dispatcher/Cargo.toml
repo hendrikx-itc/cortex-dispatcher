@@ -37,3 +37,4 @@ tee = "0.1"
 prometheus = { version = "0.5", features = ["push"] }
 lazy_static = "1.3"
 postgres = "0.15.2"
+cortex-core = { path = "../core" }

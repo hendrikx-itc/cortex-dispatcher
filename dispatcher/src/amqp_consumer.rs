@@ -13,26 +13,12 @@ use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::runtime::current_thread::block_on_all;
 
-use chrono::{DateTime, Utc};
-
 use serde_json;
 
 use crate::command_handler::CommandHandler;
 
-/// The set of commands that can be consumed from the command queue
-#[derive(Debug, Deserialize, Clone, Serialize)]
-enum Command {
-    SftpDownload {
-        created: DateTime<Utc>,
-        size: Option<u64>,
-        sftp_source: String, path: String
-    },
-    HttpDownload {
-        created: DateTime<Utc>,
-        size: Option<u64>,
-        url: String
-    }
-}
+use cortex_core::Command;
+
 
 trait CommandDispatch {
     fn dispatch(&mut self, target: &mut CommandHandler);
