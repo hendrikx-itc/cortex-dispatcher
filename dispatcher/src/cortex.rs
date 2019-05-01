@@ -42,7 +42,11 @@ impl Cortex {
 
                 let addr = SyncArbiter::start(sftp_source_settings.thread_count, move || {
                     let conn = loop {
-                        let conn_result = SftpConnection::new(&owned_sftp_source.address.clone(), &owned_sftp_source.username.clone());
+                        let conn_result = SftpConnection::new(
+                            &owned_sftp_source.address.clone(),
+                            &owned_sftp_source.username.clone(),
+                            owned_sftp_source.compress
+                        );
 
                         match conn_result {
                             Ok(c) => break c,

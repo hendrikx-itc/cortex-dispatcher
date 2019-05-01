@@ -24,11 +24,18 @@ pub struct SftpSource {
     pub username: String,
     #[serde(default = "default_thread_count")]
     pub thread_count: usize,
+    #[serde(default = "default_compress")]
+    pub compress: bool
 }
 
-/// Default Sftp scanner thread count
+/// Default Sftp downloader thread count
 fn default_thread_count() -> usize {
     1
+}
+
+/// Default Sftp compression setting
+fn default_compress() -> bool {
+    false
 }
 
 #[derive(Debug, Deserialize, Clone)]

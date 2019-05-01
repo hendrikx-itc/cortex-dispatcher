@@ -33,7 +33,7 @@ impl std::error::Error for SftpError {
 }
 
 impl SftpConnection {
-    pub fn new(address: &str, username: &str) -> Result<SftpConnection, SftpError> {
+    pub fn new(address: &str, username: &str, compress: bool) -> Result<SftpConnection, SftpError> {
         let tcp_connect_result = TcpStream::connect(address);
 
         let tcp = match tcp_connect_result {
@@ -42,7 +42,7 @@ impl SftpConnection {
         };
 
         let mut session = Box::new(Session::new().unwrap());
-        session.set_compress(true);
+        session.set_compress(compress);
         let handshake_result = session.handshake(&tcp);
 
         match handshake_result {

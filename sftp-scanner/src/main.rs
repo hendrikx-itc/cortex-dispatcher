@@ -117,7 +117,11 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
             }
         };
 
-        let conn_result = SftpConnection::new(&sftp_source.address.clone(), &sftp_source.username.clone());
+        let conn_result = SftpConnection::new(
+            &sftp_source.address.clone(),
+            &sftp_source.username.clone(),
+            false
+        );
 
         let sftp_connection = conn_result.unwrap();
 
