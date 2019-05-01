@@ -202,19 +202,19 @@ fn channel_to_amqp(receiver: Receiver<Command>, addr: std::net::SocketAddr, queu
                     BasicPublishOptions::default(),
                     BasicProperties::default(),
                 ).and_then(move |request_result| {
-                    info!("command sent: {}", cmd);
+                    debug!("Command sent: {}", cmd);
 
                     match request_result {
                         Some(request_id) => {
-                            debug!("confirmed: {}", request_id);
+                            debug!("Confirmed: {}", request_id);
                         },
                         None => {
-                            debug!("not confirmed/nacked");
+                            debug!("Not confirmed/nacked");
                         }
                     }
                     Ok(())
                 }).map_err(|e| {
-                    info!("error sending command: {:?}", e);
+                    info!("Error sending command: {:?}", e);
                 });
 
                 tokio::spawn(future);
@@ -237,9 +237,6 @@ fn connect_queue(addr: &std::net::SocketAddr, queue_name: String) -> impl Future
         .and_then(move |channel| {
             debug!("Created channel with id: {}", channel.id);
 
-            // we using a "move" closure to reuse the channel
-            // once the queue is declared. We could also clone
-            // the channel
             channel
                 .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new())
                 .map(|queue| {(channel, queue)})
