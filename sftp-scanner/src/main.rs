@@ -126,7 +126,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
         let sftp_connection = conn_result.unwrap();
 
         loop {
-            info!("{} scanning remote directory '{}'", &sftp_source.name, &sftp_source.directory);
+            info!("Scanning {}", &sftp_source.name);
 
             let result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
 
