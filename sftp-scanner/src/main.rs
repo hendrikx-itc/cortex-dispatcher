@@ -190,7 +190,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
 fn channel_to_amqp(receiver: Receiver<Command>, addr: std::net::SocketAddr, queue_name: String) -> impl Future<Item = (), Error = ()> + Send + 'static {
     connect_queue(&addr, queue_name)
         .map(move |(channel, queue)| {
-            info!("declared queue {}", queue.name());
+            info!("Connected to queue {}", queue.name());
 
             let stream = receiver.for_each(move |cmd| {
                 let command_str = serde_json::to_string(&cmd).unwrap();
@@ -235,7 +235,7 @@ fn channel_to_amqp(receiver: Receiver<Command>, addr: std::net::SocketAddr, queu
 fn connect_queue(addr: &std::net::SocketAddr, queue_name: String) -> impl Future<Item = (lapin::channel::Channel<TcpStream>, lapin::queue::Queue), Error = Error> + Send + 'static {
     connect_channel(&addr)
         .and_then(move |channel| {
-            info!("created channel with id: {}", channel.id);
+            debug!("Created channel with id: {}", channel.id);
 
             // we using a "move" closure to reuse the channel
             // once the queue is declared. We could also clone
@@ -251,7 +251,7 @@ fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin::cha
     TcpStream::connect(addr)
         .map_err(Error::from)
         .and_then(|stream| {
-            info!("TcpStream connected");
+            debug!("TcpStream connected");
 
             lapin::client::Client::connect(stream, ConnectionOptions::default())
                 .map_err(Error::from)
@@ -259,8 +259,6 @@ fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin::cha
         .and_then(|(client, heartbeat)| {
             tokio::spawn(heartbeat.map_err(|_e| ()));
 
-            // create_channel returns a future that is resolved
-            // once the channel is successfully created
             client.create_channel().map_err(Error::from)
         })
 }
