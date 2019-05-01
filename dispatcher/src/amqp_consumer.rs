@@ -42,7 +42,7 @@ impl CommandDispatch for Command {
 }
 
 /// Starts a new thread running the command consumer
-pub fn start_consumer(addr: String, mut command_handler: CommandHandler) -> thread::JoinHandle<()> {
+pub fn start_consumer(addr: String, queue_name: String, mut command_handler: CommandHandler) -> thread::JoinHandle<()> {
     let builder = thread::Builder::new()
         .name("amqp_listener".into());
 
@@ -70,9 +70,8 @@ pub fn start_consumer(addr: String, mut command_handler: CommandHandler) -> thre
                 info!("created channel with id: {}", id);
 
                 let ch = channel.clone();
-                let queue_name = "text";
 
-                channel.queue_declare(queue_name, QueueDeclareOptions::default(), FieldTable::new()).and_then(move |queue| {
+                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).and_then(move |queue| {
                     info!("channel {} declared queue {}", id, queue_name);
 
                     // basic_consume returns a future of a message

@@ -96,6 +96,7 @@ impl Cortex {
 
         let join_handle = start_consumer(
             self.settings.command_queue.address.clone(),
+            self.settings.command_queue.queue_name.clone(),
             command_handler
         );
 
