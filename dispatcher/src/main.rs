@@ -15,7 +15,6 @@ mod local_source;
 mod metrics;
 
 use settings::Settings;
-use cortex::Cortex;
 
 #[macro_use]
 extern crate serde_derive;
@@ -78,5 +77,5 @@ fn main() {
 
     info!("Configuration loaded");
 
-    Cortex::new(settings).run();
+    cortex::run(settings);
 }

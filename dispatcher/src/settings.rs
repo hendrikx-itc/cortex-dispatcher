@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use regex::Regex;
 
 extern crate regex;
@@ -7,7 +9,7 @@ extern crate serde_regex;
 pub struct DataTarget {
     #[serde(with = "serde_regex")]
     pub regex: Regex,
-    pub directory: String,
+    pub directory: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -40,7 +42,7 @@ fn default_compress() -> bool {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Storage {
-    pub directory: String,
+    pub directory: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]

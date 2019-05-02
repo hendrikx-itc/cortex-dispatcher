@@ -10,7 +10,7 @@ impl CommandHandler {
         info!("sftp_download: {}", path);
     }
 
-    pub fn http_download(&mut self, size: Option<u64>, path: String) {
+    pub fn http_download(&mut self, _size: Option<u64>, path: String) {
         info!("http_download {}", path);
     }
 }

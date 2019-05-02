@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 
@@ -28,7 +28,7 @@ pub struct SftpDownloader {
     pub config: settings::SftpSource,
     pub sftp_connection: SftpConnection,
     pub db_connection: postgres::Connection,
-    pub local_storage_path: String
+    pub local_storage_path: PathBuf
 }
 
 pub struct Download {

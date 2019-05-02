@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 use std::thread;
+use std::path::{PathBuf};
 
 extern crate inotify;
 
@@ -21,90 +22,84 @@ use cortex_core::sftp_connection::SftpConnection;
 
 use prometheus;
 
-pub struct Cortex {
-    pub settings: settings::Settings
+fn start_sftp_downloader(sftp_source: settings::SftpSource, data_dir: PathBuf, db_url: String) -> Addr<SftpDownloader> {
+    SyncArbiter::start(sftp_source.thread_count, move || {
+        let conn = loop {
+            let conn_result = SftpConnection::new(
+                &sftp_source.address.clone(),
+                &sftp_source.username.clone(),
+                sftp_source.compress
+            );
+
+            match conn_result {
+                Ok(c) => break c,
+                Err(e) => error!("Could not connect: {}", e)
+            }
+
+            thread::sleep(Duration::from_millis(1000));
+        };
+
+        let db_conn_result = postgres::Connection::connect(db_url.clone(), postgres::TlsMode::None);
+
+        let db_conn = match db_conn_result {
+            Ok(c) => {
+                info!("Connected to database");
+                c
+            },
+            Err(e) => {
+                error!("Error connecting to database: {}", e);
+                ::std::process::exit(2);
+            }
+        };
+
+        SftpDownloader {
+            config: sftp_source.clone(),
+            sftp_connection: conn,
+            db_connection: db_conn,
+            local_storage_path: data_dir.clone()
+        }
+    })
 }
 
-impl Cortex {
-    pub fn new(settings: settings::Settings) -> Cortex {
-        Cortex { settings }
-    }
-
-    fn start_sftp_downloader(sftp_source: settings::SftpSource, db_url: String) -> Addr<SftpDownloader> {
-        SyncArbiter::start(sftp_source.thread_count, move || {
-            let conn = loop {
-                let conn_result = SftpConnection::new(
-                    &sftp_source.address.clone(),
-                    &sftp_source.username.clone(),
-                    sftp_source.compress
-                );
-
-                match conn_result {
-                    Ok(c) => break c,
-                    Err(e) => error!("Could not connect: {}", e)
-                }
-
-                thread::sleep(Duration::from_millis(1000));
-            };
-
-            let db_conn_result = postgres::Connection::connect(db_url.clone(), postgres::TlsMode::None);
-
-            let db_conn = match db_conn_result {
-                Ok(c) => {
-                    info!("Connected to database");
-                    c
-                },
-                Err(e) => {
-                    error!("Error connecting to database: {}", e);
-                    ::std::process::exit(2);
-                }
-            };
-
-            SftpDownloader {
-                config: sftp_source.clone(),
-                sftp_connection: conn,
-                db_connection: db_conn,
-                local_storage_path: String::from("/tmp")
-            }
+fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>, data_dir: PathBuf, db_url: String) -> HashMap<String, Addr<SftpDownloader>> {
+    sftp_sources
+        .iter()
+        .map(|sftp_source| {
+            (sftp_source.name.clone(), start_sftp_downloader(sftp_source.clone().clone(), data_dir.clone(), db_url.clone()))
         })
-    }
+        .collect()
+}
 
-    fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>, db_url: String) -> HashMap<String, Addr<SftpDownloader>> {
-        sftp_sources
-            .iter()
-            .map(|sftp_source| {
-                (sftp_source.name.clone(), Cortex::start_sftp_downloader(sftp_source.clone().clone(), db_url.clone()))
-            })
-            .collect()
-    }
+pub fn run(settings: settings::Settings) {
+    let system = actix::System::new("cortex");
 
-    pub fn run(&mut self) {
-        let system = actix::System::new("cortex");
+    let downloaders_map = start_sftp_downloaders(
+        settings.sftp_sources.clone(),
+        settings.storage.directory.clone(),
+        settings.postgresql.url.clone()
+    );
 
-        let downloaders_map = Cortex::start_sftp_downloaders(self.settings.sftp_sources.clone(), self.settings.postgresql.url.clone());
+    let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map };
 
-        let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map };
+    let local_source_handler_join_handle = start_local_source_handler(settings.directory_sources.clone());
 
-        let local_source_handler_join_handle = start_local_source_handler(self.settings.directory_sources.clone());
+    let command_handler = CommandHandler { sftp_download_dispatcher };
 
-        let command_handler = CommandHandler { sftp_download_dispatcher };
+    start_metrics_collector(
+        settings.prometheus.push_gateway.clone(),
+        settings.prometheus.push_interval
+    );
 
-        start_metrics_collector(
-            self.settings.prometheus.push_gateway.clone(),
-            self.settings.prometheus.push_interval
-        );
+    let join_handle = start_consumer(
+        settings.command_queue.address.clone(),
+        settings.command_queue.queue_name.clone(),
+        command_handler
+    );
 
-        let join_handle = start_consumer(
-            self.settings.command_queue.address.clone(),
-            self.settings.command_queue.queue_name.clone(),
-            command_handler
-        );
+    system.run();
 
-        system.run();
-
-        join_handle.join().unwrap();
-        local_source_handler_join_handle.join().unwrap();
-    }
+    join_handle.join().unwrap();
+    local_source_handler_join_handle.join().unwrap();
 }
 
 fn start_metrics_collector(address: String, push_interval: u64) -> thread::JoinHandle<()> {
