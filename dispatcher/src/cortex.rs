@@ -53,7 +53,7 @@ fn start_sftp_downloader(sftp_source: settings::SftpSource, data_dir: PathBuf, d
         };
 
         SftpDownloader {
-            config: sftp_source.clone(),
+            sftp_source: sftp_source.clone(),
             sftp_connection: conn,
             db_connection: db_conn,
             local_storage_path: data_dir.clone()

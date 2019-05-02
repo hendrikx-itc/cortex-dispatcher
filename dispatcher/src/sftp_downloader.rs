@@ -25,7 +25,7 @@ use sha2::{Sha256, Digest};
 
 
 pub struct SftpDownloader {
-    pub config: settings::SftpSource,
+    pub sftp_source: settings::SftpSource,
     pub sftp_connection: SftpConnection,
     pub db_connection: postgres::Connection,
     pub local_storage_path: PathBuf
@@ -44,38 +44,59 @@ impl Handler<Download> for SftpDownloader {
     type Result = bool;
 
     fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
+        let remote_path = Path::new(&msg.path);
+
+        let local_path = if remote_path.is_absolute() {
+            self.local_storage_path.join(remote_path.strip_prefix("/").unwrap())
+        } else {
+            self.local_storage_path.join(remote_path)
+        };
+
         match msg.size {
             Some(size) => {
                 info!(
-                    "{} downloading '{}' {} bytes",
-                    self.config.name,
+                    "{} downloading '{}' -> '{}' {} bytes",
+                    self.sftp_source.name,
                     msg.path,
+                    local_path.to_str().unwrap(),
                     size
                 );
             },
             None => {
                 info!(
                     "{} downloading '{}' size unknown",
-                    self.config.name,
+                    self.sftp_source.name,
                     msg.path
                 );
             }
         }
-
-        let remote_path = Path::new(&msg.path);
-        let local_path = Path::new(&self.local_storage_path).join(remote_path.file_name().unwrap());
 
         let open_result = self.sftp_connection.sftp.open(&remote_path);
 
         let mut remote_file = match open_result {
             Ok(remote_file) => remote_file,
             Err(e) => {
-                warn!("Error opening remote file {}: {}", msg.path, e);
+                error!("Error opening remote file {}: {}", msg.path, e);
                 return false;
             }
         };
 
-        let mut local_file = File::create(local_path).unwrap();
+        let local_path_parent = local_path.parent().unwrap();
+
+        if !local_path_parent.exists() {
+            std::fs::create_dir_all(local_path_parent);
+            info!("Created containing directory '{}'", local_path_parent.to_str().unwrap());
+        }
+
+        let file_create_result = File::create(&local_path);
+
+        let mut local_file = match file_create_result {
+            Ok(file) => file,
+            Err(e) => {
+                error!("Could not create file {}: {}", local_path.to_str().unwrap(), e);
+                return false;
+            }
+        };
 
         let mut sha256 = Sha256::new();
 
@@ -85,13 +106,13 @@ impl Handler<Download> for SftpDownloader {
 
         match copy_result {
             Ok(bytes_copied) => {
-                info!("{} downloaded '{}', {} bytes", self.config.name, msg.path, bytes_copied);
+                info!("{} downloaded '{}', {} bytes", self.sftp_source.name, msg.path, bytes_copied);
 
                 let hash = format!("{:x}", sha256.result());
 
                 self.db_connection.execute(
                     "insert into dispatcher.sftp_download (remote, path, size, hash) values ($1, $2, $3, $4)",
-                    &[&self.config.name, &msg.path, &i64::try_from(bytes_copied).unwrap(), &hash]
+                    &[&self.sftp_source.name, &msg.path, &i64::try_from(bytes_copied).unwrap(), &hash]
                 ).unwrap();
 
                 metrics::FILE_DOWNLOAD_COUNTER.inc();
@@ -104,10 +125,10 @@ impl Handler<Download> for SftpDownloader {
                     
                     match unlink_result {
                         Ok(_) => {
-                            info!("{} removed '{}'", self.config.name, msg.path);
+                            info!("{} removed '{}'", self.sftp_source.name, msg.path);
                         },
                         Err(e) => {
-                            info!("{} error removing '{}': {}", self.config.name, msg.path, e);
+                            info!("{} error removing '{}': {}", self.sftp_source.name, msg.path, e);
                         }
                     }
                 }
@@ -116,7 +137,7 @@ impl Handler<Download> for SftpDownloader {
             Err(e) => {
                 error!(
                     "{} error downloading '{}': {}",
-                    self.config.name, msg.path, e
+                    self.sftp_source.name, msg.path, e
                 );
                 false
             }

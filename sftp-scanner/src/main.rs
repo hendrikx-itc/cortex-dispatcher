@@ -128,9 +128,15 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
         loop {
             debug!("Scanning {}", &sftp_source.name);
 
-            let result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
+            let read_result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
 
-            let paths = result.unwrap();
+            let paths = match read_result {
+                Ok(paths) => paths,
+                Err(e) => {
+                    error!("Could not read directory {}: {}", &sftp_source.directory, e);
+                    break;
+                }
+            };
 
             for (path, stat) in paths {
                 let file_name = path.file_name().unwrap().to_str().unwrap();
