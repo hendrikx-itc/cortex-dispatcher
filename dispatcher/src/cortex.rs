@@ -85,12 +85,12 @@ pub fn run(settings: settings::Settings) {
 
     let command_handler = CommandHandler { sftp_download_dispatcher };
 
-    start_metrics_collector(
+    let metrics_collector_join_handle = start_metrics_collector(
         settings.prometheus.push_gateway.clone(),
         settings.prometheus.push_interval
     );
 
-    let join_handle = start_consumer(
+    let consumer_join_handle = start_consumer(
         settings.command_queue.address.clone(),
         settings.command_queue.queue_name.clone(),
         command_handler
@@ -98,7 +98,8 @@ pub fn run(settings: settings::Settings) {
 
     system.run();
 
-    join_handle.join().unwrap();
+    metrics_collector_join_handle.join().unwrap();
+    consumer_join_handle.join().unwrap();
     local_source_handler_join_handle.join().unwrap();
 }
 
