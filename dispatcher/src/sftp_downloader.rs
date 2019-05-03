@@ -84,8 +84,17 @@ impl Handler<Download> for SftpDownloader {
         let local_path_parent = local_path.parent().unwrap();
 
         if !local_path_parent.exists() {
-            std::fs::create_dir_all(local_path_parent);
-            info!("Created containing directory '{}'", local_path_parent.to_str().unwrap());
+            let create_dir_result = std::fs::create_dir_all(local_path_parent);
+
+            match create_dir_result {
+                Ok(()) => {
+                    info!("Created containing directory '{}'", local_path_parent.to_str().unwrap());
+                },
+                Err(e) => {
+                    error!("Error creating containing directory '{}': {}", local_path_parent.to_str().unwrap(), e);
+                    return false;
+                }
+            }
         }
 
         let file_create_result = File::create(&local_path);
@@ -115,8 +124,11 @@ impl Handler<Download> for SftpDownloader {
                     &[&self.sftp_source.name, &msg.path, &i64::try_from(bytes_copied).unwrap(), &hash]
                 ).unwrap();
 
-                metrics::FILE_DOWNLOAD_COUNTER.inc();
-                metrics::BYTES_DOWNLOADED_COUNTER.inc_by(bytes_copied as i64);
+                metrics::FILE_DOWNLOAD_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc();
+                metrics::BYTES_DOWNLOADED_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc_by(bytes_copied as i64);
+
+                metrics::FILE_DOWNLOAD_COUNTER_VEC.with_label_values(&["total"]).inc();
+                metrics::BYTES_DOWNLOADED_COUNTER_VEC.with_label_values(&["total"]).inc_by(bytes_copied as i64);
 
                 let remove_after_download = true;
 
