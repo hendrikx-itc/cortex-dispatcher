@@ -127,9 +127,6 @@ impl Handler<Download> for SftpDownloader {
                 metrics::FILE_DOWNLOAD_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc();
                 metrics::BYTES_DOWNLOADED_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc_by(bytes_copied as i64);
 
-                metrics::FILE_DOWNLOAD_COUNTER_VEC.with_label_values(&["total"]).inc();
-                metrics::BYTES_DOWNLOADED_COUNTER_VEC.with_label_values(&["total"]).inc_by(bytes_copied as i64);
-
                 let remove_after_download = true;
 
                 if remove_after_download {
