@@ -74,6 +74,9 @@ pub fn event_stream_handler(sources: Vec<settings::DirectorySource>, inotify: In
 }
 
 fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -> impl Stream<Item = FileSystemEvent, Error = std::io::Error> {
+    // Register inotify watches and create a mapping from the watch descriptor
+    // to the DirectorySource settings. When an inotify watch cannot be created,
+    // it is excluded from the map.
     let watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = sources
         .iter()
         .map(|directory_source| {
@@ -81,17 +84,24 @@ fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -
             let source_directory_str = directory_source.directory.clone();
             let source_directory = Path::new(&source_directory_str);
 
-            let watch = inotify
+            let watch_result = inotify
                 .add_watch(
                     source_directory,
                     WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
-                )
-                .expect("Failed to add inotify watch");
+                );
 
-            info!("Added watch on {}", source_directory_str);
-
-            (watch, directory_source.clone())
+            match watch_result {
+                Ok(w) => {
+                    info!("Added watch on {}", source_directory_str);
+                    Some((w, directory_source.clone()))
+                },
+                Err(e) => {
+                    error!("Failed to add inotify watch on '{}': {}", source_directory_str, e);
+                    None
+                }
+            }
         })
+        .filter_map(|w| w)
         .collect();
 
     let buffer: Vec<u8> = vec![0; 1024];
