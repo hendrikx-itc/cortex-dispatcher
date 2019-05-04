@@ -12,6 +12,8 @@ use tokio;
 use tokio::net::TcpStream;
 use tokio::prelude::*;
 use tokio::runtime::current_thread::block_on_all;
+use actix::prelude::*;
+
 
 use serde_json;
 
@@ -21,11 +23,11 @@ use cortex_core::Command;
 
 
 trait CommandDispatch {
-    fn dispatch(&mut self, target: &mut CommandHandler);
+    fn dispatch(&mut self, target: &mut CommandHandler) -> Box<Future<Item = bool, Error = Error>>;
 }
 
 impl CommandDispatch for Command {
-    fn dispatch(&mut self, target: &mut CommandHandler) {
+    fn dispatch(&mut self, target: &mut CommandHandler) -> Box<Future<Item = bool, Error = Error>> {
         match self {
             Command::SftpDownload { created, size, sftp_source, path } => {
                 info!("dispatch SftpDownload created at {}", created);
@@ -74,10 +76,18 @@ pub fn start_consumer(addr: String, queue_name: String, mut command_handler: Com
                 channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).and_then(move |queue| {
                     info!("channel {} declared queue {}", id, queue_name);
 
+                    let consume_options = BasicConsumeOptions {
+                        no_local: false,
+                        no_ack: false,
+                        exclusive: true,
+                        no_wait: false,
+                        ticket: 0
+                    };
+
                     // basic_consume returns a future of a message
                     // stream. Any time a message arrives for this consumer,
                     // the for_each method would be called
-                    channel.basic_consume(&queue, "my_consumer", BasicConsumeOptions::default(), FieldTable::new())
+                    channel.basic_consume(&queue, "my_consumer", consume_options, FieldTable::new())
                 }).and_then(|stream| {
                     info!("got consumer stream");
 
@@ -86,13 +96,35 @@ pub fn start_consumer(addr: String, queue_name: String, mut command_handler: Com
 
                         match deserialize_result {
                             Ok(mut command) => {
-                                info!("{:?}", command);
-                                command.dispatch(&mut command_handler);
+                                let local_ch = ch.clone();
+                                let local_tag = message.delivery_tag.clone();
+
+                                let future_dispatch = command
+                                    .dispatch(&mut command_handler)
+                                    .then(move |r| {
+                                        match r {
+                                            Ok(ret) => {
+                                                info!("Ok: {} Sending Ack...", ret);
+                                                local_ch.basic_ack(local_tag, false);
+
+                                            },
+                                            Err(e) => {
+                                                error!("Error: {} Sending Nack...", e);
+                                                local_ch.basic_nack(local_tag, false, false);
+                                            }
+                                        }
+
+                                        future::result(Ok(()))
+                                    });
+
+                                info!("Spawning dispatch future");
+
+                                Arbiter::spawn(future_dispatch);
                             },
                             Err(e) => error!("Error deserializing command: {}", e)
-                        }
+                        };
 
-                        ch.basic_ack(message.delivery_tag, false)
+                        future::ok(())
                     })
                 }).map_err(Error::from)
             })

@@ -220,7 +220,7 @@ fn channel_to_amqp(receiver: Receiver<Command>, addr: std::net::SocketAddr, queu
                     }
                     Ok(())
                 }).map_err(|e| {
-                    info!("Error sending command: {:?}", e);
+                    error!("Error sending command: {:?}", e);
                 });
 
                 tokio::spawn(future);

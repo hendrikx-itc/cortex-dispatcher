@@ -137,7 +137,7 @@ impl Handler<Download> for SftpDownloader {
                             info!("{} removed '{}'", self.sftp_source.name, msg.path);
                         },
                         Err(e) => {
-                            info!("{} error removing '{}': {}", self.sftp_source.name, msg.path, e);
+                            error!("{} error removing '{}': {}", self.sftp_source.name, msg.path, e);
                         }
                     }
                 }
@@ -162,25 +162,27 @@ impl Actor for SftpDownloader {
     }
 }
 
-
 pub struct SftpDownloadDispatcher {
     pub downloaders_map: HashMap<String, Addr<SftpDownloader>>,
 }
 
 impl SftpDownloadDispatcher {
-    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) {
+    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) -> Box<Future<Item = bool, Error = failure::Error>> {
         let result = self.downloaders_map.get(sftp_source);
 
         match result {
             Some(downloader) => {
                 let result = downloader.send(Download {path, size});
 
-                Arbiter::spawn(result.then(|_r| {
-                    future::result(Ok(()))
-                }));
+                Box::new(result.map(|r| {
+                    info!("result");
+                    r
+                }).map_err(|e| failure::err_msg(e)))
             },
             None => {
-                info!("no SFTP source matching '{}'", sftp_source);
+                warn!("no SFTP source matching '{}'", sftp_source);
+
+                Box::new(future::err::<bool, failure::Error>(failure::err_msg("no SFTP source matching '{}'")))
             }
         }
     }

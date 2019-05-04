@@ -65,7 +65,10 @@ fn start_sftp_downloaders(sftp_sources: Vec<settings::SftpSource>, data_dir: Pat
     sftp_sources
         .iter()
         .map(|sftp_source| {
-            (sftp_source.name.clone(), start_sftp_downloader(sftp_source.clone().clone(), data_dir.clone(), db_url.clone()))
+            (
+                sftp_source.name.clone(),
+                start_sftp_downloader(sftp_source.clone().clone(), data_dir.clone(), db_url.clone())
+            )
         })
         .collect()
 }
