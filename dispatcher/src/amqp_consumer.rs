@@ -58,14 +58,13 @@ pub fn setup_consumer(addr: SocketAddr, queue_name: String, mut command_handler:
         // create_channel returns a future that is resolved
         // once the channel is successfully created
         client.create_channel().map_err(Error::from)
-    }).and_then(|channel| {
-        let id = channel.id;
-        info!("created channel with id: {}", id);
+    }).and_then(|mut channel| {
+        info!("Created channel with id {}", channel.id());
 
-        let ch = channel.clone();
+        let mut ch = channel.clone();
 
         channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).and_then(move |queue| {
-            info!("channel {} declared queue {}", id, queue_name);
+            info!("Channel {} declared queue {}", channel.id(), queue_name);
 
             // basic_consume returns a future of a message
             // stream. Any time a message arrives for this consumer,
@@ -74,7 +73,7 @@ pub fn setup_consumer(addr: SocketAddr, queue_name: String, mut command_handler:
         }).and_then(|stream| {
             info!("got consumer stream");
 
-            stream.for_each(move |message| {
+            stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::error::Error> + 'static + Send> {
                 metrics::MESSAGES_RECEIVED_COUNTER.inc();
                 debug!("Received message from RabbitMQ");
 
@@ -83,20 +82,13 @@ pub fn setup_consumer(addr: SocketAddr, queue_name: String, mut command_handler:
                 match deserialize_result {
                     Ok(mut command) => {
                         command.dispatch(&mut command_handler);
-
-                        tokio::spawn(ch.basic_ack(message.delivery_tag, false).and_then(|_|{
-                            info!("Ack sent");
-                            future::ok(())
-                        }).map_err(|e| {
-                            error!("Error sending Ack: {}", e);
-                        }));
-
-                        //local_ch.basic_nack(local_tag, false, false);
+                        Box::new(ch.basic_ack(message.delivery_tag, false))
                     },
-                    Err(e) => error!("Error deserializing command: {}", e)
-                };
-
-                future::ok(())
+                    Err(e) => {
+                        error!("Error deserializing command: {}", e);
+                        Box::new(ch.basic_nack(message.delivery_tag, false, false))
+                    }
+                }
             })
         }).and_then(|_| {
             info!("Consumer stream ended");

@@ -103,19 +103,19 @@ pub fn run(settings: settings::Settings) {
         settings.postgresql.url.clone()
     );
 
-    let sftp_download_dispatcher = SftpDownloadDispatcher { downloaders_map };
-
     let local_source_handler_join_handle = start_local_source_handler(settings.directory_sources.clone());
 
-    let command_handler = CommandHandler { sftp_download_dispatcher };
+    let command_handler = CommandHandler {
+        sftp_download_dispatcher: SftpDownloadDispatcher { downloaders_map }
+    };
 
-    let mut entered = enter().expect("failed to claim thread");
+    let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
-    //runtime.spawn(metrics_collector(
-    //    settings.prometheus.push_gateway.clone(),
-    //    settings.prometheus.push_interval
-    //));
+    runtime.spawn(metrics_collector(
+        settings.prometheus.push_gateway.clone(),
+        settings.prometheus.push_interval
+    ));
 
     runtime.spawn(setup_consumer(
         settings.command_queue.address,
@@ -123,9 +123,9 @@ pub fn run(settings: settings::Settings) {
         command_handler
     ));
 
-    entered.block_on(runtime.shutdown_on_idle()).expect("shutdown cannot error");
+    entered.block_on(runtime.shutdown_on_idle()).expect("Shutdown cannot error");
 
-    info!("Tokio Runtime shutdown");
+    info!("Tokio runtime shutdown");
 
     local_source_handler_join_handle.join().unwrap();
 }
@@ -156,6 +156,5 @@ fn metrics_collector(address: String, push_interval: u64) -> impl Future< Item =
         future::ok(())
     }).map_err(|e| {
         error!("{}", e);
-        ()
     })
 }

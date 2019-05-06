@@ -149,7 +149,7 @@ pub struct SftpDownloadDispatcher {
 }
 
 impl SftpDownloadDispatcher {
-    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) -> () {
+    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) {
         let result = self.downloaders_map.get(sftp_source);
 
         match result {

@@ -33,10 +33,16 @@ impl fmt::Display for Command {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
             Command::SftpDownload { created, size, sftp_source, path } => {
-                write!(f, "SftpDownload({}, {}, {})", created, sftp_source, path)
+                match size {
+                    Some(s) => write!(f, "SftpDownload({}, {}, {}, {})", created, s, sftp_source, path),
+                    None => write!(f, "SftpDownload({}, {}, {})", created, sftp_source, path)
+                }
             },
             Command::HttpDownload { created, size, url } => {
-                write!(f, "HttpDownload({}, {})", created, url)
+                match size {
+                    Some(s) => write!(f, "HttpDownload({}, {}, {})", created, s, url),
+                    None => write!(f, "HttpDownload({}, {})", created, url),
+                }
             }
 		}
     }
