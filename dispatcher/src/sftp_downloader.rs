@@ -28,7 +28,6 @@ use failure::Error;
 use tee::TeeReader;
 use sha2::{Sha256, Digest};
 
-
 pub struct SftpDownloader {
     pub sftp_source: settings::SftpSource,
     pub sftp_connection: SftpConnection,
@@ -107,11 +106,14 @@ impl SftpDownloader {
 
                         match deserialize_result {
                             Ok(command) => {
-                                let download_result = sftp_downloader.handle(command);
+                                let download_result = sftp_downloader.handle(&command);
 
                                 match download_result {
                                     Ok(_) => Box::new(ch.basic_ack(message.delivery_tag, false)),
-                                    Err(_) => Box::new(ch.basic_nack(message.delivery_tag, false, false))
+                                    Err(e) => {
+										error!("Error downloading {}: {}", &command.path, e);
+										Box::new(ch.basic_nack(message.delivery_tag, false, false))
+									}
                                 }
                             },
                             Err(e) => {
@@ -137,7 +139,7 @@ impl SftpDownloader {
         join_handle
     }
 
-    pub fn handle(&mut self, msg: SftpDownload) -> Result<(), ()> {
+    pub fn handle(&mut self, msg: &SftpDownload) -> Result<(), String> {
         let remote_path = Path::new(&msg.path);
 
         let local_path = if remote_path.is_absolute() {
@@ -170,8 +172,7 @@ impl SftpDownloader {
         let mut remote_file = match open_result {
             Ok(remote_file) => remote_file,
             Err(e) => {
-                error!("Error opening remote file {}: {}", msg.path, e);
-                return Err(());
+                return Err(format!("Error opening remote file {}: {}", msg.path, e));
             }
         };
 
@@ -185,8 +186,7 @@ impl SftpDownloader {
                     info!("Created containing directory '{}'", local_path_parent.to_str().unwrap());
                 },
                 Err(e) => {
-                    error!("Error creating containing directory '{}': {}", local_path_parent.to_str().unwrap(), e);
-                    return Err(());
+                    return Err(format!("Error creating containing directory '{}': {}", local_path_parent.to_str().unwrap(), e));
                 }
             }
         }
@@ -196,8 +196,7 @@ impl SftpDownloader {
         let mut local_file = match file_create_result {
             Ok(file) => file,
             Err(e) => {
-                error!("Could not create file {}: {}", local_path.to_str().unwrap(), e);
-                return Err(());
+                return Err(format!("Could not create file {}: {}", local_path.to_str().unwrap(), e));
             }
         };
 
@@ -239,11 +238,7 @@ impl SftpDownloader {
                 Ok(())
             }
             Err(e) => {
-                error!(
-                    "{} error downloading '{}': {}",
-                    self.sftp_source.name, msg.path, e
-                );
-                Err(())
+                Err(format!("{} error downloading '{}': {}", self.sftp_source.name, msg.path, e))
             }
         }
     }
