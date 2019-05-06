@@ -1,19 +1,29 @@
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::thread;
+use std::time::Duration;
 
 extern crate inotify;
 
 extern crate failure;
+
 extern crate lapin_futures;
+use lapin_futures::channel::{BasicConsumeOptions, QueueDeclareOptions};
+use lapin_futures::types::FieldTable;
+
+use tokio::net::TcpStream;
+use tokio::runtime::current_thread::Runtime;
+use tokio::prelude::*;
 
 use crate::settings;
 use crate::metrics;
 
 use cortex_core::sftp_connection::SftpConnection;
+use cortex_core::SftpDownload;
+
+use failure::Error;
 
 use tee::TeeReader;
 use sha2::{Sha256, Digest};
@@ -26,14 +36,108 @@ pub struct SftpDownloader {
     pub local_storage_path: PathBuf
 }
 
-#[derive(Debug)]
-pub struct Download {
-    path: String,
-    size: Option<u64>,
-}
-
 impl SftpDownloader {
-    pub fn handle(&mut self, msg: Download) -> bool {
+    pub fn start(
+        amqp_client: lapin_futures::client::Client<TcpStream>,
+        queue_name: String,
+        sftp_source: settings::SftpSource,
+        data_dir: PathBuf,
+        db_url: String,
+    ) -> thread::JoinHandle<()> {
+        let join_handle = thread::spawn(move || {
+            let conn = loop {
+                let conn_result = SftpConnection::new(
+                    &sftp_source.address.clone(),
+                    &sftp_source.username.clone(),
+                    sftp_source.compress,
+                );
+
+                match conn_result {
+                    Ok(c) => break c,
+                    Err(e) => error!("Could not connect: {}", e),
+                }
+
+                thread::sleep(Duration::from_millis(1000));
+            };
+
+            let db_conn_result = postgres::Connection::connect(db_url.clone(), postgres::TlsMode::None);
+
+            let db_conn = match db_conn_result {
+                Ok(c) => {
+                    info!("Connected to database");
+                    c
+                }
+                Err(e) => {
+                    error!("Error connecting to database: {}", e);
+                    ::std::process::exit(2);
+                }
+            };
+
+            let mut runtime = Runtime::new().unwrap();
+
+            runtime.spawn(future::ok(()));
+
+            let mut sftp_downloader = SftpDownloader {
+                sftp_source: sftp_source.clone(),
+                sftp_connection: conn,
+                db_connection: db_conn,
+                local_storage_path: data_dir.clone(),
+            };
+
+            let stream = amqp_client.create_channel().map_err(Error::from).and_then(|mut channel| {
+                info!("Created channel with id {}", channel.id());
+
+                let mut ch = channel.clone();
+
+                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).and_then(move |queue| {
+                    info!("Channel {} declared queue {}", channel.id(), queue_name);
+
+                    // basic_consume returns a future of a message
+                    // stream. Any time a message arrives for this consumer,
+                    // the for_each method would be called
+                    channel.basic_consume(&queue, "my_consumer", BasicConsumeOptions::default(), FieldTable::new())
+                }).and_then(|stream| {
+                    info!("got consumer stream");
+
+                    stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::error::Error> + 'static + Send> {
+                        metrics::MESSAGES_RECEIVED_COUNTER.inc();
+                        debug!("Received message from RabbitMQ");
+
+                        let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
+
+                        match deserialize_result {
+                            Ok(command) => {
+                                let download_result = sftp_downloader.handle(command);
+
+                                match download_result {
+                                    Ok(_) => Box::new(ch.basic_ack(message.delivery_tag, false)),
+                                    Err(_) => Box::new(ch.basic_nack(message.delivery_tag, false, false))
+                                }
+                            },
+                            Err(e) => {
+                                error!("Error deserializing command: {}", e);
+                                Box::new(ch.basic_nack(message.delivery_tag, false, false))
+                            }
+                        }
+                    })
+                }).and_then(|_| {
+                    info!("Consumer stream ended");
+                    future::ok(())
+                })
+                .map_err(Error::from)
+            }).map_err(|e| {
+                error!("{}", e);
+            });
+
+            runtime.block_on(stream).unwrap();
+
+            runtime.run().unwrap();
+        });
+
+        join_handle
+    }
+
+    pub fn handle(&mut self, msg: SftpDownload) -> Result<(), ()> {
         let remote_path = Path::new(&msg.path);
 
         let local_path = if remote_path.is_absolute() {
@@ -67,7 +171,7 @@ impl SftpDownloader {
             Ok(remote_file) => remote_file,
             Err(e) => {
                 error!("Error opening remote file {}: {}", msg.path, e);
-                return false;
+                return Err(());
             }
         };
 
@@ -82,7 +186,7 @@ impl SftpDownloader {
                 },
                 Err(e) => {
                     error!("Error creating containing directory '{}': {}", local_path_parent.to_str().unwrap(), e);
-                    return false;
+                    return Err(());
                 }
             }
         }
@@ -93,7 +197,7 @@ impl SftpDownloader {
             Ok(file) => file,
             Err(e) => {
                 error!("Could not create file {}: {}", local_path.to_str().unwrap(), e);
-                return false;
+                return Err(());
             }
         };
 
@@ -131,34 +235,15 @@ impl SftpDownloader {
                         }
                     }
                 }
-                true
+                
+                Ok(())
             }
             Err(e) => {
                 error!(
                     "{} error downloading '{}': {}",
                     self.sftp_source.name, msg.path, e
                 );
-                false
-            }
-        }
-    }
-}
-
-pub struct SftpDownloadDispatcher {
-    pub downloaders_map: HashMap<String, (crossbeam_channel::Sender<Download>, thread::JoinHandle<()>)>,
-}
-
-impl SftpDownloadDispatcher {
-    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) {
-        let result = self.downloaders_map.get(sftp_source);
-
-        match result {
-            Some((sender, _)) => {
-                let result = sender.send(Download {path, size});
-                result.unwrap();
-            },
-            None => {
-                warn!("no SFTP source matching '{}'", sftp_source);
+                Err(())
             }
         }
     }

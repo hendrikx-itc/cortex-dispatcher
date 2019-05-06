@@ -8,11 +8,10 @@ extern crate env_logger;
 mod settings;
 mod cmd;
 mod cortex;
-mod amqp_consumer;
-mod command_handler;
 mod sftp_downloader;
 mod local_source;
 mod metrics;
+mod metrics_collector;
 
 use settings::Settings;
 

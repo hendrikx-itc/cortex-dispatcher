@@ -15,35 +15,36 @@ pub use self::sftp_connection::SftpConnection;
 
 /// The set of commands that can be sent over the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
-pub enum Command {
-    SftpDownload {
-        created: DateTime<Utc>,
-        size: Option<u64>,
-        sftp_source: String, path: String
-    },
-    HttpDownload {
-        created: DateTime<Utc>,
-        size: Option<u64>,
-        url: String
+pub struct SftpDownload {
+    pub created: DateTime<Utc>,
+    pub size: Option<u64>,
+    pub sftp_source: String,
+    pub path: String
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct HttpDownload {
+    pub created: DateTime<Utc>,
+    pub size: Option<u64>,
+    pub url: String
+}
+
+
+impl fmt::Display for SftpDownload {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.size {
+            Some(s) => write!(f, "SftpDownload({}, {}, {}, {})", self.created, s, self.sftp_source, self.path),
+            None => write!(f, "SftpDownload({}, {}, {})", self.created, self.sftp_source, self.path)
+        }
     }
 }
 
 
-impl fmt::Display for Command {
+impl fmt::Display for HttpDownload {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-            Command::SftpDownload { created, size, sftp_source, path } => {
-                match size {
-                    Some(s) => write!(f, "SftpDownload({}, {}, {}, {})", created, s, sftp_source, path),
-                    None => write!(f, "SftpDownload({}, {}, {})", created, sftp_source, path)
-                }
-            },
-            Command::HttpDownload { created, size, url } => {
-                match size {
-                    Some(s) => write!(f, "HttpDownload({}, {}, {})", created, s, url),
-                    None => write!(f, "HttpDownload({}, {})", created, url),
-                }
-            }
-		}
+        match self.size {
+            Some(s) => write!(f, "HttpDownload({}, {}, {})", self.created, s, self.url),
+            None => write!(f, "HttpDownload({}, {})", self.created, self.url),
+        }
     }
 }

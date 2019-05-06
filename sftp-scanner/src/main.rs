@@ -34,7 +34,7 @@ extern crate chrono;
 use chrono::prelude::*;
 
 extern crate cortex_core;
-use cortex_core::Command;
+use cortex_core::SftpDownload;
 
 mod cmd;
 mod settings;
@@ -102,7 +102,7 @@ fn main() {
     }
 }
 
-fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpSource) -> thread::JoinHandle<()> {
+fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: SftpSource) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
 
@@ -164,7 +164,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
                     ).unwrap();
 
                     if rows.is_empty() {
-                        let command = Command::SftpDownload {
+                        let command = SftpDownload {
                             created: Utc::now(),
                             size: stat.size,
                             sftp_source: sftp_source.name.clone(),
@@ -193,7 +193,7 @@ fn start_scanner(mut sender: Sender<Command>, db_url: String, sftp_source: SftpS
 }
 
 /// Connects a channel receiver to an AMQP queue.
-fn channel_to_amqp(receiver: Receiver<Command>, addr: std::net::SocketAddr, queue_name: String) -> impl Future<Item = (), Error = ()> + Send + 'static {
+fn channel_to_amqp(receiver: Receiver<SftpDownload>, addr: std::net::SocketAddr, queue_name: String) -> impl Future<Item = (), Error = ()> + Send + 'static {
     connect_queue(&addr, queue_name)
         .map(move |(channel, queue)| {
             info!("Connected to queue {}", queue.name());
