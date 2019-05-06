@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::net::SocketAddr;
 
 use regex::Regex;
 
@@ -47,7 +48,7 @@ pub struct Storage {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandQueue {
-    pub address: String,
+    pub address: SocketAddr,
     pub queue_name: String
 }
 

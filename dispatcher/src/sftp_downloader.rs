@@ -3,12 +3,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::thread;
 
 extern crate inotify;
-
-extern crate actix;
-use actix::prelude::*;
-use actix::{Actor};
 
 extern crate failure;
 extern crate lapin_futures;
@@ -17,8 +14,6 @@ use crate::settings;
 use crate::metrics;
 
 use cortex_core::sftp_connection::SftpConnection;
-
-use futures::{future, Future};
 
 use tee::TeeReader;
 use sha2::{Sha256, Digest};
@@ -31,19 +26,14 @@ pub struct SftpDownloader {
     pub local_storage_path: PathBuf
 }
 
+#[derive(Debug)]
 pub struct Download {
     path: String,
     size: Option<u64>,
 }
 
-impl Message for Download {
-    type Result = bool;
-}
-
-impl Handler<Download> for SftpDownloader {
-    type Result = bool;
-
-    fn handle(&mut self, msg: Download, _ctx: &mut SyncContext<Self>) -> Self::Result {
+impl SftpDownloader {
+    pub fn handle(&mut self, msg: Download) -> bool {
         let remote_path = Path::new(&msg.path);
 
         let local_path = if remote_path.is_absolute() {
@@ -154,35 +144,21 @@ impl Handler<Download> for SftpDownloader {
     }
 }
 
-impl Actor for SftpDownloader {
-    type Context = SyncContext<Self>;
-
-    fn started(&mut self, _ctx: &mut Self::Context) {
-        info!("SftpDownloader actor started");
-    }
-}
-
 pub struct SftpDownloadDispatcher {
-    pub downloaders_map: HashMap<String, Addr<SftpDownloader>>,
+    pub downloaders_map: HashMap<String, (crossbeam_channel::Sender<Download>, thread::JoinHandle<()>)>,
 }
 
 impl SftpDownloadDispatcher {
-    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) -> Box<Future<Item = bool, Error = failure::Error>> {
+    pub fn dispatch_download(&mut self, sftp_source: &str, size: Option<u64>, path: String) -> () {
         let result = self.downloaders_map.get(sftp_source);
 
         match result {
-            Some(downloader) => {
-                let result = downloader.send(Download {path, size});
-
-                Box::new(result.map(|r| {
-                    info!("result");
-                    r
-                }).map_err(|e| failure::err_msg(e)))
+            Some((sender, _)) => {
+                let result = sender.send(Download {path, size});
+                result.unwrap();
             },
             None => {
                 warn!("no SFTP source matching '{}'", sftp_source);
-
-                Box::new(future::err::<bool, failure::Error>(failure::err_msg("no SFTP source matching '{}'")))
             }
         }
     }
