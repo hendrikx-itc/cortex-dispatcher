@@ -173,10 +173,17 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
 
                         sender.try_send(command).unwrap();
 
-                        conn.execute(
+                        let execute_result = conn.execute(
                             "insert into sftp_scanner.scan (remote, path, size) values ($1, $2, $3)",
                             &[&sftp_source.name, &path_str, &file_size_db]
-                        ).unwrap();
+                        );
+
+                        match execute_result {
+                            Ok(_) => {},
+                            Err(e) => {
+                                error!("Error inserting record: {}", e);
+                            }
+                        }
                     } else {
                         debug!("{} already encountered {}", sftp_source.name, path_str);
                     }
