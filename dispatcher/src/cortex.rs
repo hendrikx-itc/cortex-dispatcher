@@ -21,7 +21,6 @@ use crate::metrics_collector::metrics_collector;
 
 fn start_sftp_downloaders(
     amqp_client: lapin_futures::client::Client<TcpStream>,
-    queue_name: String,
     sftp_sources: Vec<settings::SftpSource>,
     data_dir: PathBuf,
     db_url: String,
@@ -33,7 +32,6 @@ fn start_sftp_downloaders(
                 sftp_source.name.clone(),
                 SftpDownloader::start(
                     amqp_client.clone(),
-                    queue_name.clone(),
                     sftp_source.clone().clone(),
                     data_dir.clone(),
                     db_url.clone(),
@@ -64,7 +62,6 @@ pub fn run(settings: settings::Settings) {
 
         start_sftp_downloaders(
             client,
-            settings.command_queue.queue_name.clone(),
             settings.sftp_sources.clone(),
             settings.storage.directory.clone(),
             settings.postgresql.url.clone(),

@@ -1,4 +1,4 @@
-use prometheus::{IntCounterVec, IntCounter};
+use prometheus::{IntCounterVec};
 
 lazy_static! {
     pub static ref FILE_DOWNLOAD_COUNTER_VEC: IntCounterVec = register_int_counter_vec!(
@@ -15,9 +15,10 @@ lazy_static! {
     )
     .unwrap();
 
-    pub static ref MESSAGES_RECEIVED_COUNTER: IntCounter = register_int_counter!(
+    pub static ref MESSAGES_RECEIVED_COUNTER: IntCounterVec = register_int_counter_vec!(
         "messages_received_total",
-        "Total number of messages received"
+        "Total number of messages received",
+        &["source"]
     )
     .unwrap();
 }

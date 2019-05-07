@@ -3,9 +3,8 @@ use std::{thread, time};
 use std::time::Duration;
 use std::convert::TryFrom;
 
-use crate::lapin::channel::{BasicProperties, BasicPublishOptions, QueueDeclareOptions};
+use crate::lapin::channel::{BasicProperties, BasicPublishOptions};
 use crate::lapin::client::ConnectionOptions;
-use crate::lapin::types::FieldTable;
 use env_logger;
 use failure::Error;
 use futures::Future;
@@ -72,7 +71,7 @@ fn main() {
     );
 
     let future = channel_to_amqp(
-        cmd_receiver, settings.command_queue.address, settings.command_queue.queue_name
+        cmd_receiver, settings.command_queue.address
     );
 
     tokio::run(future);
@@ -126,6 +125,7 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
         let sftp_connection = conn_result.unwrap();
 
         loop {
+            let scan_start = time::Instant::now();
             debug!("Scanning {}", &sftp_source.name);
 
             let read_result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
@@ -185,7 +185,14 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
                 }
             }
 
-            metrics::DIR_SCAN_COUNTER.inc();
+            let scan_end = time::Instant::now();
+
+            let scan_duration = scan_end.duration_since(scan_start);
+
+            info!("{} scan duration: {}", &sftp_source.name, scan_duration.as_millis());
+
+            metrics::DIR_SCAN_COUNTER.with_label_values(&[&sftp_source.name]).inc();
+            metrics::DIR_SCAN_DURATION.with_label_values(&[&sftp_source.name]).inc_by(scan_duration.as_millis() as i64);
 
             thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
         }
@@ -193,17 +200,17 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
 }
 
 /// Connects a channel receiver to an AMQP queue.
-fn channel_to_amqp(receiver: Receiver<SftpDownload>, addr: std::net::SocketAddr, queue_name: String) -> impl Future<Item = (), Error = ()> + Send + 'static {
-    connect_queue(&addr, queue_name)
-        .map(move |(channel, queue)| {
-            info!("Connected to queue {}", queue.name());
-
+fn channel_to_amqp(receiver: Receiver<SftpDownload>, addr: std::net::SocketAddr) -> impl Future<Item = (), Error = ()> + Send + 'static {
+    connect_channel(&addr)
+        .map(move |channel| {
             let stream = receiver.for_each(move |cmd| {
                 let command_str = serde_json::to_string(&cmd).unwrap();
 
+                let exchange = "amq.direct";
+
                 let future = channel.basic_publish(
-                    "",
-                    &queue.name(),
+                    exchange,
+                    &cmd.sftp_source,
                     command_str.as_bytes().to_vec(),
                     BasicPublishOptions::default(),
                     BasicProperties::default(),
@@ -235,18 +242,6 @@ fn channel_to_amqp(receiver: Receiver<SftpDownload>, addr: std::net::SocketAddr,
         })
         .map_err(|e| {
             error!("Error: {:?}", e)
-        })
-}
-
-fn connect_queue(addr: &std::net::SocketAddr, queue_name: String) -> impl Future<Item = (lapin::channel::Channel<TcpStream>, lapin::queue::Queue), Error = Error> + Send + 'static {
-    connect_channel(&addr)
-        .and_then(move |channel| {
-            debug!("Created channel with id: {}", channel.id);
-
-            channel
-                .queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new())
-                .map(|queue| {(channel, queue)})
-                .map_err(Error::from)
         })
 }
 

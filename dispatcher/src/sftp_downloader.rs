@@ -10,7 +10,7 @@ extern crate inotify;
 extern crate failure;
 
 extern crate lapin_futures;
-use lapin_futures::channel::{BasicConsumeOptions, QueueDeclareOptions};
+use lapin_futures::channel::{BasicConsumeOptions, QueueDeclareOptions, QueueBindOptions};
 use lapin_futures::types::FieldTable;
 
 use tokio::net::TcpStream;
@@ -38,7 +38,6 @@ pub struct SftpDownloader {
 impl SftpDownloader {
     pub fn start(
         amqp_client: lapin_futures::client::Client<TcpStream>,
-        queue_name: String,
         sftp_source: settings::SftpSource,
         data_dir: PathBuf,
         db_url: String,
@@ -83,23 +82,27 @@ impl SftpDownloader {
                 local_storage_path: data_dir.clone(),
             };
 
+            let sftp_source_name = sftp_source.name.clone();
+            let sftp_source_name_2 = sftp_source.name.clone();
+
             let stream = amqp_client.create_channel().map_err(Error::from).and_then(|mut channel| {
                 info!("Created channel with id {}", channel.id());
 
-                let mut ch = channel.clone();
+                channel.queue_declare(&sftp_source_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(mut channel, queue)| {
+                    info!("Channel {} declared queue {}", channel.id(), &sftp_source_name);
 
-                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).and_then(move |queue| {
-                    info!("Channel {} declared queue {}", channel.id(), queue_name);
-
+                    channel.queue_bind(&sftp_source_name, "amq.direct", &sftp_source_name, QueueBindOptions::default(), FieldTable::new())
+                        .map(|_| (channel, queue))
+                }).and_then(move |(mut channel, queue)| {
                     // basic_consume returns a future of a message
                     // stream. Any time a message arrives for this consumer,
                     // the for_each method would be called
-                    channel.basic_consume(&queue, "my_consumer", BasicConsumeOptions::default(), FieldTable::new())
-                }).and_then(|stream| {
+                    channel.basic_consume(&queue, "my_consumer", BasicConsumeOptions::default(), FieldTable::new()).map(|stream| (channel, stream))
+                }).and_then(move |(mut channel, stream)| {
                     info!("got consumer stream");
 
                     stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::error::Error> + 'static + Send> {
-                        metrics::MESSAGES_RECEIVED_COUNTER.inc();
+                        metrics::MESSAGES_RECEIVED_COUNTER.with_label_values(&[&sftp_source_name_2]).inc();
                         debug!("Received message from RabbitMQ");
 
                         let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
@@ -109,16 +112,16 @@ impl SftpDownloader {
                                 let download_result = sftp_downloader.handle(&command);
 
                                 match download_result {
-                                    Ok(_) => Box::new(ch.basic_ack(message.delivery_tag, false)),
+                                    Ok(_) => Box::new(channel.basic_ack(message.delivery_tag, false)),
                                     Err(e) => {
 										error!("Error downloading {}: {}", &command.path, e);
-										Box::new(ch.basic_nack(message.delivery_tag, false, false))
+										Box::new(channel.basic_nack(message.delivery_tag, false, false))
 									}
                                 }
                             },
                             Err(e) => {
                                 error!("Error deserializing command: {}", e);
-                                Box::new(ch.basic_nack(message.delivery_tag, false, false))
+                                Box::new(channel.basic_nack(message.delivery_tag, false, false))
                             }
                         }
                     })
