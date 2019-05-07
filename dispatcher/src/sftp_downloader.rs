@@ -220,10 +220,17 @@ impl SftpDownloader {
 
                 let hash = format!("{:x}", sha256.result());
 
-                self.db_connection.execute(
+                let execute_result = self.db_connection.execute(
                     "insert into dispatcher.sftp_download (remote, path, size, hash) values ($1, $2, $3, $4)",
                     &[&self.sftp_source.name, &msg.path, &i64::try_from(bytes_copied).unwrap(), &hash]
-                ).unwrap();
+                );
+
+                match execute_result {
+                    Ok(_) => {},
+                    Err(e) => {
+                        error!("Error inserting download record into database: {}", e);
+                    }
+                }
 
                 metrics::FILE_DOWNLOAD_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc();
                 metrics::BYTES_DOWNLOADED_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc_by(bytes_copied as i64);
