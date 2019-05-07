@@ -126,7 +126,7 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
 
         loop {
             let scan_start = time::Instant::now();
-            debug!("Scanning {}", &sftp_source.name);
+            debug!("Started scanning {}", &sftp_source.name);
 
             let read_result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
 
@@ -196,7 +196,7 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
 
             let scan_duration = scan_end.duration_since(scan_start);
 
-            info!("{} scan duration: {}", &sftp_source.name, scan_duration.as_millis());
+            debug!("Finished scanning {} in {} ms", &sftp_source.name, scan_duration.as_millis());
 
             metrics::DIR_SCAN_COUNTER.with_label_values(&[&sftp_source.name]).inc();
             metrics::DIR_SCAN_DURATION.with_label_values(&[&sftp_source.name]).inc_by(scan_duration.as_millis() as i64);
