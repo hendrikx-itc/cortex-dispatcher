@@ -91,7 +91,10 @@ impl SftpDownloader {
                 channel.queue_declare(&sftp_source_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(mut channel, queue)| {
                     info!("Channel {} declared queue {}", channel.id(), &sftp_source_name);
 
-                    channel.queue_bind(&sftp_source_name, "amq.direct", &sftp_source_name, QueueBindOptions::default(), FieldTable::new())
+                    let routing_key = format!("source.{}", &sftp_source_name);
+                    let exchange = "amq.direct";
+
+                    channel.queue_bind(&sftp_source_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::new())
                         .map(|_| (channel, queue))
                 }).and_then(move |(mut channel, queue)| {
                     // basic_consume returns a future of a message

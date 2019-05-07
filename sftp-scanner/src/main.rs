@@ -215,9 +215,11 @@ fn channel_to_amqp(receiver: Receiver<SftpDownload>, addr: std::net::SocketAddr)
 
                 let exchange = "amq.direct";
 
+                let routing_key = format!("source.{}", &cmd.sftp_source);
+
                 let future = channel.basic_publish(
                     exchange,
-                    &cmd.sftp_source,
+                    &routing_key,
                     command_str.as_bytes().to_vec(),
                     BasicPublishOptions::default(),
                     BasicProperties::default(),
