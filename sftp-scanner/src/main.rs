@@ -221,17 +221,9 @@ fn channel_to_amqp(receiver: Receiver<SftpDownload>, addr: std::net::SocketAddr)
                     command_str.as_bytes().to_vec(),
                     BasicPublishOptions::default(),
                     BasicProperties::default(),
-                ).and_then(move |request_result| {
+                ).and_then(move |_request_result| {
                     debug!("Command sent: {}", cmd);
-
-                    match request_result {
-                        Some(request_id) => {
-                            debug!("Confirmed: {}", request_id);
-                        },
-                        None => {
-                            debug!("Not confirmed/nacked");
-                        }
-                    }
+                    // No confirmation/ack is expected
                     Ok(())
                 }).map_err(|e| {
                     error!("Error sending command: {:?}", e);
