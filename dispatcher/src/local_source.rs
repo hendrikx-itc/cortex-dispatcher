@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
+use std::path::PathBuf;
 
 extern crate inotify;
 
@@ -15,17 +16,38 @@ extern crate lapin_futures;
 use crate::settings;
 
 use tokio::runtime::current_thread::Runtime;
+use crossbeam_channel::{Sender, Receiver, unbounded};
 
-struct FileSystemEvent {
-    file_name: String,
-    source: settings::DirectorySource
+#[derive(Debug)]
+pub struct FileEvent {
+    source_name: String,
+    path: PathBuf
 }
 
-pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySource>) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+#[derive(Clone)]
+struct LocalSource {
+    directory_source: settings::DirectorySource,
+    sender: Sender<FileEvent>,
+    receiver: Receiver<FileEvent>
+}
+
+pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySource>) -> (thread::JoinHandle<()>, Vec<(String, Receiver<FileEvent>)>) {
+    let source_channels: Vec<LocalSource> = directory_sources.iter().map(|directory_source| {
+        let (sender, receiver) = unbounded();
+
+        LocalSource {
+            directory_source: directory_source.clone(),
+            sender: sender,
+            receiver: receiver
+        }
+    }).collect();
+
+    let local_sources: Vec<LocalSource> = source_channels.iter().map(|sc| sc.clone()).collect();
+
+    let join_handle = thread::spawn(move || {
         let init_result = Inotify::init();
 
-        let inotify = match init_result {
+        let mut inotify = match init_result {
             Ok(i) => i,
             Err(e) => panic!("Could not initialize inotify: {}", e),
         };
@@ -34,88 +56,70 @@ pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySour
 
         let mut runtime = Runtime::new().unwrap();
 
-        let local_source = event_stream_handler(directory_sources, inotify);
+        let watch_mapping: HashMap<inotify::WatchDescriptor, LocalSource> = source_channels 
+            .iter()
+            .map(|local_source| -> Option<(inotify::WatchDescriptor, LocalSource)> {
+                info!("Directory source: {}", local_source.directory_source.name);
+                let source_directory_str = local_source.directory_source.directory.clone();
+                let source_directory = Path::new(&source_directory_str);
 
-        runtime.spawn(local_source);
+                let watch_result = inotify
+                    .add_watch(
+                        source_directory,
+                        WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+                    );
 
-        runtime.run().unwrap();
-    })
-}
-
-pub fn event_stream_handler(sources: Vec<settings::DirectorySource>, inotify: Inotify) -> impl Future<Item = (), Error = ()> {
-    event_stream(sources, inotify)
-        .map_err(|e| {
-            error!("Error: {}", e);
-        })
-        .for_each(|filesystem_event| {
-            info!("Filesystem event: {}", filesystem_event.file_name);
-
-            let source_path = Path::new(&filesystem_event.source.directory).join(&filesystem_event.file_name);
-
-            for target in filesystem_event.source.targets {
-                if target.regex.is_match(&filesystem_event.file_name) {
-                    let target_path = std::path::Path::new(&target.directory).join(&filesystem_event.file_name);
-
-                    let move_result = std::fs::rename(&source_path, &target_path);
-
-                    match move_result {
-                        Ok(_) => {
-                            info!("moved {} -> {}", &source_path.to_str().unwrap(), &target_path.to_str().unwrap());
-                        },
-                        Err(e) => {
-                            error!("error moving {} -> {}: {}", &source_path.to_str().unwrap(), &target_path.to_str().unwrap(), e);
-                        }
+                match watch_result {
+                    Ok(w) => {
+                        info!("Added watch on {}", source_directory_str);
+                        let l: LocalSource = local_source.to_owned();
+                        Some((w, l))
+                    },
+                    Err(e) => {
+                        error!("Failed to add inotify watch on '{}': {}", source_directory_str, e);
+                        None
                     }
                 }
-            }
+            })
+            .filter_map(|w| w)
+            .collect();
 
-            Ok(())
-        })
+        let buffer: Vec<u8> = vec![0; 1024];
+
+        let stream = inotify.event_stream(buffer).for_each(
+            move |event: inotify::Event<std::ffi::OsString>| {
+                let name = event.name.expect("Could not decode name");
+
+                let local_source = &watch_mapping[&event.wd];
+
+                let file_name = name.to_str().unwrap().to_string();
+
+                let source_path = Path::new(&local_source.directory_source.directory).join(&file_name);
+
+                let file_event = FileEvent {
+                    source_name: local_source.directory_source.name.clone(),
+                    path: source_path.clone()
+                };
+
+                debug!("Sending FileEvent: {:?}", &file_event);
+
+                local_source.sender.send(file_event).unwrap();
+
+                Ok(())
+            }
+        ).map_err(|e| {
+            error!("{}", e);
+        });
+
+        runtime.spawn(stream);
+
+        runtime.run().unwrap();
+    });
+
+    let source_receivers = local_sources.iter().map(|local_source| {
+        (local_source.directory_source.name.clone(), local_source.receiver.clone())
+    }).collect();
+
+    (join_handle, source_receivers)
 }
 
-fn event_stream(sources: Vec<settings::DirectorySource>, mut inotify: Inotify) -> impl Stream<Item = FileSystemEvent, Error = std::io::Error> {
-    // Register inotify watches and create a mapping from the watch descriptor
-    // to the DirectorySource settings. When an inotify watch cannot be created,
-    // it is excluded from the map.
-    let watch_mapping: HashMap<inotify::WatchDescriptor, settings::DirectorySource> = sources
-        .iter()
-        .map(|directory_source| {
-            info!("Directory source: {}", directory_source.name);
-            let source_directory_str = directory_source.directory.clone();
-            let source_directory = Path::new(&source_directory_str);
-
-            let watch_result = inotify
-                .add_watch(
-                    source_directory,
-                    WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
-                );
-
-            match watch_result {
-                Ok(w) => {
-                    info!("Added watch on {}", source_directory_str);
-                    Some((w, directory_source.clone()))
-                },
-                Err(e) => {
-                    error!("Failed to add inotify watch on '{}': {}", source_directory_str, e);
-                    None
-                }
-            }
-        })
-        .filter_map(|w| w)
-        .collect();
-
-    let buffer: Vec<u8> = vec![0; 1024];
-
-    inotify.event_stream(buffer).map(
-        move |event: inotify::Event<std::ffi::OsString>| -> FileSystemEvent {
-            let name = event.name.expect("Could not decode name");
-
-            let data_source = &watch_mapping[&event.wd];
-
-            FileSystemEvent {
-                file_name: name.to_str().unwrap().to_string(),
-                source: data_source.clone()
-            }
-        }
-    )
-}

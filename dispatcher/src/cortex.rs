@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::thread;
 
 extern crate inotify;
@@ -21,8 +19,7 @@ use crate::metrics_collector::metrics_collector;
 
 
 pub fn run(settings: settings::Settings) {
-    let local_source_handler_join_handle =
-        start_local_source_handler(settings.directory_sources.clone());
+    let (local_source_handler_join_handle, receivers) = start_local_source_handler(settings.directory_sources.clone());
 
     let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();

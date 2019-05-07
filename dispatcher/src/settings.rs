@@ -7,17 +7,29 @@ extern crate regex;
 extern crate serde_regex;
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct DataTarget {
-    #[serde(with = "serde_regex")]
-    pub regex: Regex,
+pub struct DirectoryTarget {
     pub directory: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub enum Filter {
+    Regex {
+        #[serde(with = "serde_regex")]
+        regex: Regex
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Connection {
+    pub source: String,
+    pub target: String,
+    pub filter: Filter
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DirectorySource {
     pub name: String,
     pub directory: String,
-    pub targets: Vec<DataTarget>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -48,8 +60,7 @@ pub struct Storage {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandQueue {
-    pub address: SocketAddr,
-    pub queue_name: String
+    pub address: SocketAddr
 }
 
 #[derive(Debug, Deserialize, Clone)]
