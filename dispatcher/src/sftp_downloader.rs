@@ -88,13 +88,15 @@ impl SftpDownloader {
             let stream = amqp_client.create_channel().map_err(Error::from).and_then(|mut channel| {
                 info!("Created channel with id {}", channel.id());
 
-                channel.queue_declare(&sftp_source_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(mut channel, queue)| {
-                    info!("Channel {} declared queue {}", channel.id(), &sftp_source_name);
+                let queue_name = format!("source.{}", &sftp_source_name);
+
+                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(mut channel, queue)| {
+                    info!("Channel {} declared queue {}", channel.id(), &queue_name);
 
                     let routing_key = format!("source.{}", &sftp_source_name);
                     let exchange = "amq.direct";
 
-                    channel.queue_bind(&sftp_source_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::new())
+                    channel.queue_bind(&queue_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::new())
                         .map(|_| (channel, queue))
                 }).and_then(move |(mut channel, queue)| {
                     // basic_consume returns a future of a message
