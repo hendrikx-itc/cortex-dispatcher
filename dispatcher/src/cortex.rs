@@ -9,6 +9,7 @@ use lapin_futures::client::ConnectionOptions;
 extern crate tokio_executor;
 use tokio_executor::enter;
 use tokio::net::TcpStream;
+use tokio::prelude::Stream;
 
 use futures::future::Future;
 
@@ -28,6 +29,16 @@ pub fn run(settings: settings::Settings) {
         settings.prometheus.push_gateway.clone(),
         settings.prometheus.push_interval,
     ));
+
+    for (source_name, receiver) in receivers {
+        let process_events = receiver.map_err(|_| ()).for_each(move |file_event| {
+            info!("FileEvent for {}: {}", &source_name, file_event.path.to_str().unwrap());
+
+            futures::future::ok(())
+        });
+
+        runtime.spawn(process_events);
+    }
 
     let connect_future = TcpStream::connect(&settings.command_queue.address).map_err(failure::Error::from).and_then(|stream| {
         lapin_futures::client::Client::connect(stream, ConnectionOptions::default()).map_err(failure::Error::from)
