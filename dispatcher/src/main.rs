@@ -12,6 +12,8 @@ mod sftp_downloader;
 mod local_source;
 mod metrics;
 mod metrics_collector;
+mod event;
+mod directory_target;
 
 use settings::Settings;
 

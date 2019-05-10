@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
-use std::path::PathBuf;
 
 extern crate inotify;
 
@@ -14,15 +13,10 @@ extern crate failure;
 extern crate lapin_futures;
 
 use crate::settings;
+use crate::event::FileEvent;
 
 use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
-
-#[derive(Debug)]
-pub struct FileEvent {
-    pub source_name: String,
-    pub path: PathBuf
-}
 
 pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySource>) -> (thread::JoinHandle<()>, Vec<(String, UnboundedReceiver<FileEvent>)>) {
     let init_result = Inotify::init();
@@ -51,11 +45,11 @@ pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySour
 
         match watch_result {
             Ok(w) => {
-                info!("Added watch on {}", &directory_source.directory);
+                info!("Added watch on {}", &directory_source.directory.to_str().unwrap());
                 watch_mapping.insert(w, (directory_source.clone(), sender));
             },
             Err(e) => {
-                error!("Failed to add inotify watch on '{}': {}", &directory_source.directory, e);
+                error!("Failed to add inotify watch on '{}': {}", &directory_source.directory.to_str().unwrap(), e);
             }
         };
     });
@@ -73,7 +67,7 @@ pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySour
 
                 let file_name = name.to_str().unwrap().to_string();
 
-                let source_path = Path::new(&directory_source.directory).join(&file_name);
+                let source_path = directory_source.directory.join(&file_name);
 
                 let file_event = FileEvent {
                     source_name: directory_source.name.clone(),

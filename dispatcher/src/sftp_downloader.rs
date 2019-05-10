@@ -16,9 +16,11 @@ use lapin_futures::types::FieldTable;
 use tokio::net::TcpStream;
 use tokio::runtime::current_thread::Runtime;
 use tokio::prelude::*;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::settings;
 use crate::metrics;
+use crate::event::FileEvent;
 
 use cortex_core::sftp_connection::SftpConnection;
 use cortex_core::SftpDownload;
@@ -41,7 +43,9 @@ impl SftpDownloader {
         sftp_source: settings::SftpSource,
         data_dir: PathBuf,
         db_url: String,
-    ) -> thread::JoinHandle<()> {
+    ) -> (thread::JoinHandle<()>, UnboundedReceiver<FileEvent>) {
+        let (mut sender, receiver) = unbounded_channel();
+
         let join_handle = thread::spawn(move || {
             let conn = loop {
                 let conn_result = SftpConnection::new(
@@ -117,7 +121,10 @@ impl SftpDownloader {
                                 let download_result = sftp_downloader.handle(&command);
 
                                 match download_result {
-                                    Ok(_) => Box::new(channel.basic_ack(message.delivery_tag, false)),
+                                    Ok(_) => {
+                                        sender.try_send(FileEvent{source_name: sftp_source_name_2.clone(), path: PathBuf::from(command.path)}).unwrap();
+                                        Box::new(channel.basic_ack(message.delivery_tag, false))
+                                    },
                                     Err(e) => {
 										error!("Error downloading {}: {}", &command.path, e);
 										Box::new(channel.basic_nack(message.delivery_tag, false, false))
@@ -144,7 +151,7 @@ impl SftpDownloader {
             runtime.run().unwrap();
         });
 
-        join_handle
+        (join_handle, receiver)
     }
 
     pub fn handle(&mut self, msg: &SftpDownload) -> Result<(), String> {

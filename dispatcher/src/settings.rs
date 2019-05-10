@@ -2,20 +2,29 @@ use std::path::PathBuf;
 use std::net::SocketAddr;
 
 use regex::Regex;
+use crate::event::FileEvent;
 
 extern crate regex;
 extern crate serde_regex;
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct DirectoryTarget {
-    pub directory: PathBuf,
-}
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum Filter {
     Regex {
         #[serde(with = "serde_regex")]
         regex: Regex
+    }
+}
+
+impl Filter {
+    pub fn event_matches(&self, file_event: &FileEvent) -> bool {
+        let file_name_result = file_event.path.file_name();
+
+        file_name_result.map_or_else(|| false, |file_name| {
+            match self {
+                Filter::Regex { regex } => regex.is_match(file_name.to_str().unwrap())
+            }
+        })
     }
 }
 
@@ -29,7 +38,13 @@ pub struct Connection {
 #[derive(Debug, Deserialize, Clone)]
 pub struct DirectorySource {
     pub name: String,
-    pub directory: String,
+    pub directory: PathBuf,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DirectoryTarget {
+    pub name: String,
+    pub directory: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -79,7 +94,9 @@ pub struct Settings {
     pub storage: Storage,
     pub command_queue: CommandQueue,
     pub directory_sources: Vec<DirectorySource>,
+    pub directory_targets: Vec<DirectoryTarget>,
     pub sftp_sources: Vec<SftpSource>,
+    pub connections: Vec<Connection>,
     pub prometheus: Prometheus,
     pub postgresql: Postgresql
 }
