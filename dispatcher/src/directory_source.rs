@@ -14,11 +14,36 @@ extern crate lapin_futures;
 
 use crate::settings;
 use crate::event::FileEvent;
+use crate::base_types::Source;
 
 use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
 
-pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySource>) -> (thread::JoinHandle<()>, Vec<(String, UnboundedReceiver<FileEvent>)>) {
+pub struct DirectorySource {
+    pub name: String,
+    pub receiver: UnboundedReceiver<FileEvent>
+}
+
+impl DirectorySource {
+    pub fn new(name: String, receiver: UnboundedReceiver<FileEvent>) -> DirectorySource {
+        DirectorySource {
+            name: name,
+            receiver: receiver
+        }
+    }
+}
+
+impl Source for DirectorySource {
+    fn name(self) -> String {
+        self.name.clone()
+    }
+
+    fn events(self) -> UnboundedReceiver<FileEvent> {
+        self.receiver
+    }
+}
+
+pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>) -> (thread::JoinHandle<()>, Vec<DirectorySource>) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -89,6 +114,8 @@ pub fn start_local_source_handler(directory_sources: Vec<settings::DirectorySour
         runtime.run().unwrap();
     });
 
-    (join_handle, result_sources)
+    (
+        join_handle,
+        result_sources.into_iter().map(move |(name, receiver)| { DirectorySource::new(name, receiver) }).collect()
+    )
 }
-

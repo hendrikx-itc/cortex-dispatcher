@@ -21,6 +21,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use crate::settings;
 use crate::metrics;
 use crate::event::FileEvent;
+use crate::base_types::Source;
 
 use cortex_core::sftp_connection::SftpConnection;
 use cortex_core::SftpDownload;
@@ -29,6 +30,30 @@ use failure::Error;
 
 use tee::TeeReader;
 use sha2::{Sha256, Digest};
+
+pub struct SftpSource {
+    name: String,
+    receiver: UnboundedReceiver<FileEvent>
+}
+
+impl SftpSource {
+    pub fn new(name: String, receiver: UnboundedReceiver<FileEvent>) -> SftpSource {
+        SftpSource {
+            name: name,
+            receiver: receiver
+        }
+    }
+}
+
+impl Source for SftpSource {
+    fn name(self) -> String {
+        self.name.clone()
+    }
+
+    fn events(self) -> UnboundedReceiver<FileEvent> {
+        self.receiver
+    }
+}
 
 pub struct SftpDownloader {
     pub sftp_source: settings::SftpSource,
@@ -43,8 +68,9 @@ impl SftpDownloader {
         sftp_source: settings::SftpSource,
         data_dir: PathBuf,
         db_url: String,
-    ) -> (thread::JoinHandle<()>, UnboundedReceiver<FileEvent>) {
+    ) -> (thread::JoinHandle<()>, SftpSource) {
         let (mut sender, receiver) = unbounded_channel();
+        let result_source = SftpSource::new(sftp_source.name.clone(), receiver);
 
         let join_handle = thread::spawn(move || {
             let conn = loop {
@@ -89,12 +115,12 @@ impl SftpDownloader {
             let sftp_source_name = sftp_source.name.clone();
             let sftp_source_name_2 = sftp_source.name.clone();
 
-            let stream = amqp_client.create_channel().map_err(Error::from).and_then(|mut channel| {
+            let stream = amqp_client.create_channel().map_err(Error::from).and_then(|channel| {
                 info!("Created channel with id {}", channel.id());
 
                 let queue_name = format!("source.{}", &sftp_source_name);
 
-                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(mut channel, queue)| {
+                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(channel, queue)| {
                     info!("Channel {} declared queue {}", channel.id(), &queue_name);
 
                     let routing_key = format!("source.{}", &sftp_source_name);
@@ -102,12 +128,12 @@ impl SftpDownloader {
 
                     channel.queue_bind(&queue_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::new())
                         .map(|_| (channel, queue))
-                }).and_then(move |(mut channel, queue)| {
+                }).and_then(move |(channel, queue)| {
                     // basic_consume returns a future of a message
                     // stream. Any time a message arrives for this consumer,
                     // the for_each method would be called
                     channel.basic_consume(&queue, "my_consumer", BasicConsumeOptions::default(), FieldTable::new()).map(|stream| (channel, stream))
-                }).and_then(move |(mut channel, stream)| {
+                }).and_then(move |(channel, stream)| {
                     info!("got consumer stream");
 
                     stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::error::Error> + 'static + Send> {
@@ -151,7 +177,7 @@ impl SftpDownloader {
             runtime.run().unwrap();
         });
 
-        (join_handle, receiver)
+        (join_handle, result_source)
     }
 
     pub fn handle(&mut self, msg: &SftpDownload) -> Result<(), String> {

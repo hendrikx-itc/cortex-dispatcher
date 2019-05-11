@@ -5,15 +5,16 @@ extern crate config;
 extern crate log;
 extern crate env_logger;
 
-mod settings;
+mod base_types;
 mod cmd;
 mod cortex;
-mod sftp_downloader;
-mod local_source;
+mod directory_source;
+mod directory_target;
+mod event;
 mod metrics;
 mod metrics_collector;
-mod event;
-mod directory_target;
+mod settings;
+mod sftp_source;
 
 use settings::Settings;
 

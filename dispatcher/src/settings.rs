@@ -8,23 +8,36 @@ extern crate regex;
 extern crate serde_regex;
 
 
+trait EventFilter {
+    fn event_matches(&self, file_event: &FileEvent) -> bool;
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RegexFilter {
+    #[serde(with = "serde_regex")]
+    regex: Regex
+}
+
+impl EventFilter for RegexFilter {
+    fn event_matches(&self, file_event: &FileEvent) -> bool {
+        let file_name_result = file_event.path.file_name();
+
+        file_name_result.map_or_else(|| false, |file_name| {
+            self.regex.is_match(file_name.to_str().unwrap())
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub enum Filter {
-    Regex {
-        #[serde(with = "serde_regex")]
-        regex: Regex
-    }
+    Regex(RegexFilter)
 }
 
 impl Filter {
     pub fn event_matches(&self, file_event: &FileEvent) -> bool {
-        let file_name_result = file_event.path.file_name();
-
-        file_name_result.map_or_else(|| false, |file_name| {
-            match self {
-                Filter::Regex { regex } => regex.is_match(file_name.to_str().unwrap())
-            }
-        })
+        match self {
+            Filter::Regex(r) => r.event_matches(file_event)
+        }
     }
 }
 

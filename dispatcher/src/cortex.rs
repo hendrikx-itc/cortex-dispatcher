@@ -14,11 +14,12 @@ use tokio::prelude::Stream;
 
 use futures::future::Future;
 
-use crate::local_source::start_local_source_handler;
+use crate::directory_source::{start_directory_sources, DirectorySource};
 use crate::settings;
-use crate::sftp_downloader::{SftpDownloader};
+use crate::sftp_source::{SftpDownloader};
 use crate::metrics_collector::metrics_collector;
 use crate::directory_target::DirectoryTarget;
+use crate::base_types::Source;
 
 
 pub fn run(settings: settings::Settings) {
@@ -34,16 +35,18 @@ pub fn run(settings: settings::Settings) {
         settings.prometheus.push_interval,
     ));
 
-    let (local_source_handler_join_handle, local_directory_receivers) = start_local_source_handler(settings.directory_sources.clone());
+    let (directory_sources_join_handle, directory_sources) = start_directory_sources(settings.directory_sources.clone());
 
     let connections = settings.connections.clone();
 
-    for (source_name, receiver) in local_directory_receivers {
+    let local_event_dispatchers = directory_sources.into_iter().map(|directory_source| {
         let c = connections.clone();
         let targets = directory_targets.clone();
 
-        let process_events = receiver.map_err(|_| ()).for_each(move |file_event| {
-            info!("FileEvent for {}: {}", &source_name, file_event.path.to_str().unwrap());
+        let source_name = directory_source.name.clone();
+
+        directory_source.receiver.map_err(|_| ()).for_each(move |file_event| {
+            info!("FileEvent from {}: {}", &source_name, file_event.path.to_str().unwrap());
 
             c.deref().iter().filter(|c| c.filter.event_matches(&file_event)).for_each(|c| {
                 let target = targets.get(&c.target).unwrap();
@@ -53,9 +56,11 @@ pub fn run(settings: settings::Settings) {
             });
 
             futures::future::ok(())
-        });
+        })
+    });
 
-        runtime.spawn(process_events);
+    for p in local_event_dispatchers {
+        runtime.spawn(p);
     }
 
     // Connect to RabbitMQ and when the connection is made, start all SFTP
@@ -67,16 +72,18 @@ pub fn run(settings: settings::Settings) {
             error!("Error sending heartbeat: {}", e);
         }));
 
-        for sftp_source in settings.sftp_sources {
-            let (join_handle, receiver) = SftpDownloader::start(
+        for config in settings.sftp_sources {
+            let (join_handle, sftp_source) = SftpDownloader::start(
                 client.clone(),
-                sftp_source.clone(),
+                config.clone(),
                 settings.storage.directory.clone(),
                 settings.postgresql.url.clone()
             );
 
-            let process_events = receiver.map_err(|_| ()).for_each(move |file_event| {
-                info!("FileEvent for {}: {}", &sftp_source.name, file_event.path.to_str().unwrap());
+            let sftp_source_name = config.name.clone();
+
+            let process_events = sftp_source.events().map_err(|_| ()).for_each(move |file_event| {
+                info!("FileEvent from {}: {}", &sftp_source_name, file_event.path.to_str().unwrap());
 
                 futures::future::ok(())
             });
@@ -94,7 +101,5 @@ pub fn run(settings: settings::Settings) {
         .expect("Shutdown cannot error");
 
     info!("Tokio runtime shutdown");
-
-    local_source_handler_join_handle.join().unwrap();
 }
 
