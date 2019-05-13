@@ -1,0 +1,47 @@
+version: "3.2"
+
+volumes:
+  grafana_data:
+
+services:
+  rabbitmq:
+    build: dev-stack/rabbitmq
+    ports:
+      - 5672:5672
+      - 15672:15672
+
+  pushgateway:
+    image: prom/pushgateway
+    ports:
+      - 9091:9091
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - 9090:9090
+    volumes:
+      - ./dev-stack/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - 3000:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./dev-stack/grafana/provisioning/:/etc/grafana/provisioning/
+
+  pg_prometheus:
+    image: timescale/pg_prometheus:latest
+    command: ["postgres", "-csynchronous_commit=off"]
+    ports:
+      - 5432:5432
+    volumes:
+      - ./dev-stack/pg_prometheus/docker-entrypoint-initdb.d/004-init-cortex-db.sh:/docker-entrypoint-initdb.d/004-init-cortex-db.sh
+      - ./dispatcher/schema.sql:/dispatcher.sql
+      - ./sftp-scanner/schema.sql:/sftp-scanner.sql
+    environment:
+      POSTGRES_PASSWORD: "password"
+
+  adapter:
+    image: timescale/prometheus-postgresql-adapter:latest
+    command: ["-pg.host=pg_prometheus", "-pg.password=password", "-pg.prometheus-log-samples"]

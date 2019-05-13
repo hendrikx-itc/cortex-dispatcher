@@ -1,0 +1,45 @@
+storage:
+  directory: /cortex/storage
+
+command_queue:
+  address: "127.0.0.1:5672"
+
+directory_sources:
+  - name: mixed-directory
+    directory: /cortex/incoming
+
+directory_targets:
+  - name: v5
+    directory: /cortex/storage/v5
+  - name: v6
+    directory: /cortex/storage/v6
+
+sftp_sources:
+  - name: local-red
+    address: 127.0.0.1:22
+    username: cortex
+    thread_count: 4
+  - name: local-blue
+    address: 127.0.0.1:22
+    username: cortex
+    thread_count: 2
+
+connections:
+  - source: mixed-directory
+    target: v5
+    filter:
+      regex:
+        regex: "^.*-v5\\.xml$"
+  - source: mixed-directory
+    target: v6
+    filter:
+      regex:
+        regex: "^.*-v6\\.xml$"
+
+prometheus:
+  push_gateway: 127.0.0.1:9091
+  push_interval: 5000
+
+postgresql:
+  url: "postgresql://postgres:password@127.0.0.1:5432/cortex"
+

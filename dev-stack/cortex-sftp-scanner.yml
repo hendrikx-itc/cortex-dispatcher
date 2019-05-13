@@ -1,0 +1,26 @@
+# Some comment
+command_queue:
+  address: "127.0.0.1:5672"
+  queue_name: cortex-dispatcher 
+
+sftp_sources:
+  - name: local-red
+    address: 127.0.0.1:22
+    username: cortex 
+    regex: "^.*\\.xml$"
+    directory: red
+    scan_interval: 3000
+  - name: local-blue
+    address: 127.0.0.1:22
+    username: cortex 
+    regex: "^.*\\.xml$"
+    directory: blue
+    scan_interval: 2000
+
+prometheus:
+  push_gateway: 127.0.0.1:9091
+  push_interval: 5000
+
+postgresql:
+  url: "postgresql://postgres:password@127.0.0.1:5432/cortex"
+
