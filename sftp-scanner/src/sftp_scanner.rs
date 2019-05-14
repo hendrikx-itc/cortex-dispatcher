@@ -86,12 +86,21 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
                 if sftp_source.regex.is_match(file_name) {
                     debug!(" - {} - matches!", path_str);
 
-                    let rows = conn.query(
+                    let query_result = conn.query(
                         "select 1 from sftp_scanner.scan where remote = $1 and path = $2 and size = $3",
                         &[&sftp_source.name, &path_str, &file_size_db]
-                    ).unwrap();
+                    );
 
-                    if rows.is_empty() {
+
+                    let file_is_new = match query_result {
+                        Ok(rows) => rows.is_empty(),
+                        Err(e) => {
+                            error!("Error querying database: {}", e);
+                            true
+                        }
+                    };
+
+                    if file_is_new {
                         let command = SftpDownload {
                             created: Utc::now(),
                             size: stat.size,
