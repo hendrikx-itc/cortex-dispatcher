@@ -15,6 +15,7 @@ mod metrics;
 mod metrics_collector;
 mod settings;
 mod sftp_source;
+mod http_server;
 
 use settings::Settings;
 

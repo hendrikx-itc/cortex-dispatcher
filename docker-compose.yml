@@ -10,11 +10,6 @@ services:
       - 5672:5672
       - 15672:15672
 
-  pushgateway:
-    image: prom/pushgateway
-    ports:
-      - 9091:9091
-
   prometheus:
     image: prom/prometheus
     ports:

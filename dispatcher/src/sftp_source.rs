@@ -132,10 +132,8 @@ impl SftpDownloader {
                     // basic_consume returns a future of a message
                     // stream. Any time a message arrives for this consumer,
                     // the for_each method would be called
-                    channel.basic_consume(&queue, "my_consumer", BasicConsumeOptions::default(), FieldTable::new()).map(|stream| (channel, stream))
+                    channel.basic_consume(&queue, "cortex-dispatcher", BasicConsumeOptions::default(), FieldTable::new()).map(|stream| (channel, stream))
                 }).and_then(move |(channel, stream)| {
-                    info!("got consumer stream");
-
                     stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::error::Error> + 'static + Send> {
                         metrics::MESSAGES_RECEIVED_COUNTER.with_label_values(&[&sftp_source_name_2]).inc();
                         debug!("Received message from RabbitMQ");
