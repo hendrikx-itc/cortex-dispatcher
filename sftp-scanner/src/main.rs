@@ -116,13 +116,20 @@ fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: 
             }
         };
 
-        let conn_result = SftpConnection::new(
-            &sftp_source.address.clone(),
-            &sftp_source.username.clone(),
-            false
-        );
+        let sftp_connection = loop {
+            let conn_result = SftpConnection::new(
+                &sftp_source.address.clone(),
+                &sftp_source.username.clone(),
+                false,
+            );
 
-        let sftp_connection = conn_result.unwrap();
+            match conn_result {
+                Ok(c) => break c,
+                Err(e) => error!("Could not connect: {}", e),
+            }
+
+            thread::sleep(Duration::from_millis(1000));
+        };
 
         loop {
             let scan_start = time::Instant::now();
