@@ -17,10 +17,8 @@ sftp_sources:
     directory: blue
     scan_interval: 2000
 
-prometheus:
-  push_gateway: 127.0.0.1:9091
-  push_interval: 5000
-
 postgresql:
   url: "postgresql://postgres:password@127.0.0.1:5432/cortex"
 
+http_server:
+  address: "0.0.0.0:56009"

@@ -17,6 +17,10 @@ scrape_configs:
     metrics_path: /api/metrics
     static_configs:
       - targets: ['rabbitmq:15672']
+  - job_name: sftp-scanner
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['192.168.42.51:56009']
 
 remote_write:
   - url: "http://adapter:9201/write"

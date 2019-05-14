@@ -21,9 +21,9 @@ pub struct SftpSource {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct Prometheus {
-    pub push_gateway: String,
-    pub push_interval: u64
+pub struct PrometheusPush {
+    pub gateway: String,
+    pub interval: u64
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -32,9 +32,15 @@ pub struct Postgresql {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct HttpServer {
+    pub address: std::net::SocketAddr
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub command_queue: CommandQueue,
     pub sftp_sources: Vec<SftpSource>,
-    pub prometheus: Prometheus,
-    pub postgresql: Postgresql
+    pub prometheus_push: Option<PrometheusPush>,
+    pub postgresql: Postgresql,
+    pub http_server: HttpServer
 }

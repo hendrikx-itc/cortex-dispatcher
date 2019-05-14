@@ -35,6 +35,7 @@ mod cmd;
 mod settings;
 mod metrics;
 mod sftp_scanner;
+mod http_server;
 
 use settings::Settings;
 
@@ -61,10 +62,21 @@ fn main() {
         sftp_scanner::start_scanner(cmd_sender.clone(), settings.postgresql.url.clone(), sftp_source)
     }).collect();
 
-    let metrics_collector_join_handle = start_metrics_collector(
-        settings.prometheus.push_gateway.clone(),
-        settings.prometheus.push_interval
-    );
+    let metrics_collector_join_handle = match settings.prometheus_push {
+        Some(conf) => {
+            let join_handle = start_metrics_collector(
+                conf.gateway.clone(),
+                conf.interval
+            );
+
+            info!("Metrics collector thread started");
+
+            Some(join_handle)
+        },
+        None => Option::None
+    };
+
+    let web_server_join_handle = http_server::start_http_server(settings.http_server.address);
 
     let future = channel_to_amqp(
         cmd_receiver, settings.command_queue.address
@@ -85,15 +97,31 @@ fn main() {
         }
     }
 
-    let res = metrics_collector_join_handle.join();
+    let res = web_server_join_handle.join();
 
     match res {
         Ok(()) => {
-            info!("metrics collector thread stopped")
+            info!("http server thread stopped")
         },
         Err(e) => {
-            error!("metrics collector thread stopped with error: {:?}", e)
+            error!("http server thread stopped with error: {:?}", e)
         }
+    }
+
+    match metrics_collector_join_handle {
+        Some(join_handle) => {
+            let res = join_handle.join();
+
+            match res {
+                Ok(()) => {
+                    info!("metrics collector thread stopped")
+                },
+                Err(e) => {
+                    error!("metrics collector thread stopped with error: {:?}", e)
+                }
+            }
+        },
+        None => {}
     }
 }
 
