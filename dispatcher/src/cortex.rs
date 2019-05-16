@@ -40,16 +40,13 @@ pub fn run(settings: settings::Settings) {
 
     let prometheus_push_conf = settings.prometheus_push.clone();
 
-    match prometheus_push_conf {
-        Some(conf) => {
-            runtime.spawn(metrics_collector(
-                conf.gateway.clone(),
-                conf.interval,
-            ));
+    if let Some(conf) = prometheus_push_conf {
+        runtime.spawn(metrics_collector(
+            conf.gateway.clone(),
+            conf.interval,
+        ));
 
-            info!("Prometheus metrics push collector configured");
-        },
-        None => {}
+        info!("Prometheus metrics push collector configured");
     };
 
     let (directory_sources_join_handle, mut directory_sources) = start_directory_sources(settings.directory_sources.clone());

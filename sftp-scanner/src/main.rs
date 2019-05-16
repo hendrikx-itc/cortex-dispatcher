@@ -108,20 +108,17 @@ fn main() {
         }
     }
 
-    match metrics_collector_join_handle {
-        Some(join_handle) => {
-            let res = join_handle.join();
+    if let Some(join_handle) = metrics_collector_join_handle {
+        let res = join_handle.join();
 
-            match res {
-                Ok(()) => {
-                    info!("metrics collector thread stopped")
-                },
-                Err(e) => {
-                    error!("metrics collector thread stopped with error: {:?}", e)
-                }
+        match res {
+            Ok(()) => {
+                info!("metrics collector thread stopped")
+            },
+            Err(e) => {
+                error!("metrics collector thread stopped with error: {:?}", e)
             }
-        },
-        None => {}
+        }
     }
 }
 

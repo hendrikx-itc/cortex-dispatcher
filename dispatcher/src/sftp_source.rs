@@ -46,7 +46,7 @@ impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
         data_dir: PathBuf,
         persistence: T,
     ) -> thread::JoinHandle<()> {
-        let join_handle = thread::spawn(move || {
+        thread::spawn(move || {
             let conn = loop {
                 let conn_result = SftpConnection::new(
                     &config.address.clone(),
@@ -134,9 +134,7 @@ impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
             runtime.block_on(stream).unwrap();
 
             runtime.run().unwrap();
-        });
-
-        join_handle
+        })
     }
 
     pub fn handle(&mut self, msg: &SftpDownload) -> Result<(), String> {
