@@ -14,7 +14,7 @@ directory_targets:
   - name: v6
     directory: /cortex/storage/v6
   - name: red
-    directory: /cortex/storage/red
+    directory: /cortex/storage/red-consumer
 
 sftp_sources:
   - name: local-red

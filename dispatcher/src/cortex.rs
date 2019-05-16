@@ -12,6 +12,7 @@ extern crate tokio_executor;
 use tokio_executor::enter;
 use tokio::net::TcpStream;
 use tokio::prelude::Stream;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use futures::future::Future;
 
@@ -20,12 +21,13 @@ use r2d2_postgres::PostgresConnectionManager;
 
 use crate::directory_source::start_directory_sources;
 use crate::settings;
-use crate::sftp_source::{SftpDownloader};
+use crate::sftp_source::SftpDownloader;
+use crate::base_types::Source;
 use crate::metrics_collector::metrics_collector;
 use crate::directory_target::DirectoryTarget;
-use crate::base_types::Source;
 use crate::http_server::start_http_server;
-use crate::persistence;
+use crate::persistence::{Persistence, PostgresPersistence};
+use crate::event::FileEvent;
 
 
 pub fn run(settings: settings::Settings) {
@@ -50,12 +52,43 @@ pub fn run(settings: settings::Settings) {
         None => {}
     };
 
-    let (directory_sources_join_handle, directory_sources) = start_directory_sources(settings.directory_sources.clone());
+    let (directory_sources_join_handle, mut directory_sources) = start_directory_sources(settings.directory_sources.clone());
 
     let connections = settings.connections.clone();
 
-    let local_event_dispatchers = directory_sources.into_iter().map(|directory_source| {
-        let c = connections.clone();
+    let connection_manager = PostgresConnectionManager::new(
+        settings.postgresql.url.parse().unwrap(),
+        NoTls,
+    );
+
+    let persistence = PostgresPersistence::new(connection_manager);
+
+    let mut source_sender_pairs: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)> = Vec::new();
+    let mut sources: Vec<Source> = Vec::new();
+    
+    settings.sftp_sources.iter().for_each(|sftp_source| {
+        let (sender, receiver) = unbounded_channel();
+
+        source_sender_pairs.push((sftp_source.clone(), sender));
+        sources.push(Source {name: sftp_source.name.clone(), receiver: receiver});
+    });
+
+    let (sftp_join_handles, connect_future) = connect_sftp_downloaders(
+        settings.command_queue.address,
+        source_sender_pairs,
+        settings.storage.directory.clone(),
+        persistence
+    );
+
+    runtime.spawn(connect_future);
+
+    sources.append(&mut directory_sources);
+
+    let local_event_dispatchers = sources.into_iter().map(|directory_source| {
+        // Filter connections belonging to this source
+        let source_connections: Vec<settings::Connection> = connections
+            .iter().filter(|c| c.source == directory_source.name).cloned().collect();
+
         let targets = directory_targets.clone();
 
         let source_name = directory_source.name.clone();
@@ -63,7 +96,7 @@ pub fn run(settings: settings::Settings) {
         directory_source.receiver.map_err(|_| ()).for_each(move |file_event| {
             info!("FileEvent from {}: {}", &source_name, file_event.path.to_str().unwrap());
 
-            c.deref().iter().filter(|c| c.filter.event_matches(&file_event)).for_each(|c| {
+            source_connections.deref().iter().filter(|c| c.filter.event_matches(&file_event)).for_each(|c| {
                 let target = targets.get(&c.target).unwrap();
 
                 let mut s = target.sender.clone();
@@ -77,15 +110,6 @@ pub fn run(settings: settings::Settings) {
     for p in local_event_dispatchers {
         runtime.spawn(p);
     }
-
-    let (sftp_join_handles, connect_future) = connect_sftp_downloaders(
-        settings.command_queue.address,
-        settings.sftp_sources.clone(),
-        settings.storage.directory.clone(),
-        settings.postgresql.url.clone()
-    );
-
-    runtime.spawn(connect_future);
 
     let web_server_join_handle = start_http_server(settings.http_server.address);
 
@@ -122,21 +146,14 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
 
 /// Connect to RabbitMQ and when the connection is made, start all SFTP
 /// downloaders that consume commands from it.
-fn connect_sftp_downloaders(
+fn connect_sftp_downloaders<T>(
         rabbitmq_address: std::net::SocketAddr,
-        sftp_sources: Vec<settings::SftpSource>,
+        sftp_sources: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)>,
         storage_directory: std::path::PathBuf,
-        postgresql_url: String
-    ) -> (Arc<Mutex<Vec<thread::JoinHandle<()>>>>, impl Future<Item=(), Error=()>) {
+        persistence: T
+    ) -> (Arc<Mutex<Vec<thread::JoinHandle<()>>>>, impl Future<Item=(), Error=()>) where T: Persistence, T: Send, T: Clone, T: 'static {
     let join_handles = Arc::new(Mutex::new(Vec::new()));
     let join_handles_result = join_handles.clone();
-
-    let connection_manager = PostgresConnectionManager::new(
-        postgresql_url.parse().unwrap(),
-        NoTls,
-    );
-
-    let persistence = persistence::PostgresPersistence::new(connection_manager);
 
     let stream = TcpStream::connect(&rabbitmq_address).map_err(failure::Error::from).and_then(|stream| {
         lapin_futures::client::Client::connect(stream, ConnectionOptions::default()).map_err(failure::Error::from)
@@ -145,35 +162,16 @@ fn connect_sftp_downloaders(
             error!("Error sending heartbeat: {}", e);
         }));
 
-        for config in sftp_sources {
-            let (join_handle, sftp_source) = SftpDownloader::start(
+        for (sftp_source, sender) in sftp_sources {
+            let mut jhs = join_handles.lock().unwrap();
+
+            jhs.push(SftpDownloader::start(
                 client.clone(),
-                config.clone(),
+                sftp_source.clone(),
+                sender,
                 storage_directory.clone(),
                 persistence.clone()
-            );
-
-            {
-                let mut jhs = join_handles.lock().unwrap();
-
-                jhs.push(join_handle);
-            }
-
-            let sftp_source_name = config.name.clone();
-
-            let process_events = sftp_source.events()
-                .map_err(|e| {
-                    error!("{}", e);
-                })
-                .for_each(move |file_event| {
-                    info!("FileEvent from {}: {}", &sftp_source_name, file_event.path.to_str().unwrap());
-
-                    futures::future::ok(())
-                });
-
-            tokio::spawn(process_events);
-
-            debug!("Spawned MQ message handling stream");
+            ));
         }
 
         futures::future::ok(())

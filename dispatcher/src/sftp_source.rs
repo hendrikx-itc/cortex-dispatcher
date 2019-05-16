@@ -16,12 +16,11 @@ use lapin_futures::types::FieldTable;
 use tokio::net::TcpStream;
 use tokio::runtime::current_thread::Runtime;
 use tokio::prelude::*;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::settings;
 use crate::metrics;
 use crate::event::FileEvent;
-use crate::base_types::Source;
 use crate::persistence::Persistence;
 
 use cortex_core::sftp_connection::SftpConnection;
@@ -31,30 +30,6 @@ use failure::Error;
 
 use tee::TeeReader;
 use sha2::{Sha256, Digest};
-
-pub struct SftpSource {
-    name: String,
-    receiver: UnboundedReceiver<FileEvent>
-}
-
-impl SftpSource {
-    pub fn new(name: String, receiver: UnboundedReceiver<FileEvent>) -> SftpSource {
-        SftpSource {
-            name: name,
-            receiver: receiver
-        }
-    }
-}
-
-impl Source for SftpSource {
-    fn name(self) -> String {
-        self.name.clone()
-    }
-
-    fn events(self) -> UnboundedReceiver<FileEvent> {
-        self.receiver
-    }
-}
 
 pub struct SftpDownloader<T> where T: Persistence {
     pub sftp_source: settings::SftpSource,
@@ -66,19 +41,17 @@ pub struct SftpDownloader<T> where T: Persistence {
 impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
     pub fn start(
         amqp_client: lapin_futures::client::Client<TcpStream>,
-        sftp_source: settings::SftpSource,
+        config: settings::SftpSource,
+        mut sender: UnboundedSender<FileEvent>,
         data_dir: PathBuf,
         persistence: T,
-    ) -> (thread::JoinHandle<()>, SftpSource) {
-        let (mut sender, receiver) = unbounded_channel();
-        let result_source = SftpSource::new(sftp_source.name.clone(), receiver);
-
+    ) -> thread::JoinHandle<()> {
         let join_handle = thread::spawn(move || {
             let conn = loop {
                 let conn_result = SftpConnection::new(
-                    &sftp_source.address.clone(),
-                    &sftp_source.username.clone(),
-                    sftp_source.compress,
+                    &config.address.clone(),
+                    &config.username.clone(),
+                    config.compress,
                 );
 
                 match conn_result {
@@ -94,14 +67,14 @@ impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
             runtime.spawn(future::ok(()));
 
             let mut sftp_downloader = SftpDownloader {
-                sftp_source: sftp_source.clone(),
+                sftp_source: config.clone(),
                 sftp_connection: conn,
                 persistence: persistence,
                 local_storage_path: data_dir.clone(),
             };
 
-            let sftp_source_name = sftp_source.name.clone();
-            let sftp_source_name_2 = sftp_source.name.clone();
+            let sftp_source_name = config.name.clone();
+            let sftp_source_name_2 = config.name.clone();
 
             let stream = amqp_client.create_channel().map_err(Error::from).and_then(|channel| {
                 info!("Created channel with id {}", channel.id());
@@ -163,7 +136,7 @@ impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
             runtime.run().unwrap();
         });
 
-        (join_handle, result_source)
+        join_handle
     }
 
     pub fn handle(&mut self, msg: &SftpDownload) -> Result<(), String> {
