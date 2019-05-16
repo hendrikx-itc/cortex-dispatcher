@@ -15,6 +15,9 @@ use tokio::prelude::Stream;
 
 use futures::future::Future;
 
+use postgres::NoTls;
+use r2d2_postgres::PostgresConnectionManager;
+
 use crate::directory_source::start_directory_sources;
 use crate::settings;
 use crate::sftp_source::{SftpDownloader};
@@ -22,6 +25,7 @@ use crate::metrics_collector::metrics_collector;
 use crate::directory_target::DirectoryTarget;
 use crate::base_types::Source;
 use crate::http_server::start_http_server;
+use crate::persistence;
 
 
 pub fn run(settings: settings::Settings) {
@@ -127,6 +131,13 @@ fn connect_sftp_downloaders(
     let join_handles = Arc::new(Mutex::new(Vec::new()));
     let join_handles_result = join_handles.clone();
 
+    let connection_manager = PostgresConnectionManager::new(
+        postgresql_url.parse().unwrap(),
+        NoTls,
+    );
+
+    let persistence = persistence::PostgresPersistence::new(connection_manager);
+
     let stream = TcpStream::connect(&rabbitmq_address).map_err(failure::Error::from).and_then(|stream| {
         lapin_futures::client::Client::connect(stream, ConnectionOptions::default()).map_err(failure::Error::from)
     }).and_then(move |(client, heartbeat)| {
@@ -139,7 +150,7 @@ fn connect_sftp_downloaders(
                 client.clone(),
                 config.clone(),
                 storage_directory.clone(),
-                postgresql_url.clone()
+                persistence.clone()
             );
 
             {

@@ -30,13 +30,15 @@ impl EventFilter for RegexFilter {
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum Filter {
-    Regex(RegexFilter)
+    Regex(RegexFilter),
+    All
 }
 
 impl Filter {
     pub fn event_matches(&self, file_event: &FileEvent) -> bool {
         match self {
-            Filter::Regex(r) => r.event_matches(file_event)
+            Filter::Regex(r) => r.event_matches(file_event),
+            Filter::All => true
         }
     }
 }

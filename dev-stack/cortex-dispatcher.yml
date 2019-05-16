@@ -13,6 +13,8 @@ directory_targets:
     directory: /cortex/storage/v5
   - name: v6
     directory: /cortex/storage/v6
+  - name: red
+    directory: /cortex/storage/red
 
 sftp_sources:
   - name: local-red
@@ -35,6 +37,10 @@ connections:
     filter:
       regex:
         regex: "^.*-v6\\.xml$"
+  - source: local-red
+    target: red
+    filter:
+      all:
 
 prometheus:
   gateway: 127.0.0.1:9091

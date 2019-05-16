@@ -22,6 +22,7 @@ use crate::settings;
 use crate::metrics;
 use crate::event::FileEvent;
 use crate::base_types::Source;
+use crate::persistence::Persistence;
 
 use cortex_core::sftp_connection::SftpConnection;
 use cortex_core::SftpDownload;
@@ -55,19 +56,19 @@ impl Source for SftpSource {
     }
 }
 
-pub struct SftpDownloader {
+pub struct SftpDownloader<T> where T: Persistence {
     pub sftp_source: settings::SftpSource,
     pub sftp_connection: SftpConnection,
-    pub db_connection: postgres::Connection,
+    pub persistence: T,
     pub local_storage_path: PathBuf
 }
 
-impl SftpDownloader {
+impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
     pub fn start(
         amqp_client: lapin_futures::client::Client<TcpStream>,
         sftp_source: settings::SftpSource,
         data_dir: PathBuf,
-        db_url: String,
+        persistence: T,
     ) -> (thread::JoinHandle<()>, SftpSource) {
         let (mut sender, receiver) = unbounded_channel();
         let result_source = SftpSource::new(sftp_source.name.clone(), receiver);
@@ -88,19 +89,6 @@ impl SftpDownloader {
                 thread::sleep(Duration::from_millis(1000));
             };
 
-            let db_conn_result = postgres::Connection::connect(db_url.clone(), postgres::TlsMode::None);
-
-            let db_conn = match db_conn_result {
-                Ok(c) => {
-                    info!("Connected to database");
-                    c
-                }
-                Err(e) => {
-                    error!("Error connecting to database: {}", e);
-                    ::std::process::exit(2);
-                }
-            };
-
             let mut runtime = Runtime::new().unwrap();
 
             runtime.spawn(future::ok(()));
@@ -108,7 +96,7 @@ impl SftpDownloader {
             let mut sftp_downloader = SftpDownloader {
                 sftp_source: sftp_source.clone(),
                 sftp_connection: conn,
-                db_connection: db_conn,
+                persistence: persistence,
                 local_storage_path: data_dir.clone(),
             };
 
@@ -251,17 +239,7 @@ impl SftpDownloader {
 
                 let hash = format!("{:x}", sha256.result());
 
-                let execute_result = self.db_connection.execute(
-                    "insert into dispatcher.sftp_download (remote, path, size, hash) values ($1, $2, $3, $4)",
-                    &[&self.sftp_source.name, &msg.path, &i64::try_from(bytes_copied).unwrap(), &hash]
-                );
-
-                match execute_result {
-                    Ok(_) => {},
-                    Err(e) => {
-                        error!("Error inserting download record into database: {}", e);
-                    }
-                }
+                self.persistence.store(&self.sftp_source.name, &msg.path, i64::try_from(bytes_copied).unwrap(), &hash);
 
                 metrics::FILE_DOWNLOAD_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc();
                 metrics::BYTES_DOWNLOADED_COUNTER_VEC.with_label_values(&[&self.sftp_source.name]).inc_by(bytes_copied as i64);
