@@ -57,9 +57,21 @@ pub struct DirectorySource {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct RabbitMQNotify {
+    pub message_template: String,
+    pub address: SocketAddr
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub enum Notify {
+    RabbitMQ(RabbitMQNotify)
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct DirectoryTarget {
     pub name: String,
     pub directory: PathBuf,
+    pub notify: Option<Notify>
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -22,9 +22,9 @@ use r2d2_postgres::PostgresConnectionManager;
 use crate::directory_source::start_directory_sources;
 use crate::settings;
 use crate::sftp_source::SftpDownloader;
-use crate::base_types::Source;
+use crate::base_types::{Source, Target, Connection, Notify};
 use crate::metrics_collector::metrics_collector;
-use crate::directory_target::DirectoryTarget;
+use crate::directory_target::to_stream;
 use crate::http_server::start_http_server;
 use crate::persistence::{Persistence, PostgresPersistence};
 use crate::event::FileEvent;
@@ -34,9 +34,34 @@ pub fn run(settings: settings::Settings) {
     let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
-    let directory_targets: Arc<HashMap<String, DirectoryTarget>> = Arc::new(settings.directory_targets.iter().map(|target| {
-        (target.name.clone(), DirectoryTarget::from_settings(target, &mut runtime))
-    }).collect());
+    let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
+    
+    settings.directory_targets.iter().for_each(|target_conf| {
+        let (sender, receiver) = unbounded_channel();
+
+        let target_stream = to_stream(target_conf, receiver);
+
+        let notify = match &target_conf.notify {
+            Some(conf) => {
+                match conf {
+                    settings::Notify::RabbitMQ(notify_conf) => Some(Notify {
+                        message_template: notify_conf.message_template.clone()
+                    })
+                }
+            },
+            None => None
+        };
+
+        runtime.spawn(target_stream);
+
+        let target = Arc::new(Target {
+            name: target_conf.name.clone(),
+            sender: sender,
+            notify: notify
+        });
+
+        targets.insert(target_conf.name.clone(), target);
+    });
 
     let prometheus_push_conf = settings.prometheus_push.clone();
 
@@ -51,7 +76,15 @@ pub fn run(settings: settings::Settings) {
 
     let (directory_sources_join_handle, mut directory_sources) = start_directory_sources(settings.directory_sources.clone());
 
-    let connections = settings.connections.clone();
+    let connections: Vec<Connection> = settings.connections.iter().map(|conn_conf| {
+        let target = targets.get(&conn_conf.target).unwrap().clone();
+
+        Connection {
+            source_name: conn_conf.source.clone(),
+            target: target,
+            filter: conn_conf.filter.clone()
+        }
+    }).collect();
 
     let connection_manager = PostgresConnectionManager::new(
         settings.postgresql.url.parse().unwrap(),
@@ -81,22 +114,18 @@ pub fn run(settings: settings::Settings) {
 
     sources.append(&mut directory_sources);
 
-    let local_event_dispatchers = sources.into_iter().map(|directory_source| {
+    let local_event_dispatchers = sources.into_iter().map(|source| {
         // Filter connections belonging to this source
-        let source_connections: Vec<settings::Connection> = connections
-            .iter().filter(|c| c.source == directory_source.name).cloned().collect();
+        let source_connections: Vec<Connection> = connections
+            .iter().filter(|c| c.source_name == source.name).cloned().collect();
 
-        let targets = directory_targets.clone();
+        let source_name = source.name.clone();
 
-        let source_name = directory_source.name.clone();
-
-        directory_source.receiver.map_err(|_| ()).for_each(move |file_event| {
+        source.receiver.map_err(|_| ()).for_each(move |file_event| {
             info!("FileEvent from {}: {}", &source_name, file_event.path.to_str().unwrap());
 
             source_connections.deref().iter().filter(|c| c.filter.event_matches(&file_event)).for_each(|c| {
-                let target = targets.get(&c.target).unwrap();
-
-                let mut s = target.sender.clone();
+                let mut s = c.target.sender.clone();
                 s.try_send(file_event.clone()).unwrap();
             });
 
