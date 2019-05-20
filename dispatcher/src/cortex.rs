@@ -5,6 +5,8 @@ use std::collections::HashMap;
 extern crate inotify;
 
 extern crate failure;
+use failure::Error;
+
 extern crate lapin_futures;
 use lapin_futures::client::ConnectionOptions;
 
@@ -22,12 +24,35 @@ use r2d2_postgres::PostgresConnectionManager;
 use crate::directory_source::start_directory_sources;
 use crate::settings;
 use crate::sftp_source::SftpDownloader;
-use crate::base_types::{Source, Target, Connection, Notify};
+use crate::base_types::{Source, Target, Connection, RabbitMQNotify};
 use crate::metrics_collector::metrics_collector;
 use crate::directory_target::to_stream;
 use crate::http_server::start_http_server;
 use crate::persistence::{Persistence, PostgresPersistence};
 use crate::event::FileEvent;
+use crate::base_types::Notify;
+
+fn stream_consuming_future(stream: Box<futures::Stream< Item = FileEvent, Error = () > + Send>) -> Box<futures::Future< Item = (), Error = () > + Send> {
+    Box::new(
+        stream.for_each(|_| {futures::future::ok(())})
+    )
+}
+
+fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin_futures::channel::Channel<TcpStream>, Error = Error> + Send + 'static {
+    TcpStream::connect(addr)
+        .map_err(Error::from)
+        .and_then(|stream| {
+            debug!("TcpStream connected");
+
+            lapin_futures::client::Client::connect(stream, ConnectionOptions::default())
+                .map_err(Error::from)
+        })
+        .and_then(|(client, heartbeat)| {
+            tokio::spawn(heartbeat.map_err(|_e| ()));
+
+            client.create_channel().map_err(Error::from)
+        })
+}
 
 
 pub fn run(settings: settings::Settings) {
@@ -35,29 +60,43 @@ pub fn run(settings: settings::Settings) {
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
-    
+
     settings.directory_targets.iter().for_each(|target_conf| {
         let (sender, receiver) = unbounded_channel();
 
         let target_stream = to_stream(target_conf, receiver);
 
-        let notify = match &target_conf.notify {
+        let target_stream = match &target_conf.notify {
             Some(conf) => {
                 match conf {
-                    settings::Notify::RabbitMQ(notify_conf) => Some(Notify {
-                        message_template: notify_conf.message_template.clone()
-                    })
+                    settings::Notify::RabbitMQ(notify_conf) => {
+                        let amqp_channel = connect_channel(&notify_conf.address);
+
+                        let message_template = notify_conf.message_template.clone();
+                        let exchange = notify_conf.exchange.clone();
+                        let routing_key = notify_conf.routing_key.clone();
+
+                        Box::new(amqp_channel.map_err(|e| { error!("Error connecting channel: {}", e); }).and_then(|channel| {
+                            let notify = RabbitMQNotify {
+                                message_template: message_template,
+                                channel: channel,
+                                exchange: exchange,
+                                routing_key: routing_key
+                            };
+
+                            stream_consuming_future(notify.and_then_notify(target_stream))
+                        }))
+                    }
                 }
             },
-            None => None
+            None => stream_consuming_future(Box::new(target_stream))
         };
 
         runtime.spawn(target_stream);
 
         let target = Arc::new(Target {
             name: target_conf.name.clone(),
-            sender: sender,
-            notify: notify
+            sender: sender
         });
 
         targets.insert(target_conf.name.clone(), target);

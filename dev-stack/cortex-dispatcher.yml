@@ -15,6 +15,12 @@ directory_targets:
     directory: /cortex/storage/v6
   - name: red
     directory: /cortex/storage/red-consumer
+    notify:
+      rabbitmq:
+        message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
+        address: "127.0.0.1:5672"
+        exchange: "amq.direct"
+        routing_key: "processing-node"
 
 sftp_sources:
   - name: local-red

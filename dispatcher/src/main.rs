@@ -28,6 +28,7 @@ extern crate postgres;
 extern crate chrono;
 extern crate tee;
 extern crate sha2;
+extern crate serde_yaml;
 
 #[macro_use]
 extern crate prometheus;
@@ -48,6 +49,11 @@ fn main() {
 
     env_logger_builder.init();
 
+    if matches.is_present("sample_config") {
+        print!("{}\n", serde_yaml::to_string(&settings::Settings::default()).unwrap());
+        ::std::process::exit(0);
+    }
+
     let config_file = matches
         .value_of("config")
         .unwrap_or("/etc/cortex/cortex.yaml");
@@ -64,7 +70,7 @@ fn main() {
             info!("Configuration loaded from file {}", config_file);
         },
         Err(e) => {
-            error!("Error loading configuration: {}", e);
+            error!("Error merging configuration: {}", e);
             ::std::process::exit(1);
         }
     }

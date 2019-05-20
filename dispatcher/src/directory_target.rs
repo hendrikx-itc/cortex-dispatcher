@@ -6,11 +6,11 @@ use futures::stream::Stream;
 use crate::settings;
 use crate::event::FileEvent;
 
-pub fn to_stream(settings: &settings::DirectoryTarget, receiver: UnboundedReceiver<FileEvent>) -> impl futures::Future< Item = (), Error = () > {
+pub fn to_stream(settings: &settings::DirectoryTarget, receiver: UnboundedReceiver<FileEvent>) -> impl futures::Stream< Item = FileEvent, Error = () > {
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
 
-    receiver.map_err(|_| ()).for_each(move |file_event: FileEvent| {
+    receiver.map_err(|_| ()).map(move |file_event: FileEvent| {
         let source_path_str = file_event.path.to_str().unwrap();
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);
@@ -29,6 +29,6 @@ pub fn to_stream(settings: &settings::DirectoryTarget, receiver: UnboundedReceiv
             }
         }
 
-        futures::future::ok(())
+        file_event
     })
 }
