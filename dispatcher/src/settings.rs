@@ -121,7 +121,8 @@ pub struct Postgresql {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpServer {
-    pub address: std::net::SocketAddr
+    pub address: std::net::SocketAddr,
+    pub static_content_path: PathBuf
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -176,7 +177,10 @@ impl Default for Settings {
             connections: vec![],
             prometheus_push: None,
             postgresql: Postgresql { url: "postgresql://postgres:password@127.0.0.1:5432/cortex".to_string() },
-            http_server: HttpServer { address: "0.0.0.0:56008".parse().unwrap() }
+            http_server: HttpServer {
+                address: "0.0.0.0:56008".parse().unwrap(),
+                static_content_path: PathBuf::from("static-web")
+            }
         }
     }
 }

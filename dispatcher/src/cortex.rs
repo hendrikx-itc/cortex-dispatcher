@@ -176,7 +176,9 @@ pub fn run(settings: settings::Settings) {
         runtime.spawn(p);
     }
 
-    let web_server_join_handle = start_http_server(settings.http_server.address);
+    let static_content_path = settings.http_server.static_content_path.clone();
+
+    let web_server_join_handle = start_http_server(settings.http_server.address, static_content_path);
 
     entered
         .block_on(runtime.shutdown_on_idle())
