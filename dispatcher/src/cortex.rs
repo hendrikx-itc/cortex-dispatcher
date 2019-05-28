@@ -178,7 +178,9 @@ pub fn run(settings: settings::Settings) {
     }
 
     let cortex_config = CortexConfig {
-        sftp_sources: Arc::new(Mutex::new(settings.sftp_sources))
+        sftp_sources: Arc::new(Mutex::new(settings.sftp_sources)),
+        directory_targets: Arc::new(Mutex::new(settings.directory_targets)),
+        connections: Arc::new(Mutex::new(settings.connections)),
     };
 
     let static_content_path = settings.http_server.static_content_path.clone();

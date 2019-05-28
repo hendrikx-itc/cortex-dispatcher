@@ -74,5 +74,7 @@ pub struct Connection {
 
 #[derive(Debug, Clone)]
 pub struct CortexConfig {
-    pub sftp_sources: std::sync::Arc<Mutex<Vec<settings::SftpSource>>>
+    pub sftp_sources: std::sync::Arc<Mutex<Vec<settings::SftpSource>>>,
+    pub directory_targets: std::sync::Arc<Mutex<Vec<settings::DirectoryTarget>>>,
+    pub connections: std::sync::Arc<Mutex<Vec<settings::Connection>>>
 }

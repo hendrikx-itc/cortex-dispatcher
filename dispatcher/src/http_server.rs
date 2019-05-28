@@ -33,6 +33,42 @@ impl Responder for SftpResponse {
     }
 }
 
+struct DirectoryTargetsResponse {
+    pub directory_targets:  std::sync::Arc<std::sync::Mutex<Vec<settings::DirectoryTarget>>>
+
+}
+
+impl Responder for DirectoryTargetsResponse {
+    type Error = Error;
+    type Future = FutureResult<Response, Error>;
+
+    fn respond_to(self, _req: &HttpRequest) -> Self::Future {
+        let directory_targets = self.directory_targets.lock().unwrap();
+
+        let result = serde_json::to_string(&*directory_targets).unwrap();
+
+        ok(HttpResponse::from(result))
+    }
+}
+
+struct ConnectionsResponse {
+    pub connections:  std::sync::Arc<std::sync::Mutex<Vec<settings::Connection>>>
+
+}
+
+impl Responder for ConnectionsResponse {
+    type Error = Error;
+    type Future = FutureResult<Response, Error>;
+
+    fn respond_to(self, _req: &HttpRequest) -> Self::Future {
+        let connections = self.connections.lock().unwrap();
+
+        let result = serde_json::to_string(&*connections).unwrap();
+
+        ok(HttpResponse::from(result))
+    }
+}
+
 pub fn start_http_server(addr: std::net::SocketAddr, static_content: std::path::PathBuf, cortex_config: CortexConfig) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let system = actix_rt::System::new("http_server");
@@ -41,13 +77,29 @@ pub fn start_http_server(addr: std::net::SocketAddr, static_content: std::path::
 
         info!("Serving static content from {}", static_content.to_str().unwrap().to_string());
 
-        let c = cortex_config.sftp_sources.clone();
+        let sftp_sources = cortex_config.sftp_sources.clone();
+        let directory_targets = cortex_config.directory_targets.clone();
+        let connections = cortex_config.connections.clone();
 
         HttpServer::new(move || {
-            let cc = c.clone();
-            let res_resp = move || -> SftpResponse {
+            let sftp_sources = sftp_sources.clone();
+            let sftp_sources_resp = move || -> SftpResponse {
                 SftpResponse {
-                    sftp_sources: cc.clone()
+                    sftp_sources: sftp_sources.clone()
+                } 
+            };
+
+            let directory_targets = directory_targets.clone();
+            let directory_targets_resp = move || -> DirectoryTargetsResponse {
+                DirectoryTargetsResponse {
+                    directory_targets: directory_targets.clone()
+                } 
+            };
+
+            let connections = connections.clone();
+            let connections_resp = move || -> ConnectionsResponse {
+                ConnectionsResponse {
+                    connections: connections.clone()
                 } 
             };
 
@@ -58,7 +110,13 @@ pub fn start_http_server(addr: std::net::SocketAddr, static_content: std::path::
                     web::resource("/api/metrics").to(metrics)
                 )
                 .service(
-                    web::resource("/api/sftp-sources").to(res_resp)
+                    web::resource("/api/sftp-sources").to(sftp_sources_resp)
+                )
+                .service(
+                    web::resource("/api/directory-targets").to(directory_targets_resp)
+                )
+                .service(
+                    web::resource("/api/connections").to(connections_resp)
                 )
                 .service(
                     actix_files::Files::new("/", &local_static_content).index_file("index.html")

@@ -1,8 +1,8 @@
 <template>
-  <div class="Sources">
-    <h3>SFTP Sources</h3>
+  <div class="Connections">
+    <h3>Connections</h3>
     <b-list-group>
-      <b-list-group-item v-for="sftp_source in sftp_sources" v-bind:key="sftp_source.name" href="#">{{ sftp_source.name }}</b-list-group-item>
+      <b-list-group-item v-for="connection in connections" v-bind:key="connection.name" href="#">{{ connection.source }} -> {{ connection.target }}</b-list-group-item>
     </b-list-group>
   </div>
 </template>
@@ -11,20 +11,20 @@
 const axios = require('axios');
 
 export default {
-  name: 'Sources',
+  name: 'Connections',
   props: {
     msg: String
   },
   data () {
     return {
-      sftp_sources: null,
+      connections: null,
       url: process.env.API_BASE_URL
     }
   },
   mounted () {
     axios
-      .get('http://localhost:56008/api/sftp-sources')
-      .then(response => (this.sftp_sources = response.data))
+      .get('http://localhost:56008/api/connections')
+      .then(response => (this.connections = response.data))
   }
 }
 </script>
