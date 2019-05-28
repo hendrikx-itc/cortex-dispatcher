@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -53,6 +53,7 @@ impl Notify for RabbitMQNotify {
     }
 }
 
+#[derive(Debug)]
 pub struct Source {
     pub name: String,
     pub receiver: UnboundedReceiver<FileEvent>,
@@ -69,4 +70,9 @@ pub struct Connection {
     pub source_name: String,
     pub target: Arc<Target>,
     pub filter: settings::Filter
+}
+
+#[derive(Debug, Clone)]
+pub struct CortexConfig {
+    pub sftp_sources: std::sync::Arc<Mutex<Vec<settings::SftpSource>>>
 }

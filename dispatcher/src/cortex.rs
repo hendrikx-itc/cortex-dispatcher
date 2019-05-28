@@ -30,7 +30,7 @@ use crate::directory_target::to_stream;
 use crate::http_server::start_http_server;
 use crate::persistence::{Persistence, PostgresPersistence};
 use crate::event::FileEvent;
-use crate::base_types::Notify;
+use crate::base_types::{Notify, CortexConfig};
 
 fn stream_consuming_future(stream: Box<futures::Stream< Item = FileEvent, Error = () > + Send>) -> Box<futures::Future< Item = (), Error = () > + Send> {
     Box::new(
@@ -133,8 +133,9 @@ pub fn run(settings: settings::Settings) {
     let persistence = PostgresPersistence::new(connection_manager);
 
     let mut source_sender_pairs: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)> = Vec::new();
-    let mut sources: Vec<Source> = Vec::new();
-    
+
+    let mut sources = Vec::new();
+
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
 
@@ -176,9 +177,13 @@ pub fn run(settings: settings::Settings) {
         runtime.spawn(p);
     }
 
+    let cortex_config = CortexConfig {
+        sftp_sources: Arc::new(Mutex::new(settings.sftp_sources))
+    };
+
     let static_content_path = settings.http_server.static_content_path.clone();
 
-    let web_server_join_handle = start_http_server(settings.http_server.address, static_content_path);
+    let web_server_join_handle = start_http_server(settings.http_server.address, static_content_path, cortex_config);
 
     entered
         .block_on(runtime.shutdown_on_idle())
