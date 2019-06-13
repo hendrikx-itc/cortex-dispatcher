@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::net::SocketAddr;
 
 use regex::Regex;
 use crate::event::FileEvent;
@@ -59,7 +58,7 @@ pub struct DirectorySource {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RabbitMQNotify {
     pub message_template: String,
-    pub address: SocketAddr,
+    pub address: String,
     pub exchange: String,
     pub routing_key: String
 }
@@ -105,7 +104,7 @@ pub struct Storage {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommandQueue {
-    pub address: SocketAddr
+    pub address: String
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

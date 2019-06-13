@@ -1,13 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::future::Future;
 use tera::{Tera, Context};
 
 use crate::event::FileEvent;
 use crate::settings;
-use lapin_futures::channel::{Channel, BasicProperties, BasicPublishOptions};
+use lapin_futures::{Channel, BasicProperties};
+use lapin_futures::options::{BasicPublishOptions};
 
 pub trait Notify {
     fn and_then_notify<T>(&self, stream: T) -> Box<futures::Stream< Item = FileEvent, Error = () > + Send> where T: futures::Stream< Item = FileEvent, Error = () > + 'static + Send;
@@ -15,7 +15,7 @@ pub trait Notify {
 
 pub struct RabbitMQNotify {
     pub message_template: String,
-    pub channel: Channel<TcpStream>,
+    pub channel: Channel,
     pub exchange: String,
     pub routing_key: String
 }

@@ -10,10 +10,9 @@ extern crate inotify;
 extern crate failure;
 
 extern crate lapin_futures;
-use lapin_futures::channel::{BasicConsumeOptions, QueueDeclareOptions, QueueBindOptions};
+use lapin_futures::options::{BasicConsumeOptions, QueueDeclareOptions, QueueBindOptions};
 use lapin_futures::types::FieldTable;
 
-use tokio::net::TcpStream;
 use tokio::runtime::current_thread::Runtime;
 use tokio::prelude::*;
 use tokio::sync::mpsc::UnboundedSender;
@@ -40,7 +39,7 @@ pub struct SftpDownloader<T> where T: Persistence {
 
 impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
     pub fn start(
-        amqp_client: lapin_futures::client::Client<TcpStream>,
+        amqp_client: lapin_futures::Client,
         config: settings::SftpSource,
         mut sender: UnboundedSender<FileEvent>,
         data_dir: PathBuf,
@@ -81,21 +80,21 @@ impl<T> SftpDownloader<T> where T: Persistence, T: Send, T: Clone, T: 'static {
 
                 let queue_name = format!("source.{}", &sftp_source_name);
 
-                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::new()).map(|queue| (channel, queue)).and_then(move |(channel, queue)| {
+                channel.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default()).map(|queue| (channel, queue)).and_then(move |(channel, queue)| {
                     info!("Channel {} declared queue {}", channel.id(), &queue_name);
 
                     let routing_key = format!("source.{}", &sftp_source_name);
                     let exchange = "amq.direct";
 
-                    channel.queue_bind(&queue_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::new())
+                    channel.queue_bind(&queue_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::default())
                         .map(|_| (channel, queue))
                 }).and_then(move |(channel, queue)| {
                     // basic_consume returns a future of a message
                     // stream. Any time a message arrives for this consumer,
                     // the for_each method would be called
-                    channel.basic_consume(&queue, "cortex-dispatcher", BasicConsumeOptions::default(), FieldTable::new()).map(|stream| (channel, stream))
+                    channel.basic_consume(&queue, "cortex-dispatcher", BasicConsumeOptions::default(), FieldTable::default()).map(|stream| (channel, stream))
                 }).and_then(move |(channel, stream)| {
-                    stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::error::Error> + 'static + Send> {
+                    stream.for_each(move |message| -> Box<dyn Future< Item = (), Error = lapin_futures::Error> + 'static + Send> {
                         metrics::MESSAGES_RECEIVED_COUNTER.with_label_values(&[&sftp_source_name_2]).inc();
                         debug!("Received message from RabbitMQ");
 

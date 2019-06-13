@@ -8,11 +8,10 @@ extern crate failure;
 use failure::Error;
 
 extern crate lapin_futures;
-use lapin_futures::client::ConnectionOptions;
+use lapin_futures::{ConnectionProperties, Credentials};
 
 extern crate tokio_executor;
 use tokio_executor::enter;
-use tokio::net::TcpStream;
 use tokio::prelude::Stream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
@@ -38,20 +37,12 @@ fn stream_consuming_future(stream: Box<futures::Stream< Item = FileEvent, Error 
     )
 }
 
-fn connect_channel(addr: &std::net::SocketAddr) -> impl Future<Item = lapin_futures::channel::Channel<TcpStream>, Error = Error> + Send + 'static {
-    TcpStream::connect(addr)
+fn connect_channel(addr: &str) -> impl Future<Item = lapin_futures::Channel, Error = Error> + Send + 'static {
+        lapin_futures::Client::connect(addr, Credentials::default(), ConnectionProperties::default())
         .map_err(Error::from)
-        .and_then(|stream| {
-            debug!("TcpStream connected");
-
-            lapin_futures::client::Client::connect(stream, ConnectionOptions::default())
-                .map_err(Error::from)
-        })
-        .and_then(|(client, heartbeat)| {
-            tokio::spawn(heartbeat.map_err(|_e| ()));
-
+        .and_then(|client| {
             client.create_channel().map_err(Error::from)
-        })
+        })       
 }
 
 
@@ -144,7 +135,7 @@ pub fn run(settings: settings::Settings) {
     });
 
     let (sftp_join_handles, connect_future) = connect_sftp_downloaders(
-        settings.command_queue.address,
+        &settings.command_queue.address,
         source_sender_pairs,
         settings.storage.directory.clone(),
         persistence
@@ -221,7 +212,7 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
 /// Connect to RabbitMQ and when the connection is made, start all SFTP
 /// downloaders that consume commands from it.
 fn connect_sftp_downloaders<T>(
-        rabbitmq_address: std::net::SocketAddr,
+        rabbitmq_address: &str,
         sftp_sources: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)>,
         storage_directory: std::path::PathBuf,
         persistence: T
@@ -229,13 +220,9 @@ fn connect_sftp_downloaders<T>(
     let join_handles = Arc::new(Mutex::new(Vec::new()));
     let join_handles_result = join_handles.clone();
 
-    let stream = TcpStream::connect(&rabbitmq_address).map_err(failure::Error::from).and_then(|stream| {
-        lapin_futures::client::Client::connect(stream, ConnectionOptions::default()).map_err(failure::Error::from)
-    }).and_then(move |(client, heartbeat)| {
-        tokio::spawn(heartbeat.map_err(|e| {
-            error!("Error sending heartbeat: {}", e);
-        }));
-
+    let stream = lapin_futures::Client::connect(&rabbitmq_address, Credentials::default(), ConnectionProperties::default())
+    .map_err(failure::Error::from)
+    .and_then(move |client| {
         for (sftp_source, sender) in sftp_sources {
             let mut jhs = join_handles.lock().unwrap();
 
