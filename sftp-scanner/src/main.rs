@@ -44,6 +44,8 @@ fn main() {
 
     let mut env_logger_builder = env_logger::builder();
 
+    // When run as a service using the service option, we expect the service manager to append
+    // timestamps to the logs.
     if matches.is_present("service") {
         env_logger_builder.default_format_timestamp(false);
     }
