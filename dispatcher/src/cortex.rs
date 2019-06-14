@@ -1,7 +1,7 @@
-use std::thread;
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::thread;
 extern crate inotify;
 
 extern crate failure;
@@ -11,40 +11,43 @@ extern crate lapin_futures;
 use lapin_futures::{ConnectionProperties, Credentials};
 
 extern crate tokio_executor;
-use tokio_executor::enter;
 use tokio::prelude::Stream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio_executor::enter;
 
 use futures::future::Future;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
 
+use crate::base_types::{Connection, RabbitMQNotify, Source, Target};
+use crate::base_types::{CortexConfig, Notify};
 use crate::directory_source::start_directory_sources;
+use crate::directory_target::to_stream;
+use crate::event::FileEvent;
+use crate::http_server::start_http_server;
+use crate::metrics_collector::metrics_collector;
+use crate::persistence::{Persistence, PostgresPersistence};
 use crate::settings;
 use crate::sftp_source::SftpDownloader;
-use crate::base_types::{Source, Target, Connection, RabbitMQNotify};
-use crate::metrics_collector::metrics_collector;
-use crate::directory_target::to_stream;
-use crate::http_server::start_http_server;
-use crate::persistence::{Persistence, PostgresPersistence};
-use crate::event::FileEvent;
-use crate::base_types::{Notify, CortexConfig};
 
-fn stream_consuming_future(stream: Box<futures::Stream< Item = FileEvent, Error = () > + Send>) -> Box<futures::Future< Item = (), Error = () > + Send> {
-    Box::new(
-        stream.for_each(|_| {futures::future::ok(())})
+fn stream_consuming_future(
+    stream: Box<futures::Stream<Item = FileEvent, Error = ()> + Send>,
+) -> Box<futures::Future<Item = (), Error = ()> + Send> {
+    Box::new(stream.for_each(|_| futures::future::ok(())))
+}
+
+fn connect_channel(
+    addr: &str,
+) -> impl Future<Item = lapin_futures::Channel, Error = Error> + Send + 'static {
+    lapin_futures::Client::connect(
+        addr,
+        Credentials::default(),
+        ConnectionProperties::default(),
     )
+    .map_err(Error::from)
+    .and_then(|client| client.create_channel().map_err(Error::from))
 }
-
-fn connect_channel(addr: &str) -> impl Future<Item = lapin_futures::Channel, Error = Error> + Send + 'static {
-        lapin_futures::Client::connect(addr, Credentials::default(), ConnectionProperties::default())
-        .map_err(Error::from)
-        .and_then(|client| {
-            client.create_channel().map_err(Error::from)
-        })       
-}
-
 
 pub fn run(settings: settings::Settings) {
     let mut entered = enter().expect("Failed to claim thread");
@@ -58,36 +61,40 @@ pub fn run(settings: settings::Settings) {
         let target_stream = to_stream(target_conf, receiver);
 
         let target_stream = match &target_conf.notify {
-            Some(conf) => {
-                match conf {
-                    settings::Notify::RabbitMQ(notify_conf) => {
-                        let amqp_channel = connect_channel(&notify_conf.address);
+            Some(conf) => match conf {
+                settings::Notify::RabbitMQ(notify_conf) => {
+                    let amqp_channel = connect_channel(&notify_conf.address);
 
-                        let message_template = notify_conf.message_template.clone();
-                        let exchange = notify_conf.exchange.clone();
-                        let routing_key = notify_conf.routing_key.clone();
+                    let message_template = notify_conf.message_template.clone();
+                    let exchange = notify_conf.exchange.clone();
+                    let routing_key = notify_conf.routing_key.clone();
 
-                        Box::new(amqp_channel.map_err(|e| { error!("Error connecting channel: {}", e); }).and_then(|channel| {
-                            let notify = RabbitMQNotify {
-                                message_template: message_template,
-                                channel: channel,
-                                exchange: exchange,
-                                routing_key: routing_key
-                            };
+                    Box::new(
+                        amqp_channel
+                            .map_err(|e| {
+                                error!("Error connecting channel: {}", e);
+                            })
+                            .and_then(|channel| {
+                                let notify = RabbitMQNotify {
+                                    message_template: message_template,
+                                    channel: channel,
+                                    exchange: exchange,
+                                    routing_key: routing_key,
+                                };
 
-                            stream_consuming_future(notify.and_then_notify(target_stream))
-                        }))
-                    }
+                                stream_consuming_future(notify.and_then_notify(target_stream))
+                            }),
+                    )
                 }
             },
-            None => stream_consuming_future(Box::new(target_stream))
+            None => stream_consuming_future(Box::new(target_stream)),
         };
 
         runtime.spawn(target_stream);
 
         let target = Arc::new(Target {
             name: target_conf.name.clone(),
-            sender: sender
+            sender: sender,
         });
 
         targets.insert(target_conf.name.clone(), target);
@@ -96,34 +103,35 @@ pub fn run(settings: settings::Settings) {
     let prometheus_push_conf = settings.prometheus_push.clone();
 
     if let Some(conf) = prometheus_push_conf {
-        runtime.spawn(metrics_collector(
-            conf.gateway.clone(),
-            conf.interval,
-        ));
+        runtime.spawn(metrics_collector(conf.gateway.clone(), conf.interval));
 
         info!("Prometheus metrics push collector configured");
     };
 
-    let (directory_sources_join_handle, mut directory_sources) = start_directory_sources(settings.directory_sources.clone());
+    let (directory_sources_join_handle, mut directory_sources) =
+        start_directory_sources(settings.directory_sources.clone());
 
-    let connections: Vec<Connection> = settings.connections.iter().map(|conn_conf| {
-        let target = targets.get(&conn_conf.target).unwrap().clone();
+    let connections: Vec<Connection> = settings
+        .connections
+        .iter()
+        .map(|conn_conf| {
+            let target = targets.get(&conn_conf.target).unwrap().clone();
 
-        Connection {
-            source_name: conn_conf.source.clone(),
-            target: target,
-            filter: conn_conf.filter.clone()
-        }
-    }).collect();
+            Connection {
+                source_name: conn_conf.source.clone(),
+                target: target,
+                filter: conn_conf.filter.clone(),
+            }
+        })
+        .collect();
 
-    let connection_manager = PostgresConnectionManager::new(
-        settings.postgresql.url.parse().unwrap(),
-        NoTls,
-    );
+    let connection_manager =
+        PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
 
     let persistence = PostgresPersistence::new(connection_manager);
 
-    let mut source_sender_pairs: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)> = Vec::new();
+    let mut source_sender_pairs: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)> =
+        Vec::new();
 
     let mut sources = Vec::new();
 
@@ -131,14 +139,17 @@ pub fn run(settings: settings::Settings) {
         let (sender, receiver) = unbounded_channel();
 
         source_sender_pairs.push((sftp_source.clone(), sender));
-        sources.push(Source {name: sftp_source.name.clone(), receiver: receiver});
+        sources.push(Source {
+            name: sftp_source.name.clone(),
+            receiver: receiver,
+        });
     });
 
     let (sftp_join_handles, connect_future) = connect_sftp_downloaders(
         &settings.command_queue.address,
         source_sender_pairs,
         settings.storage.directory.clone(),
-        persistence
+        persistence,
     );
 
     runtime.spawn(connect_future);
@@ -148,17 +159,28 @@ pub fn run(settings: settings::Settings) {
     let local_event_dispatchers = sources.into_iter().map(|source| {
         // Filter connections belonging to this source
         let source_connections: Vec<Connection> = connections
-            .iter().filter(|c| c.source_name == source.name).cloned().collect();
+            .iter()
+            .filter(|c| c.source_name == source.name)
+            .cloned()
+            .collect();
 
         let source_name = source.name.clone();
 
         source.receiver.map_err(|_| ()).for_each(move |file_event| {
-            info!("FileEvent from {}: {}", &source_name, file_event.path.to_str().unwrap());
+            info!(
+                "FileEvent from {}: {}",
+                &source_name,
+                file_event.path.to_str().unwrap()
+            );
 
-            source_connections.deref().iter().filter(|c| c.filter.event_matches(&file_event)).for_each(|c| {
-                let mut s = c.target.sender.clone();
-                s.try_send(file_event.clone()).unwrap();
-            });
+            source_connections
+                .deref()
+                .iter()
+                .filter(|c| c.filter.event_matches(&file_event))
+                .for_each(|c| {
+                    let mut s = c.target.sender.clone();
+                    s.try_send(file_event.clone()).unwrap();
+                });
 
             futures::future::ok(())
         })
@@ -176,7 +198,11 @@ pub fn run(settings: settings::Settings) {
 
     let static_content_path = settings.http_server.static_content_path.clone();
 
-    let web_server_join_handle = start_http_server(settings.http_server.address, static_content_path, cortex_config);
+    let web_server_join_handle = start_http_server(
+        settings.http_server.address,
+        static_content_path,
+        cortex_config,
+    );
 
     entered
         .block_on(runtime.shutdown_on_idle())
@@ -202,7 +228,7 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
     match join_result {
         Ok(()) => {
             info!("{} thread stopped", thread_name);
-        },
+        }
         Err(e) => {
             error!("{} thread stopped with error: {:?}", thread_name, e);
         }
@@ -212,15 +238,28 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
 /// Connect to RabbitMQ and when the connection is made, start all SFTP
 /// downloaders that consume commands from it.
 fn connect_sftp_downloaders<T>(
-        rabbitmq_address: &str,
-        sftp_sources: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)>,
-        storage_directory: std::path::PathBuf,
-        persistence: T
-    ) -> (Arc<Mutex<Vec<thread::JoinHandle<()>>>>, impl Future<Item=(), Error=()>) where T: Persistence, T: Send, T: Clone, T: 'static {
+    rabbitmq_address: &str,
+    sftp_sources: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)>,
+    storage_directory: std::path::PathBuf,
+    persistence: T,
+) -> (
+    Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
+    impl Future<Item = (), Error = ()>,
+)
+where
+    T: Persistence,
+    T: Send,
+    T: Clone,
+    T: 'static,
+{
     let join_handles = Arc::new(Mutex::new(Vec::new()));
     let join_handles_result = join_handles.clone();
 
-    let stream = lapin_futures::Client::connect(&rabbitmq_address, Credentials::default(), ConnectionProperties::default())
+    let stream = lapin_futures::Client::connect(
+        &rabbitmq_address,
+        Credentials::default(),
+        ConnectionProperties::default(),
+    )
     .map_err(failure::Error::from)
     .and_then(move |client| {
         for (sftp_source, sender) in sftp_sources {
@@ -231,12 +270,13 @@ fn connect_sftp_downloaders<T>(
                 sftp_source.clone(),
                 sender,
                 storage_directory.clone(),
-                persistence.clone()
+                persistence.clone(),
             ));
         }
 
         futures::future::ok(())
-    }).map_err(|e| {
+    })
+    .map_err(|e| {
         error!("{}", e);
     });
 

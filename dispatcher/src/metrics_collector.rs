@@ -4,7 +4,10 @@ use prometheus;
 use tokio::prelude::*;
 use tokio::timer::Interval;
 
-pub fn metrics_collector(address: String, push_interval: u64) -> impl Future<Item = (), Error = ()> {
+pub fn metrics_collector(
+    address: String,
+    push_interval: u64,
+) -> impl Future<Item = (), Error = ()> {
     Interval::new_interval(Duration::from_millis(push_interval))
         .for_each(move |_| {
             let metric_families = prometheus::gather();

@@ -1,4 +1,4 @@
-use clap::{crate_name, crate_authors, crate_description, crate_version, App, Arg};
+use clap::{crate_authors, crate_description, crate_name, crate_version, App, Arg};
 
 pub fn app() -> App<'static, 'static> {
     App::new(crate_name!())
@@ -16,6 +16,6 @@ pub fn app() -> App<'static, 'static> {
         .arg(
             Arg::with_name("service")
                 .long("service")
-                .help("Run in service mode")
+                .help("Run in service mode"),
         )
 }

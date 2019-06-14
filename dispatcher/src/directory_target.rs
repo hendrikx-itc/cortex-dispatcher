@@ -1,12 +1,15 @@
 use std::os::unix::fs::symlink;
 
-use tokio::sync::mpsc::{UnboundedReceiver};
 use futures::stream::Stream;
+use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::settings;
 use crate::event::FileEvent;
+use crate::settings;
 
-pub fn to_stream(settings: &settings::DirectoryTarget, receiver: UnboundedReceiver<FileEvent>) -> impl futures::Stream< Item = FileEvent, Error = () > {
+pub fn to_stream(
+    settings: &settings::DirectoryTarget,
+    receiver: UnboundedReceiver<FileEvent>,
+) -> impl futures::Stream<Item = FileEvent, Error = ()> {
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
 
@@ -23,9 +26,12 @@ pub fn to_stream(settings: &settings::DirectoryTarget, receiver: UnboundedReceiv
         match result {
             Ok(()) => {
                 info!("{} symlinked to {}", &source_path_str, &target_path_str);
-            },
+            }
             Err(e) => {
-                error!("Error symlinking {} to {}: {}", &source_path_str, &target_path_str, &e);
+                error!(
+                    "Error symlinking {} to {}: {}",
+                    &source_path_str, &target_path_str, &e
+                );
             }
         }
 

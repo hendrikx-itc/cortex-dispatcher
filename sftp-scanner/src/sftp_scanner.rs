@@ -1,28 +1,31 @@
+use std::convert::TryFrom;
 use std::path::Path;
 use std::{thread, time};
-use std::convert::TryFrom;
 
-use log::{info, error, debug};
 use futures::sync::mpsc::Sender;
+use log::{debug, error, info};
 
 extern crate chrono;
 use chrono::prelude::*;
 
-use cortex_core::SftpDownload;
 use cortex_core::sftp_connection::SftpConnection;
+use cortex_core::SftpDownload;
 
-use crate::settings::SftpSource;
 use crate::metrics;
-
+use crate::settings::SftpSource;
 
 /// Starts a new thread with an SFTP scanner for the specified source.
-/// 
+///
 /// For encountered files to be downloaded, a message is placed on a channel
 /// using the provided sender.
-/// 
+///
 /// A thread is used instead of an async Tokio future because the library used
 /// for the SFTP connection is not thread safe.
-pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_source: SftpSource) -> thread::JoinHandle<()> {
+pub fn start_scanner(
+    mut sender: Sender<SftpDownload>,
+    db_url: String,
+    sftp_source: SftpSource,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
 
@@ -30,7 +33,7 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
             Ok(c) => {
                 info!("Connected to database");
                 c
-            },
+            }
             Err(e) => {
                 error!("Error connecting to database: {}", e);
                 ::std::process::exit(2);
@@ -56,7 +59,9 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
             let scan_start = time::Instant::now();
             debug!("Started scanning {}", &sftp_source.name);
 
-            let read_result = sftp_connection.sftp.readdir(Path::new(&sftp_source.directory));
+            let read_result = sftp_connection
+                .sftp
+                .readdir(Path::new(&sftp_source.directory));
 
             let paths = match read_result {
                 Ok(paths) => paths,
@@ -91,7 +96,6 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
                         &[&sftp_source.name, &path_str, &file_size_db]
                     );
 
-
                     let file_is_new = match query_result {
                         Ok(rows) => rows.is_empty(),
                         Err(e) => {
@@ -105,7 +109,7 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
                             created: Utc::now(),
                             size: stat.size,
                             sftp_source: sftp_source.name.clone(),
-                            path: path_str.clone()
+                            path: path_str.clone(),
                         };
 
                         sender.try_send(command).unwrap();
@@ -116,7 +120,7 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
                         );
 
                         match execute_result {
-                            Ok(_) => {},
+                            Ok(_) => {}
                             Err(e) => {
                                 error!("Error inserting record: {}", e);
                             }
@@ -133,10 +137,18 @@ pub fn start_scanner(mut sender: Sender<SftpDownload>, db_url: String, sftp_sour
 
             let scan_duration = scan_end.duration_since(scan_start);
 
-            debug!("Finished scanning {} in {} ms", &sftp_source.name, scan_duration.as_millis());
+            debug!(
+                "Finished scanning {} in {} ms",
+                &sftp_source.name,
+                scan_duration.as_millis()
+            );
 
-            metrics::DIR_SCAN_COUNTER.with_label_values(&[&sftp_source.name]).inc();
-            metrics::DIR_SCAN_DURATION.with_label_values(&[&sftp_source.name]).inc_by(scan_duration.as_millis() as i64);
+            metrics::DIR_SCAN_COUNTER
+                .with_label_values(&[&sftp_source.name])
+                .inc();
+            metrics::DIR_SCAN_DURATION
+                .with_label_values(&[&sftp_source.name])
+                .inc_by(scan_duration.as_millis() as i64);
 
             thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
         }

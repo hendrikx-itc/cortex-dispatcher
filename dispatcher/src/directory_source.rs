@@ -12,14 +12,16 @@ use futures::stream::Stream;
 extern crate failure;
 extern crate lapin_futures;
 
-use crate::settings;
-use crate::event::FileEvent;
 use crate::base_types::Source;
+use crate::event::FileEvent;
+use crate::settings;
 
 use tokio::runtime::current_thread::Runtime;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
-pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>) -> (thread::JoinHandle<()>, Vec<Source>) {
+pub fn start_directory_sources(
+    directory_sources: Vec<settings::DirectorySource>,
+) -> (thread::JoinHandle<()>, Vec<Source>) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -29,7 +31,10 @@ pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>
 
     info!("Inotify initialized");
 
-    let mut watch_mapping: HashMap<inotify::WatchDescriptor, (settings::DirectorySource, UnboundedSender<FileEvent>)> = HashMap::new();
+    let mut watch_mapping: HashMap<
+        inotify::WatchDescriptor,
+        (settings::DirectorySource, UnboundedSender<FileEvent>),
+    > = HashMap::new();
     let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
 
     directory_sources.iter().for_each(|directory_source| {
@@ -38,19 +43,25 @@ pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>
 
         result_sources.push((directory_source.name.clone(), receiver));
 
-        let watch_result = inotify
-            .add_watch(
-                Path::new(&directory_source.directory),
-                WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
-            );
+        let watch_result = inotify.add_watch(
+            Path::new(&directory_source.directory),
+            WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+        );
 
         match watch_result {
             Ok(w) => {
-                info!("Added watch on {}", &directory_source.directory.to_str().unwrap());
+                info!(
+                    "Added watch on {}",
+                    &directory_source.directory.to_str().unwrap()
+                );
                 watch_mapping.insert(w, (directory_source.clone(), sender));
-            },
+            }
             Err(e) => {
-                error!("Failed to add inotify watch on '{}': {}", &directory_source.directory.to_str().unwrap(), e);
+                error!(
+                    "Failed to add inotify watch on '{}': {}",
+                    &directory_source.directory.to_str().unwrap(),
+                    e
+                );
             }
         };
     });
@@ -60,8 +71,9 @@ pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>
 
         let buffer: Vec<u8> = vec![0; 1024];
 
-        let stream = inotify.event_stream(buffer).for_each(
-            move |event: inotify::Event<std::ffi::OsString>| {
+        let stream = inotify
+            .event_stream(buffer)
+            .for_each(move |event: inotify::Event<std::ffi::OsString>| {
                 let name = event.name.expect("Could not decode name");
 
                 let (directory_source, sender) = watch_mapping.get_mut(&event.wd).unwrap();
@@ -72,7 +84,7 @@ pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>
 
                 let file_event = FileEvent {
                     source_name: directory_source.name.clone(),
-                    path: source_path.clone()
+                    path: source_path.clone(),
                 };
 
                 debug!("Sending FileEvent: {:?}", &file_event);
@@ -80,10 +92,10 @@ pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>
                 sender.try_send(file_event).unwrap();
 
                 Ok(())
-            }
-        ).map_err(|e| {
-            error!("{}", e);
-        });
+            })
+            .map_err(|e| {
+                error!("{}", e);
+            });
 
         runtime.spawn(stream);
 
@@ -92,6 +104,12 @@ pub fn start_directory_sources(directory_sources: Vec<settings::DirectorySource>
 
     (
         join_handle,
-        result_sources.into_iter().map(move |(name, receiver)| { Source { name: name, receiver: receiver } }).collect()
+        result_sources
+            .into_iter()
+            .map(move |(name, receiver)| Source {
+                name: name,
+                receiver: receiver,
+            })
+            .collect(),
     )
 }

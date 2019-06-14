@@ -11,12 +11,12 @@ mod cortex;
 mod directory_source;
 mod directory_target;
 mod event;
+mod http_server;
 mod metrics;
 mod metrics_collector;
+mod persistence;
 mod settings;
 mod sftp_source;
-mod http_server;
-mod persistence;
 
 use settings::Settings;
 
@@ -26,9 +26,9 @@ extern crate serde_derive;
 extern crate postgres;
 
 extern crate chrono;
-extern crate tee;
-extern crate sha2;
 extern crate serde_yaml;
+extern crate sha2;
+extern crate tee;
 
 #[macro_use]
 extern crate prometheus;
@@ -50,7 +50,10 @@ fn main() {
     env_logger_builder.init();
 
     if matches.is_present("sample_config") {
-        print!("{}\n", serde_yaml::to_string(&settings::Settings::default()).unwrap());
+        print!(
+            "{}\n",
+            serde_yaml::to_string(&settings::Settings::default()).unwrap()
+        );
         ::std::process::exit(0);
     }
 
@@ -62,13 +65,12 @@ fn main() {
 
     info!("Loading configuration");
 
-    let merge_result = settings
-        .merge(config::File::new(config_file, config::FileFormat::Yaml));
+    let merge_result = settings.merge(config::File::new(config_file, config::FileFormat::Yaml));
 
     match merge_result {
         Ok(_config) => {
             info!("Configuration loaded from file {}", config_file);
-        },
+        }
         Err(e) => {
             error!("Error merging configuration: {}", e);
             ::std::process::exit(1);

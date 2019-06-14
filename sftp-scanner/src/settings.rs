@@ -6,7 +6,7 @@ extern crate serde_regex;
 #[derive(Debug, Deserialize, Clone)]
 pub struct CommandQueue {
     pub address: std::net::SocketAddr,
-    pub queue_name: String
+    pub queue_name: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -17,23 +17,23 @@ pub struct SftpSource {
     #[serde(with = "serde_regex")]
     pub regex: Regex,
     pub directory: String,
-    pub scan_interval: u64
+    pub scan_interval: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct PrometheusPush {
     pub gateway: String,
-    pub interval: u64
+    pub interval: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Postgresql {
-    pub url: String
+    pub url: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct HttpServer {
-    pub address: std::net::SocketAddr
+    pub address: std::net::SocketAddr,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -42,5 +42,5 @@ pub struct Settings {
     pub sftp_sources: Vec<SftpSource>,
     pub prometheus_push: Option<PrometheusPush>,
     pub postgresql: Postgresql,
-    pub http_server: HttpServer
+    pub http_server: HttpServer,
 }
