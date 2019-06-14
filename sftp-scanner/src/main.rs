@@ -1,8 +1,8 @@
 use std::thread;
 use std::time::Duration;
 
-use crate::lapin::channel::{BasicProperties, BasicPublishOptions};
-use crate::lapin::client::ConnectionOptions;
+use crate::lapin::{BasicProperties, ConnectionProperties};
+use crate::lapin::options::BasicPublishOptions;
 use env_logger;
 use failure::Error;
 use futures::stream::Stream;
@@ -12,7 +12,6 @@ use lapin_futures as lapin;
 use log::{debug, error, info};
 use serde_json;
 use tokio;
-use tokio::net::TcpStream;
 
 extern crate config;
 
@@ -91,7 +90,7 @@ fn main() {
     let web_server_join_handle = http_server::start_http_server(settings.http_server.address);
 
     // Use a stream to connect the command channel to the AMQP queue.
-    let future = channel_to_amqp(cmd_receiver, settings.command_queue.address);
+    let future = channel_to_amqp(cmd_receiver, &settings.command_queue.address);
 
     tokio::run(future);
 
@@ -126,7 +125,7 @@ fn main() {
 /// Connects a channel receiver to an AMQP queue.
 fn channel_to_amqp(
     receiver: Receiver<SftpDownload>,
-    addr: std::net::SocketAddr,
+    addr: &str,
 ) -> impl Future<Item = (), Error = ()> + Send + 'static {
     connect_channel(&addr)
         .map(move |channel| {
@@ -166,19 +165,11 @@ fn channel_to_amqp(
 }
 
 fn connect_channel(
-    addr: &std::net::SocketAddr,
-) -> impl Future<Item = lapin::channel::Channel<TcpStream>, Error = Error> + Send + 'static {
-    TcpStream::connect(addr)
+    addr: &str,
+) -> impl Future<Item = lapin::Channel, Error = Error> + Send + 'static {
+    lapin::Client::connect(addr, ConnectionProperties::default())
         .map_err(Error::from)
-        .and_then(|stream| {
-            debug!("TcpStream connected");
-
-            lapin::client::Client::connect(stream, ConnectionOptions::default())
-                .map_err(Error::from)
-        })
-        .and_then(|(client, heartbeat)| {
-            tokio::spawn(heartbeat.map_err(|_e| ()));
-
+        .and_then(|client| {
             client.create_channel().map_err(Error::from)
         })
 }
