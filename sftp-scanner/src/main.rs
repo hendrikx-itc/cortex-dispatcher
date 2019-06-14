@@ -44,7 +44,7 @@ fn main() {
 
     let mut env_logger_builder = env_logger::builder();
 
-    // When run as a service using the service option, we expect the service manager to append
+    // When run as a service no timestamps are logged, we expect the service manager to append
     // timestamps to the logs.
     if matches.is_present("service") {
         env_logger_builder.default_format_timestamp(false);
@@ -61,6 +61,8 @@ fn main() {
     // Setup the channel that connects to the RabbitMQ queue for SFTP download commands.
     let (cmd_sender, cmd_receiver) = channel(4096);
 
+    // Start every configured scanner in it's own thread and have them send commands to the
+    // command channel.
     let scanner_threads: Vec<thread::JoinHandle<()>> = settings
         .sftp_sources
         .clone()
@@ -85,8 +87,10 @@ fn main() {
         None => Option::None,
     };
 
+    // Start the built in web server that currently only serves metrics.
     let web_server_join_handle = http_server::start_http_server(settings.http_server.address);
 
+    // Use a stream to connect the command channel to the AMQP queue.
     let future = channel_to_amqp(cmd_receiver, settings.command_queue.address);
 
     tokio::run(future);
