@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-extern crate inotify;
-
 extern crate failure;
 
 extern crate lapin_futures;

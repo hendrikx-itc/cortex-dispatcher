@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+#[cfg(target_os = "linux")]
 extern crate inotify;
 
 extern crate failure;
 use failure::Error;
 
 extern crate lapin_futures;
-use lapin_futures::{ConnectionProperties, Credentials};
+use lapin_futures::{ConnectionProperties};
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
@@ -22,7 +24,10 @@ use r2d2_postgres::PostgresConnectionManager;
 
 use crate::base_types::{Connection, RabbitMQNotify, Source, Target};
 use crate::base_types::{CortexConfig, Notify};
+
+#[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
+
 use crate::directory_target::to_stream;
 use crate::event::FileEvent;
 use crate::http_server::start_http_server;
@@ -42,7 +47,6 @@ fn connect_channel(
 ) -> impl Future<Item = lapin_futures::Channel, Error = Error> + Send + 'static {
     lapin_futures::Client::connect(
         addr,
-        Credentials::default(),
         ConnectionProperties::default(),
     )
     .map_err(Error::from)
@@ -108,6 +112,7 @@ pub fn run(settings: settings::Settings) {
         info!("Prometheus metrics push collector configured");
     };
 
+    #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, mut directory_sources) =
         start_directory_sources(settings.directory_sources.clone());
 
@@ -154,6 +159,7 @@ pub fn run(settings: settings::Settings) {
 
     runtime.spawn(connect_future);
 
+    #[cfg(target_os = "linux")]
     sources.append(&mut directory_sources);
 
     let local_event_dispatchers = sources.into_iter().map(|source| {
@@ -210,6 +216,7 @@ pub fn run(settings: settings::Settings) {
 
     info!("Tokio runtime shutdown");
 
+    #[cfg(target_os = "linux")]
     wait_for(directory_sources_join_handle, "directory sources");
 
     wait_for(web_server_join_handle, "http server");
@@ -257,7 +264,6 @@ where
 
     let stream = lapin_futures::Client::connect(
         &rabbitmq_address,
-        Credentials::default(),
         ConnectionProperties::default(),
     )
     .map_err(failure::Error::from)
