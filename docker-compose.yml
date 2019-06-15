@@ -8,13 +8,13 @@ services:
   rabbitmq:
     build: dev-stack/rabbitmq
     ports:
-      - 5672:5672
-      - 15672:15672
+      - 127.0.0.1:5672:5672
+      - 127.0.0.1:15672:15672
 
   sftp:
     image: atmoz/sftp
     ports:
-      - "2222:22"
+      - "127.0.0.1:2222:22"
     command: cortex:password:::upload
     volumes:
       - home:/home/cortex
@@ -22,14 +22,14 @@ services:
   prometheus:
     image: prom/prometheus
     ports:
-      - 9090:9090
+      - 127.0.0.1:9090:9090
     volumes:
       - ./dev-stack/prometheus.yml:/etc/prometheus/prometheus.yml
 
   grafana:
     image: grafana/grafana
     ports:
-      - 3000:3000
+      - 127.0.0.1:3000:3000
     volumes:
       - grafana_data:/var/lib/grafana
       - ./dev-stack/grafana/provisioning/:/etc/grafana/provisioning/
@@ -38,7 +38,7 @@ services:
     image: timescale/pg_prometheus:latest
     command: ["postgres", "-csynchronous_commit=off"]
     ports:
-      - 5432:5432
+      - 127.0.0.1:5432:5432
     volumes:
       - ./dev-stack/pg_prometheus/docker-entrypoint-initdb.d/004-init-cortex-db.sh:/docker-entrypoint-initdb.d/004-init-cortex-db.sh
       - ./dispatcher/schema.sql:/dispatcher.sql
