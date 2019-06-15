@@ -5,16 +5,18 @@ command_queue:
 
 sftp_sources:
   - name: local-red
-    address: 127.0.0.1:22
+    address: 127.0.0.1:2222
     username: cortex 
+    password: password
     regex: "^.*\\.xml$"
-    directory: red
+    directory: upload/red
     scan_interval: 3000
   - name: local-blue
-    address: 127.0.0.1:22
+    address: 127.0.0.1:2222
     username: cortex 
+    password: password
     regex: "^.*\\.xml$"
-    directory: blue
+    directory: upload/blue
     scan_interval: 2000
 
 postgresql:
