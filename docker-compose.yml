@@ -10,6 +10,12 @@ services:
       - 5672:5672
       - 15672:15672
 
+  sftp:
+    image: atmoz/sftp
+    ports:
+      - "2222:22"
+    command: cortex:password:::upload
+
   prometheus:
     image: prom/prometheus
     ports:

@@ -73,10 +73,12 @@ pub fn run(settings: settings::Settings) {
                     let exchange = notify_conf.exchange.clone();
                     let routing_key = notify_conf.routing_key.clone();
 
+                    let address = notify_conf.address.clone();
+
                     Box::new(
                         amqp_channel
-                            .map_err(|e| {
-                                error!("Error connecting channel: {}", e);
+                            .map_err(move |e| {
+                                error!("Error connecting to AMQP channel {}: {}", address, e);
                             })
                             .and_then(|channel| {
                                 let notify = RabbitMQNotify {

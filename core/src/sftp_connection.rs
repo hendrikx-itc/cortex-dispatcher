@@ -33,7 +33,7 @@ impl std::error::Error for SftpError {
 }
 
 impl SftpConnection {
-    pub fn new(address: &str, username: &str, compress: bool) -> Result<SftpConnection, SftpError> {
+    pub fn new(address: &str, username: &str, password: Option<String>, compress: bool) -> Result<SftpConnection, SftpError> {
         let tcp_connect_result = TcpStream::connect(address);
 
         let tcp = match tcp_connect_result {
@@ -50,8 +50,10 @@ impl SftpConnection {
             Err(e) => return Err(SftpError::new(e.to_string()))
         }
 
-        let auth_result = session
-            .userauth_agent(username);
+        let auth_result = match password {
+            Some(pw) => session.userauth_password(username, &pw),
+            None => session.userauth_agent(username)
+        };
 
         info!("authorizing using ssh agent");
 

@@ -81,6 +81,7 @@ pub struct SftpSource {
     pub name: String,
     pub address: String,
     pub username: String,
+    pub password: Option<String>,
     #[serde(default = "default_thread_count")]
     pub thread_count: usize,
     #[serde(default = "default_compress")]
@@ -165,6 +166,7 @@ impl Default for Settings {
                     name: "red".to_string(),
                     address: "127.0.0.1:22".parse().unwrap(),
                     username: "cortex".to_string(),
+                    password: Some("password".to_string()),
                     compress: false,
                     thread_count: 4,
                 },
@@ -172,6 +174,7 @@ impl Default for Settings {
                     name: "blue".to_string(),
                     address: "127.0.0.1:22".parse().unwrap(),
                     username: "cortex".to_string(),
+                    password: Some("password".to_string()),
                     compress: false,
                     thread_count: 4,
                 },

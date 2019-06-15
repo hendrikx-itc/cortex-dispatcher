@@ -1,6 +1,6 @@
 # Some comment
 command_queue:
-  address: "127.0.0.1:5672"
+  address: "amqp://127.0.0.1:5672"
   queue_name: cortex-dispatcher 
 
 sftp_sources:

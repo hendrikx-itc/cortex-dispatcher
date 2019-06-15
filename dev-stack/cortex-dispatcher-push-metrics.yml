@@ -2,7 +2,7 @@ storage:
   directory: /cortex/storage
 
 command_queue:
-  address: "127.0.0.1:5672"
+  address: "amqp://127.0.0.1:5672"
 
 directory_sources:
   - name: mixed-directory

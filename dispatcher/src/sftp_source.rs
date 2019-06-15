@@ -57,6 +57,7 @@ where
                 let conn_result = SftpConnection::new(
                     &config.address.clone(),
                     &config.username.clone(),
+                    config.password.clone(),
                     config.compress,
                 );
 
