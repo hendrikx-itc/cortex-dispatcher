@@ -14,6 +14,7 @@ pub struct SftpSource {
     pub name: String,
     pub address: String,
     pub username: String,
+    pub password: Option<String>,
     #[serde(with = "serde_regex")]
     pub regex: Regex,
     pub directory: String,

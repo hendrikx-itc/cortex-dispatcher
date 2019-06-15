@@ -44,6 +44,7 @@ pub fn start_scanner(
             let conn_result = SftpConnection::new(
                 &sftp_source.address.clone(),
                 &sftp_source.username.clone(),
+                sftp_source.password.clone(),
                 false,
             );
 
