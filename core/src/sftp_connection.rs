@@ -8,7 +8,7 @@ use owning_ref::OwningHandle;
 use log::{info, debug};
 
 pub struct SftpConnection {
-    tcp: TcpStream,
+    _tcp: TcpStream,
     pub sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>,
 }
 
@@ -66,6 +66,6 @@ impl SftpConnection {
         let sftp =
             OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
-        Ok(SftpConnection {tcp, sftp})
+        Ok(SftpConnection {_tcp: tcp, sftp})
     }
 }

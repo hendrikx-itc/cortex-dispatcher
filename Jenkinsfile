@@ -5,10 +5,12 @@ pipeline {
             args "-e CARGO_HOME=$WORKSPACE"
         }
     }
-    stage ('build') {
-        steps {
-            dir 'dispatcher' {
-                sh 'cargo deb'
+    stages {
+        stage ('build') {
+            steps {
+                dir 'dispatcher' {
+                    sh 'cargo deb'
+                }
             }
         }
     }
