@@ -14,7 +14,9 @@ RUN apt-get update && apt-get install -y \
 # OpenSSL development files
     libssl-dev \
 # For finding the OpenSSL development files
-    pkg-config
+    pkg-config \
+# For publishing resulting packages
+    curl
 
 RUN set -eux; \
     dpkgArch="$(dpkg --print-architecture)"; \
