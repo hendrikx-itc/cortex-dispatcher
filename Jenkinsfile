@@ -8,7 +8,7 @@ pipeline {
         stage ('build') {
             steps {
                 dir('dispatcher') {
-                    sh 'cargo deb'
+                    sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
                 
                 withCredentials([usernamePassword(credentialsId: 'jenkins-nexus', passwordVariable: 'pass', usernameVariable: 'user')]) {
@@ -16,7 +16,7 @@ pipeline {
                 }
 
                 dir('sftp-scanner') {
-                    sh 'cargo deb'
+                    sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
                 
                 withCredentials([usernamePassword(credentialsId: 'jenkins-nexus', passwordVariable: 'pass', usernameVariable: 'user')]) {
