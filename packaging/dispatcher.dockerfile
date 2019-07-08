@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
 # For finding the OpenSSL development files
     pkg-config \
 # For publishing resulting packages
-    curl
+    openssh-client
 
 RUN set -eux; \
     dpkgArch="$(dpkg --print-architecture)"; \

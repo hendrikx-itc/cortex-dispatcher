@@ -11,16 +11,16 @@ pipeline {
                     sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
                 
-                withCredentials([usernamePassword(credentialsId: 'jenkins-nexus', passwordVariable: 'pass', usernameVariable: 'user')]) {
-                    sh "curl -u '${user}:${pass}' -X POST -H 'Content-Type: multipart/form-data' --data-binary '@target/debian/cortex-dispatcher_0.1.2_amd64.deb' https://nexus.hendrikx-itc.nl/repository/hitc/"
+                sshagent (credentials: ['jenkins-node']) {
+                    publishPackages 'target/debian', 'common/stable', 'xenial'
                 }
 
                 dir('sftp-scanner') {
                     sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
                 
-                withCredentials([usernamePassword(credentialsId: 'jenkins-nexus', passwordVariable: 'pass', usernameVariable: 'user')]) {
-                    sh "curl -u '${user}:${pass}' -X POST -H 'Content-Type: multipart/form-data' --data-binary '@target/debian/cortex-sftp-scanner_0.1.2_amd64.deb' https://nexus.hendrikx-itc.nl/repository/hitc/"
+                sshagent (credentials: ['jenkins-node']) {
+                    publishPackages 'target/debian', 'common/stable', 'xenial'
                 }
             }
         }
