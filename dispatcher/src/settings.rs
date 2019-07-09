@@ -84,8 +84,10 @@ pub struct SftpSource {
     pub password: Option<String>,
     #[serde(default = "default_thread_count")]
     pub thread_count: usize,
-    #[serde(default = "default_compress")]
+    #[serde(default = "default_false")]
     pub compress: bool,
+    #[serde(default = "default_false")]
+    pub remove: bool
 }
 
 /// Default Sftp downloader thread count
@@ -93,8 +95,7 @@ fn default_thread_count() -> usize {
     1
 }
 
-/// Default Sftp compression setting
-fn default_compress() -> bool {
+fn default_false() -> bool {
     false
 }
 
@@ -145,7 +146,7 @@ impl Default for Settings {
                 directory: PathBuf::from("/cortex/storage"),
             },
             command_queue: CommandQueue {
-                address: "127.0.0.1:5672".parse().unwrap(),
+                address: "127.0.0.1:5672".parse().unwrap()
             },
             directory_sources: vec![DirectorySource {
                 name: "mixed-directory".to_string(),
@@ -168,6 +169,7 @@ impl Default for Settings {
                     username: "cortex".to_string(),
                     password: Some("password".to_string()),
                     compress: false,
+                    remove: true,
                     thread_count: 4,
                 },
                 SftpSource {
@@ -176,6 +178,7 @@ impl Default for Settings {
                     username: "cortex".to_string(),
                     password: Some("password".to_string()),
                     compress: false,
+                    remove: true,
                     thread_count: 4,
                 },
             ],

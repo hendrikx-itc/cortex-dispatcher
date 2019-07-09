@@ -26,6 +26,7 @@ extern crate lazy_static;
 
 extern crate chrono;
 extern crate postgres;
+extern crate serde_yaml;
 
 extern crate cortex_core;
 use cortex_core::SftpDownload;
@@ -50,6 +51,14 @@ fn main() {
     }
 
     env_logger_builder.init();
+
+    if matches.is_present("sample_config") {
+        print!(
+            "{}\n",
+            serde_yaml::to_string(&settings::Settings::default()).unwrap()
+        );
+        ::std::process::exit(0);
+    }
 
     let config_file = matches
         .value_of("config")

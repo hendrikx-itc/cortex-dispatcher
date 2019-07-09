@@ -14,6 +14,11 @@ pub fn app() -> App<'static, 'static> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("sample_config")
+                .long("sample-config")
+                .help("Show example configuration file"),
+        )
+        .arg(
             Arg::with_name("service")
                 .long("service")
                 .help("Run in service mode"),
