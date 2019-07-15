@@ -89,7 +89,7 @@ fn scan_source(sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn:
 }
 
 fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
-    info!("Directory scan started for {}", &directory.to_str().unwrap());
+    debug!("Directory scan started for {}", &directory.to_str().unwrap());
 
     let read_result = sftp_connection
         .sftp
