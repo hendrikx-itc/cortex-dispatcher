@@ -1,6 +1,6 @@
 # Some comment
 command_queue:
-  address: "amqp://127.0.0.1:5672"
+  address: "amqp://127.0.0.1:5672/%2f"
   queue_name: cortex-dispatcher 
 
 sftp_sources:
@@ -24,3 +24,4 @@ postgresql:
 
 http_server:
   address: "0.0.0.0:56009"
+  static_content_path: static-web

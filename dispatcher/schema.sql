@@ -12,6 +12,7 @@ CREATE TABLE dispatcher.sftp_download (
     remote text not null,
     path text not null,
     size bigint not null,
-    hash text not null,
-    UNIQUE (remote, path)
+    hash text not null
 );
+
+CREATE INDEX ON dispatcher.sftp_download (remote, path);

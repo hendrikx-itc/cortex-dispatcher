@@ -2,7 +2,7 @@ storage:
   directory: /cortex/storage
 
 command_queue:
-  address: "amqp://127.0.0.1:5672"
+  address: "amqp://127.0.0.1:5672/%2f"
 
 directory_sources:
   - name: mixed-directory
@@ -18,7 +18,7 @@ directory_targets:
     notify:
       rabbitmq:
         message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
-        address: "amqp://127.0.0.1:5672"
+        address: "amqp://127.0.0.1:5672/%2f"
         exchange: "amq.direct"
         routing_key: "processing-node"
 
@@ -28,11 +28,13 @@ sftp_sources:
     username: cortex
     password: password
     thread_count: 4
+    remove: true
   - name: local-blue
     address: 127.0.0.1:2222
     username: cortex
     password: password
     thread_count: 2
+    remove: true
 
 connections:
   - source: mixed-directory

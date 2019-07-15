@@ -1,5 +1,5 @@
 use std::convert::TryFrom;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{thread, time};
 
 use futures::sync::mpsc::Sender;
@@ -60,7 +60,7 @@ pub fn start_scanner(
             let scan_start = time::Instant::now();
             debug!("Started scanning {}", &sftp_source.name);
 
-            scan_directory(&sftp_source, &sftp_connection, &conn, &mut sender);
+            scan_source(&sftp_source, &sftp_connection, &conn, &mut sender);
 
             let scan_end = time::Instant::now();
 
@@ -84,15 +84,21 @@ pub fn start_scanner(
     })
 }
 
-fn scan_directory(sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
+fn scan_source(sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
+    scan_directory(sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender);
+}
+
+fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
+    info!("Directory scan started for {}", &directory.to_str().unwrap());
+
     let read_result = sftp_connection
         .sftp
-        .readdir(Path::new(&sftp_source.directory));
+        .readdir(directory);
 
     let paths = match read_result {
         Ok(paths) => paths,
         Err(e) => {
-            error!("Could not read directory {}: {}", &sftp_source.directory, e);
+            error!("Could not read directory {}: {}", &directory.to_str().unwrap(), e);
             return;
         }
     };
@@ -100,67 +106,78 @@ fn scan_directory(sftp_source: &SftpSource, sftp_connection: &SftpConnection, co
     for (path, stat) in paths {
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
-        let file_size: u64 = stat.size.unwrap();
+        if stat.is_dir() {
+            let mut dir = PathBuf::from(&sftp_source.directory);
+            dir.push(&file_name);
+            scan_directory(sftp_source, &dir, sftp_connection, conn, sender);
+        } else {
+            let file_size: u64 = stat.size.unwrap();
 
-        let cast_result = i64::try_from(file_size);
+            let cast_result = i64::try_from(file_size);
 
-        let file_size_db: i64 = match cast_result {
-            Ok(size) => size,
-            Err(e) => {
-                error!("Could not convert file size to type that can be stored in database: {}", e);
-                return;
-            }
-        };
+            let file_size_db: i64 = match cast_result {
+                Ok(size) => size,
+                Err(e) => {
+                    error!("Could not convert file size to type that can be stored in database: {}", e);
+                    return;
+                }
+            };
 
-        let path_str = path.to_str().unwrap().to_string();
+            let path_str = path.to_str().unwrap().to_string();
 
-        if sftp_source.regex.is_match(file_name) {
-            debug!(" - {} - matches!", path_str);
+            if sftp_source.regex.is_match(file_name) {
+                debug!(" - {} - matches!", path_str);
 
-            let file_requires_download =
-                if sftp_source.deduplicate {
-                    let query_result = conn.query(
-                        "select 1 from sftp_scanner.scan where remote = $1 and path = $2 and size = $3",
-                        &[&sftp_source.name, &path_str, &file_size_db]
-                    );
+                let file_requires_download =
+                    if sftp_source.deduplicate {
+                        let query_result = conn.query(
+                            "select 1 from sftp_scanner.scan where remote = $1 and path = $2 and size = $3",
+                            &[&sftp_source.name, &path_str, &file_size_db]
+                        );
 
-                    match query_result {
-                        Ok(rows) => rows.is_empty(),
-                        Err(e) => {
-                            error!("Error querying database: {}", e);
-                            false
+                        match query_result {
+                            Ok(rows) => {
+                                if rows.is_empty() {
+                                                        
+                                    let execute_result = conn.execute(
+                                        "insert into sftp_scanner.scan (remote, path, size) values ($1, $2, $3)",
+                                        &[&sftp_source.name, &path_str, &file_size_db]
+                                    );
+
+                                    match execute_result {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            error!("Error inserting record: {}", e);
+                                        }
+                                    };
+                                }
+
+                                rows.is_empty()
+                            },
+                            Err(e) => {
+                                error!("Error querying database: {}", e);
+                                false
+                            }
                         }
-                    }
+                    } else {
+                        true
+                    };
+
+                if file_requires_download {
+                    let command = SftpDownload {
+                        created: Utc::now(),
+                        size: stat.size,
+                        sftp_source: sftp_source.name.clone(),
+                        path: path_str.clone(),
+                    };
+
+                    sender.try_send(command).unwrap();
                 } else {
-                    true
-                };
-
-            if file_requires_download {
-                let command = SftpDownload {
-                    created: Utc::now(),
-                    size: stat.size,
-                    sftp_source: sftp_source.name.clone(),
-                    path: path_str.clone(),
-                };
-
-                sender.try_send(command).unwrap();
-
-                let execute_result = conn.execute(
-                    "insert into sftp_scanner.scan (remote, path, size) values ($1, $2, $3)",
-                    &[&sftp_source.name, &path_str, &file_size_db]
-                );
-
-                match execute_result {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Error inserting record: {}", e);
-                    }
+                    debug!("{} already encountered {}", sftp_source.name, path_str);
                 }
             } else {
-                debug!("{} already encountered {}", sftp_source.name, path_str);
+                debug!(" - {} - no match", path_str);
             }
-        } else {
-            debug!(" - {} - no match", path_str);
         }
     }
 }
