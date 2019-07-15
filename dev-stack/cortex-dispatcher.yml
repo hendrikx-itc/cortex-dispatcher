@@ -28,13 +28,11 @@ sftp_sources:
     username: cortex
     password: password
     thread_count: 4
-    remove: true
   - name: local-blue
     address: 127.0.0.1:2222
     username: cortex
     password: password
     thread_count: 2
-    remove: true
 
 connections:
   - source: mixed-directory

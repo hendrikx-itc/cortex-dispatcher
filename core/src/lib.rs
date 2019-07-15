@@ -19,7 +19,8 @@ pub struct SftpDownload {
     pub created: DateTime<Utc>,
     pub size: Option<u64>,
     pub sftp_source: String,
-    pub path: String
+    pub path: String,
+    pub remove: bool
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]

@@ -21,6 +21,8 @@ pub struct SftpSource {
     pub directory: String,
     #[serde(default = "default_false")]
     pub deduplicate: bool,
+    #[serde(default = "default_false")]
+    pub remove: bool,
     pub scan_interval: u64,
 }
 
@@ -71,6 +73,7 @@ impl Default for Settings {
                     regex: Regex::new("^.*\\.xml$").unwrap(),
                     directory: "upload/red".to_string(),
                     deduplicate: false,
+		    remove: true,
                     scan_interval: 3000
                 },
                 SftpSource {
@@ -81,6 +84,7 @@ impl Default for Settings {
                     regex: Regex::new("^.*\\.xml$").unwrap(),
                     directory: "upload/blue".to_string(),
                     deduplicate: false,
+		    remove: true,
                     scan_interval: 2000
                 },
             ],

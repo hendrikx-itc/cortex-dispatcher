@@ -169,6 +169,7 @@ fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &
                         size: stat.size,
                         sftp_source: sftp_source.name.clone(),
                         path: path_str.clone(),
+			remove: sftp_source.remove
                     };
 
                     sender.try_send(command).unwrap();

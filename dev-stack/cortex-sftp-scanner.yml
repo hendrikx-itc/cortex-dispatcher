@@ -11,6 +11,7 @@ sftp_sources:
     regex: "^.*\\.xml$"
     directory: upload/red
     scan_interval: 3000
+    remove: true
   - name: local-blue
     address: 127.0.0.1:2222
     username: cortex 
@@ -18,6 +19,7 @@ sftp_sources:
     regex: "^.*\\.xml$"
     directory: upload/blue
     scan_interval: 2000
+    remove: true
 
 postgresql:
   url: "postgresql://postgres:password@127.0.0.1:5432/cortex"

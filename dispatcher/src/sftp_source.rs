@@ -301,7 +301,7 @@ where
                     .with_label_values(&[&self.sftp_source.name])
                     .inc_by(bytes_copied as i64);
 
-                if self.sftp_source.remove {
+                if msg.remove {
                     let unlink_result = self.sftp_connection.sftp.unlink(&remote_path);
 
                     match unlink_result {

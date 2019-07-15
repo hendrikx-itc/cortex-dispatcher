@@ -86,8 +86,6 @@ pub struct SftpSource {
     pub thread_count: usize,
     #[serde(default = "default_false")]
     pub compress: bool,
-    #[serde(default = "default_false")]
-    pub remove: bool
 }
 
 /// Default Sftp downloader thread count
@@ -169,7 +167,6 @@ impl Default for Settings {
                     username: "cortex".to_string(),
                     password: Some("password".to_string()),
                     compress: false,
-                    remove: true,
                     thread_count: 4,
                 },
                 SftpSource {
@@ -178,7 +175,6 @@ impl Default for Settings {
                     username: "cortex".to_string(),
                     password: Some("password".to_string()),
                     compress: false,
-                    remove: true,
                     thread_count: 4,
                 },
             ],
