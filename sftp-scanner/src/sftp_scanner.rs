@@ -45,6 +45,7 @@ pub fn start_scanner(
                 &sftp_source.address.clone(),
                 &sftp_source.username.clone(),
                 sftp_source.password.clone(),
+                sftp_source.key_file.clone(),
                 false,
             );
 
