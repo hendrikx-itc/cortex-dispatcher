@@ -58,6 +58,7 @@ where
                     &config.address.clone(),
                     &config.username.clone(),
                     config.password.clone(),
+                    config.key_file.clone(),
                     config.compress,
                 );
 
