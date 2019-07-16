@@ -1,6 +1,6 @@
 [package]
 name = "cortex-dispatcher"
-version = "0.1.4.1"
+version = "0.1.5"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
 description = """
