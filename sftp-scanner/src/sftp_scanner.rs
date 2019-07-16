@@ -108,7 +108,7 @@ fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
         if stat.is_dir() {
-            let mut dir = PathBuf::from(&sftp_source.directory);
+            let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
             scan_directory(sftp_source, &dir, sftp_connection, conn, sender);
         } else {
