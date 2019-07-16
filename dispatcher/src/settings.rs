@@ -128,13 +128,23 @@ pub struct HttpServer {
 pub struct Settings {
     pub storage: Storage,
     pub command_queue: CommandQueue,
+    #[serde(default = "default_directory_sources")]
     pub directory_sources: Vec<DirectorySource>,
+    #[serde(default = "default_directory_targets")]
     pub directory_targets: Vec<DirectoryTarget>,
     pub sftp_sources: Vec<SftpSource>,
     pub connections: Vec<Connection>,
     pub prometheus_push: Option<PrometheusPush>,
     pub postgresql: Postgresql,
     pub http_server: HttpServer,
+}
+
+fn default_directory_sources() -> Vec<DirectorySource> {
+    vec![]
+}
+
+fn default_directory_targets() -> Vec<DirectoryTarget> {
+    vec![]
 }
 
 impl Default for Settings {
