@@ -12,6 +12,11 @@ documentation = "https://cortex-dispatcher.readthedocs.io/en/latest/"
 homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
+[package.metadata.deb]
+assets = [
+    ["static-web/*", "/usr/lib/cortex-dispatcher/static-web/", "644"]
+]
+
 [dependencies]
 log = "0.4"
 env_logger = "0.6.2"
