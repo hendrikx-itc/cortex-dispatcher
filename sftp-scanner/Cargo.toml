@@ -31,5 +31,5 @@ prometheus = { version = "0.7.0", features = ["push"] }
 lazy_static = "1.3"
 postgres = "0.15.2"
 cortex-core = { path = "../core" }
-actix-web = "1.0.3"
-actix-rt = "0.2.3"
+actix-web = "1.0.4"
+actix-rt = "0.2.4"
