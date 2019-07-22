@@ -6,7 +6,7 @@ use ssh2::{Session, Sftp};
 
 use owning_ref::OwningHandle;
 
-use log::{info, debug, error};
+use log::{info, debug};
 
 pub struct SftpConnection {
     _tcp: TcpStream,
