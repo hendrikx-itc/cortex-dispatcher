@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::sync::atomic::{AtomicBool};
 
 #[cfg(target_os = "linux")]
 extern crate inotify;
@@ -14,16 +15,19 @@ use lapin_futures::{ConnectionProperties};
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
 use tokio_executor::enter;
 
 use futures::future::Future;
+use futures::sink::Sink;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
 
-use crate::base_types::{Connection, RabbitMQNotify, Source, Target};
-use crate::base_types::{CortexConfig, Notify};
+use signal_hook;
+use signal_hook::iterator::Signals;
+
+use crate::base_types::{Connection, RabbitMQNotify, Source, Target, CortexConfig, Notify, ControlCommand};
 
 #[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
@@ -54,6 +58,10 @@ fn connect_channel(
 }
 
 pub fn run(settings: settings::Settings) {
+    let term = Arc::new(AtomicBool::new(false));
+
+    signal_hook::flag::register(signal_hook::SIGTERM, Arc::clone(&term)).unwrap();
+
     let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -137,7 +145,7 @@ pub fn run(settings: settings::Settings) {
 
     let persistence = PostgresPersistence::new(connection_manager);
 
-    let mut source_sender_pairs: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)> =
+    let mut source_sender_pairs: Vec<(UnboundedReceiver<ControlCommand>, settings::SftpSource, UnboundedSender<FileEvent>)> =
         Vec::new();
 
     let mut sources = Vec::new();
@@ -145,8 +153,11 @@ pub fn run(settings: settings::Settings) {
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
 
-        source_sender_pairs.push((sftp_source.clone(), sender));
+        let (command_sender, command_receiver) = unbounded_channel::<ControlCommand>();
+
+        source_sender_pairs.push((command_receiver, sftp_source.clone(), sender));
         sources.push(Source {
+            command_sender: command_sender,
             name: sftp_source.name.clone(),
             receiver: receiver,
         });
@@ -212,6 +223,29 @@ pub fn run(settings: settings::Settings) {
         cortex_config,
     );
 
+    let signals = Signals::new(&[
+        signal_hook::SIGHUP,
+        signal_hook::SIGTERM,
+        signal_hook::SIGINT,
+        signal_hook::SIGQUIT,
+    ]).unwrap();
+
+    let signal_stream = signals.into_async().unwrap().into_future();
+
+    let source_command_senders: Vec<UnboundedSender<ControlCommand>> = sources.iter().map(|source| source.command_sender ).collect();
+
+    runtime.spawn(
+        signal_stream
+            .map(|sig| {
+                info!("signal: {}", sig.0.unwrap())
+
+                for sender in source_command_senders {
+                    sender.send(ControlCommand::ShutDown);
+                }
+            })
+            .map_err(|e| panic!("{}", e.0))
+    );
+
     entered
         .block_on(runtime.shutdown_on_idle())
         .expect("Shutdown cannot error");
@@ -248,7 +282,7 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
 /// downloaders that consume commands from it.
 fn connect_sftp_downloaders<T>(
     rabbitmq_address: &str,
-    sftp_sources: Vec<(settings::SftpSource, UnboundedSender<FileEvent>)>,
+    sftp_sources: Vec<(UnboundedReceiver<ControlCommand>, settings::SftpSource, UnboundedSender<FileEvent>)>,
     storage_directory: std::path::PathBuf,
     persistence: T,
 ) -> (
@@ -270,10 +304,11 @@ where
     )
     .map_err(failure::Error::from)
     .and_then(move |client| {
-        for (sftp_source, sender) in sftp_sources {
+        for (command_receiver, sftp_source, sender) in sftp_sources {
             let mut jhs = join_handles.lock().unwrap();
 
             jhs.push(SftpDownloader::start(
+                command_receiver,
                 client.clone(),
                 sftp_source.clone(),
                 sender,

@@ -6,7 +6,7 @@ use ssh2::{Session, Sftp};
 
 use owning_ref::OwningHandle;
 
-use log::{info, debug};
+use log::{info, debug, error};
 
 pub struct SftpConnection {
     _tcp: TcpStream,
@@ -52,7 +52,10 @@ impl SftpConnection {
         }
 
         let auth_result = match key_file {
-            Some(key_file_path) => session.userauth_pubkey_file(username, None, &key_file_path, None),
+            Some(key_file_path) => {
+                debug!("key file: {}", &key_file_path.to_str().unwrap());
+                session.userauth_pubkey_file(username, None, key_file_path.as_path(), None)
+            },
             None => match password {
                 Some(pw) => session.userauth_password(username, &pw),
                 None => session.userauth_agent(username)

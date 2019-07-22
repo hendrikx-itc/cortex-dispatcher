@@ -13,12 +13,13 @@ use lapin_futures::types::FieldTable;
 
 use tokio::prelude::*;
 use tokio::runtime::current_thread::Runtime;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 
 use crate::event::FileEvent;
 use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
+use crate::base_types;
 
 use cortex_core::sftp_connection::SftpConnection;
 use cortex_core::SftpDownload;
@@ -46,6 +47,7 @@ where
     T: 'static,
 {
     pub fn start(
+        receiver: UnboundedReceiver<base_types::ControlCommand>,
         amqp_client: lapin_futures::Client,
         config: settings::SftpSource,
         mut sender: UnboundedSender<FileEvent>,

@@ -52,6 +52,7 @@ actix-http = "0.2.5"
 r2d2 = "0.8"
 r2d2_postgres = "0.15.0-rc.1"
 tera = "0.11"
+signal-hook = { version = "0.1.10", features = ["tokio-support"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = "0.7"

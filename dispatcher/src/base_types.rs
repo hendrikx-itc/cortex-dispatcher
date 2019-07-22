@@ -70,6 +70,7 @@ impl Notify for RabbitMQNotify {
 
 #[derive(Debug)]
 pub struct Source {
+    pub command_sender: UnboundedSender<ControlCommand>,
     pub name: String,
     pub receiver: UnboundedReceiver<FileEvent>,
 }
@@ -92,4 +93,9 @@ pub struct CortexConfig {
     pub sftp_sources: std::sync::Arc<Mutex<Vec<settings::SftpSource>>>,
     pub directory_targets: std::sync::Arc<Mutex<Vec<settings::DirectoryTarget>>>,
     pub connections: std::sync::Arc<Mutex<Vec<settings::Connection>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ControlCommand {
+    ShutDown
 }

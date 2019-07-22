@@ -13,7 +13,7 @@ use futures::stream::Stream;
 extern crate failure;
 extern crate lapin_futures;
 
-use crate::base_types::Source;
+use crate::base_types::{Source, ControlCommand};
 use crate::event::FileEvent;
 use crate::settings;
 
@@ -36,13 +36,14 @@ pub fn start_directory_sources(
         inotify::WatchDescriptor,
         (settings::DirectorySource, UnboundedSender<FileEvent>),
     > = HashMap::new();
-    let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
+    let mut result_sources: Vec<(UnboundedSender<ControlCommand>, String, UnboundedReceiver<FileEvent>)> = Vec::new();
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
         let (sender, receiver) = unbounded_channel();
+        let (command_sender, command_receiver) = unbounded_channel::<ControlCommand>();
 
-        result_sources.push((directory_source.name.clone(), receiver));
+        result_sources.push((command_sender, directory_source.name.clone(), receiver));
 
         let watch_result = inotify.add_watch(
             Path::new(&directory_source.directory),
@@ -107,7 +108,8 @@ pub fn start_directory_sources(
         join_handle,
         result_sources
             .into_iter()
-            .map(move |(name, receiver)| Source {
+            .map(move |(command_sender, name, receiver)| Source {
+                command_sender: command_sender,
                 name: name,
                 receiver: receiver,
             })
