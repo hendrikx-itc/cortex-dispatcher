@@ -70,7 +70,6 @@ impl Notify for RabbitMQNotify {
 
 #[derive(Debug)]
 pub struct Source {
-    pub command_sender: UnboundedSender<ControlCommand>,
     pub name: String,
     pub receiver: UnboundedReceiver<FileEvent>,
 }

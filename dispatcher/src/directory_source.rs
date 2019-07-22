@@ -19,6 +19,8 @@ use crate::settings;
 
 use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
+
 
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
@@ -36,14 +38,14 @@ pub fn start_directory_sources(
         inotify::WatchDescriptor,
         (settings::DirectorySource, UnboundedSender<FileEvent>),
     > = HashMap::new();
-    let mut result_sources: Vec<(UnboundedSender<ControlCommand>, String, UnboundedReceiver<FileEvent>)> = Vec::new();
+    let mut result_sources: Vec<(oneshot::Sender<ControlCommand>, String, UnboundedReceiver<FileEvent>)> = Vec::new();
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
         let (sender, receiver) = unbounded_channel();
-        let (command_sender, command_receiver) = unbounded_channel::<ControlCommand>();
+        let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
-        result_sources.push((command_sender, directory_source.name.clone(), receiver));
+        result_sources.push((stop_sender, directory_source.name.clone(), receiver));
 
         let watch_result = inotify.add_watch(
             Path::new(&directory_source.directory),
@@ -68,7 +70,24 @@ pub fn start_directory_sources(
         };
     });
 
-    let join_handle = thread::spawn(move || {
+    (
+        join_handle,
+        result_sources
+            .into_iter()
+            .map(move |(command_sender, name, receiver)| Source {
+                command_sender: command_sender,
+                name: name,
+                receiver: receiver,
+            })
+            .collect(),
+    )
+}
+
+fn start_inotify_event_thread(inotify: Inotify, watch_mapping: HashMap<
+        inotify::WatchDescriptor,
+        (settings::DirectorySource, UnboundedSender<FileEvent>)
+    >) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
         let mut runtime = Runtime::new().unwrap();
 
         let buffer: Vec<u8> = vec![0; 1024];
@@ -99,20 +118,12 @@ pub fn start_directory_sources(
                 error!("{}", e);
             });
 
-        runtime.spawn(stream);
+        let stoppable_stream = stream.into_future().select2(receiver.into_future());
+
+        runtime.spawn(stoppable_stream.map(|_result| debug!("End inotify stream")).map_err(|_e| error!("Error: ")));
 
         runtime.run().unwrap();
-    });
 
-    (
-        join_handle,
-        result_sources
-            .into_iter()
-            .map(move |(command_sender, name, receiver)| Source {
-                command_sender: command_sender,
-                name: name,
-                receiver: receiver,
-            })
-            .collect(),
-    )
+        debug!("Inotify source stream ended")
+    })
 }

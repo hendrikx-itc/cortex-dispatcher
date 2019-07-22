@@ -13,7 +13,8 @@ use lapin_futures::types::FieldTable;
 
 use tokio::prelude::*;
 use tokio::runtime::current_thread::Runtime;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedSender};
+use tokio::sync::oneshot;
 
 use crate::event::FileEvent;
 use crate::metrics;
@@ -47,7 +48,7 @@ where
     T: 'static,
 {
     pub fn start(
-        receiver: UnboundedReceiver<base_types::ControlCommand>,
+        receiver: oneshot::Receiver<base_types::ControlCommand>,
         amqp_client: lapin_futures::Client,
         config: settings::SftpSource,
         mut sender: UnboundedSender<FileEvent>,
@@ -73,8 +74,6 @@ where
             };
 
             let mut runtime = Runtime::new().unwrap();
-
-            runtime.spawn(future::ok(()));
 
             let mut sftp_downloader = SftpDownloader {
                 sftp_source: config.clone(),
@@ -197,9 +196,13 @@ where
                     error!("{}", e);
                 });
 
-            runtime.block_on(stream).unwrap();
+            let stoppable_stream = stream.into_future().select2(receiver.into_future());
+
+            runtime.spawn(stoppable_stream.map(|_result| debug!("End SFTP stream")).map_err(|_e| error!("Error: ")));
 
             runtime.run().unwrap();
+
+            debug!("SFTP source stream ended");
         })
     }
 

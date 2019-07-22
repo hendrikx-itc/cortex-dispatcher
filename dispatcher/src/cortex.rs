@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::sync::atomic::{AtomicBool};
 
 #[cfg(target_os = "linux")]
 extern crate inotify;
@@ -15,11 +14,11 @@ use lapin_futures::{ConnectionProperties};
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_executor::enter;
+use tokio::sync::oneshot;
 
 use futures::future::Future;
-use futures::sink::Sink;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
@@ -58,10 +57,6 @@ fn connect_channel(
 }
 
 pub fn run(settings: settings::Settings) {
-    let term = Arc::new(AtomicBool::new(false));
-
-    signal_hook::flag::register(signal_hook::SIGTERM, Arc::clone(&term)).unwrap();
-
     let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -145,19 +140,21 @@ pub fn run(settings: settings::Settings) {
 
     let persistence = PostgresPersistence::new(connection_manager);
 
-    let mut source_sender_pairs: Vec<(UnboundedReceiver<ControlCommand>, settings::SftpSource, UnboundedSender<FileEvent>)> =
+    let mut source_sender_pairs: Vec<(oneshot::Receiver<ControlCommand>, settings::SftpSource, UnboundedSender<FileEvent>)> =
         Vec::new();
 
     let mut sources = Vec::new();
+    let mut stop_senders = Vec::new();
 
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
 
-        let (command_sender, command_receiver) = unbounded_channel::<ControlCommand>();
+        let (command_sender, command_receiver) = oneshot::channel::<ControlCommand>();
+
+        stop_senders.push(command_sender);
 
         source_sender_pairs.push((command_receiver, sftp_source.clone(), sender));
         sources.push(Source {
-            command_sender: command_sender,
             name: sftp_source.name.clone(),
             receiver: receiver,
         });
@@ -232,15 +229,13 @@ pub fn run(settings: settings::Settings) {
 
     let signal_stream = signals.into_async().unwrap().into_future();
 
-    let source_command_senders: Vec<UnboundedSender<ControlCommand>> = sources.iter().map(|source| source.command_sender ).collect();
-
     runtime.spawn(
         signal_stream
             .map(|sig| {
-                info!("signal: {}", sig.0.unwrap())
+                info!("signal: {}", sig.0.unwrap());
 
-                for sender in source_command_senders {
-                    sender.send(ControlCommand::ShutDown);
+                for sender in stop_senders {
+                    sender.send(ControlCommand::ShutDown).unwrap();
                 }
             })
             .map_err(|e| panic!("{}", e.0))
@@ -282,7 +277,7 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
 /// downloaders that consume commands from it.
 fn connect_sftp_downloaders<T>(
     rabbitmq_address: &str,
-    sftp_sources: Vec<(UnboundedReceiver<ControlCommand>, settings::SftpSource, UnboundedSender<FileEvent>)>,
+    sftp_sources: Vec<(oneshot::Receiver<ControlCommand>, settings::SftpSource, UnboundedSender<FileEvent>)>,
     storage_directory: std::path::PathBuf,
     persistence: T,
 ) -> (
