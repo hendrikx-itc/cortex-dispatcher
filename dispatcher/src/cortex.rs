@@ -201,7 +201,7 @@ pub fn run(settings: settings::Settings) {
         let source_name = source.name.clone();
 
         source.receiver.map_err(|_| ()).for_each(move |file_event| {
-            info!(
+            debug!(
                 "FileEvent from {}: {}",
                 &source_name,
                 file_event.path.to_str().unwrap()
