@@ -150,6 +150,7 @@ where
 
                                             match download_result {
                                                 Ok(_) => {
+                                                    // Notify about new data from this SFTP source
                                                     sender
                                                         .try_send(FileEvent {
                                                             source_name: sftp_source_name_2.clone(),
@@ -218,8 +219,8 @@ where
 
         match msg.size {
             Some(size) => {
-                info!(
-                    "{} downloading '{}' -> '{}' {} bytes",
+                debug!(
+                    "Downloading <{}> '{}' -> '{}' {} bytes",
                     self.sftp_source.name,
                     msg.path,
                     local_path.to_str().unwrap(),
@@ -227,8 +228,8 @@ where
                 );
             }
             None => {
-                info!(
-                    "{} downloading '{}' size unknown",
+                debug!(
+                    "Downloading <{}> '{}' size unknown",
                     self.sftp_source.name, msg.path
                 );
             }
@@ -287,7 +288,7 @@ where
         match copy_result {
             Ok(bytes_copied) => {
                 info!(
-                    "{} downloaded '{}', {} bytes",
+                    "Downloaded <{}> '{}' {} bytes",
                     self.sftp_source.name, msg.path, bytes_copied
                 );
 
@@ -312,11 +313,11 @@ where
 
                     match unlink_result {
                         Ok(_) => {
-                            info!("{} removed '{}'", self.sftp_source.name, msg.path);
+                            debug!("Removed <{}> '{}'", self.sftp_source.name, msg.path);
                         }
                         Err(e) => {
                             error!(
-                                "{} error removing '{}': {}",
+                                "Error removing <{}> '{}': {}",
                                 self.sftp_source.name, msg.path, e
                             );
                         }
