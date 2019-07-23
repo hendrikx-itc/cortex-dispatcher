@@ -7,7 +7,7 @@ extern crate inotify;
 
 use inotify::{Inotify, WatchMask};
 
-use futures::future::Future;
+use futures::future::{Future, IntoFuture};
 use futures::stream::Stream;
 
 extern crate failure;
@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
-) -> (thread::JoinHandle<()>, Vec<Source>) {
+) -> (thread::JoinHandle<()>, oneshot::Sender<ControlCommand>, Vec<Source>) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -38,14 +38,15 @@ pub fn start_directory_sources(
         inotify::WatchDescriptor,
         (settings::DirectorySource, UnboundedSender<FileEvent>),
     > = HashMap::new();
-    let mut result_sources: Vec<(oneshot::Sender<ControlCommand>, String, UnboundedReceiver<FileEvent>)> = Vec::new();
+    let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
+
+    let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
         let (sender, receiver) = unbounded_channel();
-        let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
-        result_sources.push((stop_sender, directory_source.name.clone(), receiver));
+        result_sources.push((directory_source.name.clone(), receiver));
 
         let watch_result = inotify.add_watch(
             Path::new(&directory_source.directory),
@@ -70,12 +71,14 @@ pub fn start_directory_sources(
         };
     });
 
+    let join_handle = start_inotify_event_thread(inotify, stop_receiver, watch_mapping);
+
     (
         join_handle,
+        stop_sender,
         result_sources
             .into_iter()
-            .map(move |(command_sender, name, receiver)| Source {
-                command_sender: command_sender,
+            .map(move |(name, receiver)| Source {
                 name: name,
                 receiver: receiver,
             })
@@ -83,7 +86,7 @@ pub fn start_directory_sources(
     )
 }
 
-fn start_inotify_event_thread(inotify: Inotify, watch_mapping: HashMap<
+fn start_inotify_event_thread(mut inotify: Inotify, receiver: oneshot::Receiver<ControlCommand>, mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
         (settings::DirectorySource, UnboundedSender<FileEvent>)
     >) -> thread::JoinHandle<()> {

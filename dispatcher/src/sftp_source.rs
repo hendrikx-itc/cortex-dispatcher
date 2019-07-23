@@ -48,7 +48,7 @@ where
     T: 'static,
 {
     pub fn start(
-        receiver: oneshot::Receiver<base_types::ControlCommand>,
+        stop_receiver: oneshot::Receiver<base_types::ControlCommand>,
         amqp_client: lapin_futures::Client,
         config: settings::SftpSource,
         mut sender: UnboundedSender<FileEvent>,
@@ -196,7 +196,7 @@ where
                     error!("{}", e);
                 });
 
-            let stoppable_stream = stream.into_future().select2(receiver.into_future());
+            let stoppable_stream = stream.into_future().select2(stop_receiver.into_future());
 
             runtime.spawn(stoppable_stream.map(|_result| debug!("End SFTP stream")).map_err(|_e| error!("Error: ")));
 

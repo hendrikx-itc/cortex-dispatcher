@@ -69,9 +69,12 @@ impl Responder for ConnectionsResponse {
 pub fn start_http_server(
     addr: std::net::SocketAddr,
     static_content: std::path::PathBuf,
-    cortex_config: CortexConfig,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+    cortex_config: CortexConfig
+) -> (thread::JoinHandle<()>, actix_rt::System, actix_web::dev::Server) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx_http, rx_http) = std::sync::mpsc::channel();
+
+    let join_handle = thread::spawn(move || {
         let system = actix_rt::System::new("http_server");
 
         let local_static_content = static_content.clone();
@@ -85,7 +88,7 @@ pub fn start_http_server(
         let directory_targets = cortex_config.directory_targets.clone();
         let connections = cortex_config.connections.clone();
 
-        HttpServer::new(move || {
+        let server = HttpServer::new(move || {
             let sftp_sources = sftp_sources.clone();
             let sftp_sources_resp = move || -> SftpResponse {
                 SftpResponse {
@@ -118,12 +121,23 @@ pub fn start_http_server(
                     actix_files::Files::new("/", &local_static_content).index_file("index.html"),
                 )
         })
+        .disable_signals()
         .bind(addr)
         .unwrap()
         .start();
 
+        tx.send(actix_rt::System::current()).unwrap();
+        tx_http.send(server).unwrap();
+
         system.run().unwrap();
-    })
+
+        debug!("http server shutdown");
+    });
+
+    let system = rx.recv().unwrap();
+    let server = rx_http.recv().unwrap();
+
+    (join_handle, system, server)
 }
 
 fn metrics() -> impl Responder {

@@ -18,7 +18,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_executor::enter;
 use tokio::sync::oneshot;
 
-use futures::future::Future;
+use futures::future::{Future, IntoFuture};
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
@@ -62,6 +62,8 @@ pub fn run(settings: settings::Settings) {
 
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
 
+    let mut stop_senders = Vec::new();
+
     settings.directory_targets.iter().for_each(|target_conf| {
         let (sender, receiver) = unbounded_channel();
 
@@ -99,7 +101,13 @@ pub fn run(settings: settings::Settings) {
             None => stream_consuming_future(Box::new(target_stream)),
         };
 
-        runtime.spawn(target_stream);
+        let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
+
+        stop_senders.push(stop_sender);
+
+        let stoppable_stream = target_stream.into_future().select2(stop_receiver.into_future());
+
+        runtime.spawn(stoppable_stream.map(|_result| debug!("End inotify stream")).map_err(|_e| error!("Error: ")));
 
         let target = Arc::new(Target {
             name: target_conf.name.clone(),
@@ -112,14 +120,24 @@ pub fn run(settings: settings::Settings) {
     let prometheus_push_conf = settings.prometheus_push.clone();
 
     if let Some(conf) = prometheus_push_conf {
-        runtime.spawn(metrics_collector(conf.gateway.clone(), conf.interval));
+        let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
+
+        stop_senders.push(stop_sender);
+
+        let metrics_coll = metrics_collector(conf.gateway.clone(), conf.interval);
+
+        let stoppable_metrics_coll = metrics_coll.select2(stop_receiver.into_future());
+
+        runtime.spawn(stoppable_metrics_coll.map(|_result| debug!("End metrics stream")).map_err(|_e| error!("Error: ")));
 
         info!("Prometheus metrics push collector configured");
     };
 
     #[cfg(target_os = "linux")]
-    let (directory_sources_join_handle, mut directory_sources) =
+    let (directory_sources_join_handle, inotify_stop_sender, mut directory_sources) =
         start_directory_sources(settings.directory_sources.clone());
+
+    stop_senders.push(inotify_stop_sender);
 
     let connections: Vec<Connection> = settings
         .connections
@@ -144,7 +162,6 @@ pub fn run(settings: settings::Settings) {
         Vec::new();
 
     let mut sources = Vec::new();
-    let mut stop_senders = Vec::new();
 
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
@@ -202,8 +219,14 @@ pub fn run(settings: settings::Settings) {
         })
     });
 
-    for p in local_event_dispatchers {
-        runtime.spawn(p);
+    for local_event_dispatcher in local_event_dispatchers {
+        let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
+
+        stop_senders.push(stop_sender);
+
+        let stoppable_dispatcher = local_event_dispatcher.select2(stop_receiver.into_future());
+
+        runtime.spawn(stoppable_dispatcher.map(|_result| debug!("End connection stream")).map_err(|_e| error!("Error: ")));
     }
 
     let cortex_config = CortexConfig {
@@ -214,7 +237,7 @@ pub fn run(settings: settings::Settings) {
 
     let static_content_path = settings.http_server.static_content_path.clone();
 
-    let web_server_join_handle = start_http_server(
+    let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(
         settings.http_server.address,
         static_content_path,
         cortex_config,
@@ -231,12 +254,15 @@ pub fn run(settings: settings::Settings) {
 
     runtime.spawn(
         signal_stream
-            .map(|sig| {
+            .map(move |sig| {
                 info!("signal: {}", sig.0.unwrap());
 
                 for sender in stop_senders {
                     sender.send(ControlCommand::ShutDown).unwrap();
                 }
+
+                tokio::spawn(actix_http_server.stop(true));
+                actix_system.stop();
             })
             .map_err(|e| panic!("{}", e.0))
     );
@@ -299,11 +325,11 @@ where
     )
     .map_err(failure::Error::from)
     .and_then(move |client| {
-        for (command_receiver, sftp_source, sender) in sftp_sources {
+        for (stop_receiver, sftp_source, sender) in sftp_sources {
             let mut jhs = join_handles.lock().unwrap();
 
             jhs.push(SftpDownloader::start(
-                command_receiver,
+                stop_receiver,
                 client.clone(),
                 sftp_source.clone(),
                 sender,
