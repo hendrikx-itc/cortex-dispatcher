@@ -7,8 +7,11 @@ use actix_web::{middleware, web, App, HttpServer, Responder};
 
 use prometheus::{Encoder, TextEncoder};
 
-pub fn start_http_server(addr: std::net::SocketAddr) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>, actix_rt::System, actix_web::dev::Server) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx_http, rx_http) = std::sync::mpsc::channel();
+
+    let join_handle = thread::spawn(move || {
         let system = actix_rt::System::new("http_server");
 
         let bind_result = HttpServer::new(|| {
@@ -18,18 +21,32 @@ pub fn start_http_server(addr: std::net::SocketAddr) -> thread::JoinHandle<()> {
         })
         .bind(addr);
 
-        match bind_result {
+        let server = match bind_result {
             Ok(http_server) => {
                 info!("Web server bound to address: {}", addr);
-                http_server.start();
+                Some(http_server.start())
             },
             Err(e) => {
                 error!("Could not bind to address {}: {}", addr, e);
+                None
             }
-        }
+        };
+
+        tx.send(actix_rt::System::current()).unwrap();
+
+        match server {
+            Some(s) => tx_http.send(s).unwrap(),
+            None => ()
+        }        
 
         system.run().unwrap();
-    })
+    });
+
+    // Get data from the thread that was just started
+    let system = rx.recv().unwrap();
+    let server = rx_http.recv().unwrap();
+
+    (join_handle, system, server)
 }
 
 fn metrics() -> impl Responder {

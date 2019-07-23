@@ -1,5 +1,7 @@
 use std::thread;
 use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::lapin::{BasicProperties, ConnectionProperties};
 use crate::lapin::options::BasicPublishOptions;
@@ -7,11 +9,15 @@ use env_logger;
 use failure::Error;
 use futures::stream::Stream;
 use futures::sync::mpsc::{channel, Receiver};
-use futures::Future;
+use futures::{Future, IntoFuture};
 use lapin_futures as lapin;
 use log::{debug, error, info};
 use serde_json;
 use tokio;
+use tokio_executor::enter;
+
+use signal_hook;
+use signal_hook::iterator::Signals;
 
 extern crate config;
 
@@ -66,8 +72,22 @@ fn main() {
 
     let settings = load_settings(&config_file);
 
+    let mut entered = enter().expect("Failed to claim thread");
+    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Will hold all functions that stop components of the SFTP scannner
+    let mut stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>> = Vec::new();
+
     // Setup the channel that connects to the RabbitMQ queue for SFTP download commands.
     let (cmd_sender, cmd_receiver) = channel(4096);
+
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let stop_clone = stop.clone();
+
+    stop_commands.push(Box::new(move || {
+        stop_clone.swap(true, Ordering::Relaxed);
+    }));
 
     // Start every configured scanner in it's own thread and have them send commands to the
     // command channel.
@@ -77,6 +97,7 @@ fn main() {
         .into_iter()
         .map(|sftp_source| {
             sftp_scanner::start_scanner(
+                stop.clone(),
                 cmd_sender.clone(),
                 settings.postgresql.url.clone(),
                 sftp_source,
@@ -96,12 +117,32 @@ fn main() {
     };
 
     // Start the built in web server that currently only serves metrics.
-    let web_server_join_handle = http_server::start_http_server(settings.http_server.address);
+    let (web_server_join_handle, actix_system, actix_http_server) = http_server::start_http_server(settings.http_server.address);
+
+    stop_commands.push(Box::new(move || {
+        tokio::spawn(actix_http_server.stop(true));
+    }));
+
+    stop_commands.push(Box::new(move || {
+        actix_system.stop();
+    }));
+
+    let (stop_sender, stop_receiver) = tokio::sync::oneshot::channel();
+
+    stop_commands.push(Box::new(move || {
+        stop_sender.send(()).unwrap();
+    }));
 
     // Use a stream to connect the command channel to the AMQP queue.
-    let future = channel_to_amqp(cmd_receiver, &settings.command_queue.address);
+    let future = channel_to_amqp(stop_receiver, cmd_receiver, &settings.command_queue.address);
 
-    tokio::run(future);
+    runtime.spawn(setup_signal_handler(stop_commands));
+
+    runtime.spawn(future);
+
+    entered
+        .block_on(runtime.shutdown_on_idle())
+        .expect("Shutdown cannot error");
 
     for scanner_thread in scanner_threads {
         let res = scanner_thread.join();
@@ -131,8 +172,30 @@ fn main() {
     }
 }
 
+fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>) -> impl Future<Item = (), Error = ()> + Send + 'static {
+    let signals = Signals::new(&[
+        signal_hook::SIGHUP,
+        signal_hook::SIGTERM,
+        signal_hook::SIGINT,
+        signal_hook::SIGQUIT,
+    ]).unwrap();
+
+    let signal_stream = signals.into_async().unwrap().into_future();
+
+    signal_stream
+        .map(move |sig| {
+            info!("signal: {}", sig.0.unwrap());
+
+            for stop_command in stop_commands {
+                stop_command();
+            }
+        })
+        .map_err(|e| panic!("{}", e.0))
+}
+
 /// Connects a channel receiver to an AMQP queue.
 fn channel_to_amqp(
+    stop_receiver: tokio::sync::oneshot::Receiver<()>,
     receiver: Receiver<SftpDownload>,
     addr: &str,
 ) -> impl Future<Item = (), Error = ()> + Send + 'static {
@@ -167,7 +230,9 @@ fn channel_to_amqp(
                 Ok(())
             });
 
-            tokio::spawn(stream);
+            let stoppable_stream = stream.into_future().select2(stop_receiver.into_future());
+
+            tokio::spawn(stoppable_stream.map(|_result| debug!("End amqp command stream")).map_err(|_e| error!("Error: ")));
         })
         .and_then(|_| Ok(()))
         .map_err(|e| error!("Error: {:?}", e))

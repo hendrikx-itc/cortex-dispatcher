@@ -26,10 +26,12 @@ serde_yaml = "0.8"
 serde_regex = "0.4.0"
 ssh2 = "0.3.3"
 tokio = "0.1.22"
+tokio-executor = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 prometheus = { version = "0.7.0", features = ["push"] }
 lazy_static = "1.3"
 postgres = "0.15.2"
 cortex-core = { path = "../core" }
-actix-web = "1.0.4"
+actix-web = "1.0.5"
 actix-rt = "0.2.4"
+signal-hook = { version = "0.1.10", features = ["tokio-support"] }

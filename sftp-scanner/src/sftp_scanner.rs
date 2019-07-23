@@ -1,6 +1,8 @@
 use std::convert::TryFrom;
 use std::path::{Path, PathBuf};
 use std::{thread, time};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::sync::mpsc::Sender;
 use log::{debug, error, info};
@@ -22,6 +24,7 @@ use crate::settings::SftpSource;
 /// A thread is used instead of an async Tokio future because the library used
 /// for the SFTP connection is not thread safe.
 pub fn start_scanner(
+    stop: Arc<AtomicBool>,
     mut sender: Sender<SftpDownload>,
     db_url: String,
     sftp_source: SftpSource,
@@ -58,6 +61,11 @@ pub fn start_scanner(
         };
 
         loop {
+            if stop.load(Ordering::Relaxed) {
+                debug!("Stopping SFTP scanner because stop flag is set");
+                break;
+            }
+
             let scan_start = time::Instant::now();
             debug!("Started scanning {}", &sftp_source.name);
 
