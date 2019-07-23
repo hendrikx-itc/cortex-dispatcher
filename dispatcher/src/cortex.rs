@@ -62,6 +62,7 @@ pub fn run(settings: settings::Settings) {
 
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
 
+    // Should hold all oneshot channel senders for stopping various async parts.
     let mut stop_senders = Vec::new();
 
     settings.directory_targets.iter().for_each(|target_conf| {
@@ -107,7 +108,7 @@ pub fn run(settings: settings::Settings) {
 
         let stoppable_stream = target_stream.into_future().select2(stop_receiver.into_future());
 
-        runtime.spawn(stoppable_stream.map(|_result| debug!("End inotify stream")).map_err(|_e| error!("Error: ")));
+        runtime.spawn(stoppable_stream.map(|_result| debug!("End directory target stream")).map_err(|_e| error!("Error: ")));
 
         let target = Arc::new(Target {
             name: target_conf.name.clone(),
