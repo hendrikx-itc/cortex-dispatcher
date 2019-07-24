@@ -62,8 +62,8 @@ pub fn run(settings: settings::Settings) {
 
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
 
-    // Should hold all oneshot channel senders for stopping various async parts.
-    let mut stop_senders = Vec::new();
+    // Will hold all functions that stop components of the SFTP scannner
+    let mut stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>> = Vec::new();
 
     settings.directory_targets.iter().for_each(|target_conf| {
         let (sender, receiver) = unbounded_channel();
@@ -104,7 +104,9 @@ pub fn run(settings: settings::Settings) {
 
         let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
-        stop_senders.push(stop_sender);
+        stop_commands.push(Box::new(move || {
+            stop_sender.send(()).unwrap();
+        }));
 
         let stoppable_stream = target_stream.into_future().select2(stop_receiver.into_future());
 
@@ -123,7 +125,9 @@ pub fn run(settings: settings::Settings) {
     if let Some(conf) = prometheus_push_conf {
         let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
-        stop_senders.push(stop_sender);
+        stop_commands.push(Box::new(move || {
+            stop_sender.send(()).unwrap();
+        }));
 
         let metrics_coll = metrics_collector(conf.gateway.clone(), conf.interval);
 
@@ -138,7 +142,9 @@ pub fn run(settings: settings::Settings) {
     let (directory_sources_join_handle, inotify_stop_sender, mut directory_sources) =
         start_directory_sources(settings.directory_sources.clone());
 
-    stop_senders.push(inotify_stop_sender);
+    stop_commands.push(Box::new(move || {
+        inotify_stop_sender.send(()).unwrap();
+    }));
 
     let connections: Vec<Connection> = settings
         .connections
@@ -167,11 +173,13 @@ pub fn run(settings: settings::Settings) {
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
 
-        let (command_sender, command_receiver) = oneshot::channel::<ControlCommand>();
+        let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
-        stop_senders.push(command_sender);
+        stop_commands.push(Box::new(move || {
+            stop_sender.send(()).unwrap();
+        }));
 
-        source_sender_pairs.push((command_receiver, sftp_source.clone(), sender));
+        source_sender_pairs.push((stop_receiver, sftp_source.clone(), sender));
         sources.push(Source {
             name: sftp_source.name.clone(),
             receiver: receiver,
@@ -223,7 +231,9 @@ pub fn run(settings: settings::Settings) {
     for local_event_dispatcher in local_event_dispatchers {
         let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
 
-        stop_senders.push(stop_sender);
+        stop_commands.push(Box::new(move || {
+            stop_sender.send(()).unwrap();
+        }));
 
         let stoppable_dispatcher = local_event_dispatcher.select2(stop_receiver.into_future());
 
@@ -244,14 +254,14 @@ pub fn run(settings: settings::Settings) {
         cortex_config,
     );
 
-    let signals = Signals::new(&[
-        signal_hook::SIGHUP,
-        signal_hook::SIGTERM,
-        signal_hook::SIGINT,
-        signal_hook::SIGQUIT,
-    ]).unwrap();
+    stop_commands.push(Box::new(move || {
+        tokio::spawn(actix_http_server.stop(true));
+    }));
 
-    let signal_stream = signals.into_async().unwrap().into_future();
+    stop_commands.push(Box::new(move || {
+        actix_system.stop();
+    }));
+
 
     runtime.spawn(
         signal_stream
@@ -261,12 +271,11 @@ pub fn run(settings: settings::Settings) {
                 for sender in stop_senders {
                     sender.send(ControlCommand::ShutDown).unwrap();
                 }
-
-                tokio::spawn(actix_http_server.stop(true));
-                actix_system.stop();
             })
             .map_err(|e| panic!("{}", e.0))
     );
+
+    runtime.spawn(setup_signal_handler(stop_commands));
 
     entered
         .block_on(runtime.shutdown_on_idle())
@@ -285,6 +294,27 @@ pub fn run(settings: settings::Settings) {
     jhs.into_iter().for_each(|jh| {
         wait_for(jh, "sftp download");
     });
+}
+
+fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>) -> impl Future<Item = (), Error = ()> + Send + 'static {
+    let signals = Signals::new(&[
+        signal_hook::SIGHUP,
+        signal_hook::SIGTERM,
+        signal_hook::SIGINT,
+        signal_hook::SIGQUIT,
+    ]).unwrap();
+
+    let signal_stream = signals.into_async().unwrap().into_future();
+
+    signal_stream
+        .map(move |sig| {
+            info!("signal: {}", sig.0.unwrap());
+
+            for stop_command in stop_commands {
+                stop_command();
+            }
+        })
+        .map_err(|e| panic!("{}", e.0))
 }
 
 fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
