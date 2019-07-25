@@ -61,11 +61,6 @@ pub fn start_scanner(
         };
 
         loop {
-            if stop.load(Ordering::Relaxed) {
-                debug!("Stopping SFTP scanner because stop flag is set");
-                break;
-            }
-
             let scan_start = time::Instant::now();
             debug!("Started scanning {}", &sftp_source.name);
 
@@ -87,6 +82,11 @@ pub fn start_scanner(
             metrics::DIR_SCAN_DURATION
                 .with_label_values(&[&sftp_source.name])
                 .inc_by(scan_duration.as_millis() as i64);
+
+            if stop.load(Ordering::Relaxed) {
+                debug!("Stopping SFTP scanner because stop flag is set");
+                break;
+            }
 
             thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
         }
