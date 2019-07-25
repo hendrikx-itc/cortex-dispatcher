@@ -69,7 +69,7 @@ pub fn start_scanner(
             let scan_start = time::Instant::now();
             debug!("Started scanning {}", &sftp_source.name);
 
-            scan_source(&sftp_source, &sftp_connection, &conn, &mut sender);
+            scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
 
             let scan_end = time::Instant::now();
 
@@ -93,11 +93,11 @@ pub fn start_scanner(
     })
 }
 
-fn scan_source(sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
-    scan_directory(sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender);
+fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
+    scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender);
 }
 
-fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
+fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
     debug!("Directory scan started for {}", &directory.to_str().unwrap());
 
     let read_result = sftp_connection
@@ -113,12 +113,16 @@ fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &
     };
 
     for (path, stat) in paths {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
         if stat.is_dir() {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
-            scan_directory(sftp_source, &dir, sftp_connection, conn, sender);
+            scan_directory(stop, sftp_source, &dir, sftp_connection, conn, sender);
         } else {
             let file_size: u64 = stat.size.unwrap();
 
@@ -181,7 +185,12 @@ fn scan_directory(sftp_source: &SftpSource, directory: &Path, sftp_connection: &
                         remove: sftp_source.remove
                     };
 
-                    sender.try_send(command).unwrap();
+                    let send_result = sender.try_send(command);
+
+                    match send_result {
+                        Ok(_) => (),
+                        Err(e) => error!("Error sending download message on channel: {}", e)
+                    }
                 } else {
                     debug!("{} already encountered {}", sftp_source.name, path_str);
                 }
