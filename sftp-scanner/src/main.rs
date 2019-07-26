@@ -91,17 +91,21 @@ fn main() {
 
     // Start every configured scanner in it's own thread and have them send commands to the
     // command channel.
-    let scanner_threads: Vec<thread::JoinHandle<()>> = settings
+    let scanner_threads: Vec<(String, thread::JoinHandle<()>)> = settings
         .sftp_sources
         .clone()
         .into_iter()
         .map(|sftp_source| {
-            sftp_scanner::start_scanner(
+            let name = sftp_source.name.clone();
+
+            let join_handle = sftp_scanner::start_scanner(
                 stop.clone(),
                 cmd_sender.clone(),
                 settings.postgresql.url.clone(),
                 sftp_source,
-            )
+            );
+
+            (name, join_handle)
         })
         .collect();
 
@@ -144,30 +148,34 @@ fn main() {
         .block_on(runtime.shutdown_on_idle())
         .expect("Shutdown cannot error");
 
-    for scanner_thread in scanner_threads {
+    for (source_name, scanner_thread) in scanner_threads {
+        info!("Waiting for scanner thread '{}' to stop", &source_name);
+
         let res = scanner_thread.join();
 
         match res {
             Ok(()) => {
-                info!("scanner thread stopped");
+                info!("Scanner thread '{}' stopped", &source_name);
             }
-            Err(e) => error!("scanner thread stopped with error: {:?}", e),
+            Err(e) => {
+                error!("Scanner thread '{}' stopped with error: {:?}", &source_name, e)
+            }
         }
     }
 
     let res = web_server_join_handle.join();
 
     match res {
-        Ok(()) => info!("http server thread stopped"),
-        Err(e) => error!("http server thread stopped with error: {:?}", e),
+        Ok(()) => info!("Http server thread stopped"),
+        Err(e) => error!("Http server thread stopped with error: {:?}", e),
     }
 
     if let Some(join_handle) = metrics_collector_join_handle {
         let res = join_handle.join();
 
         match res {
-            Ok(()) => info!("metrics collector thread stopped"),
-            Err(e) => error!("metrics collector thread stopped with error: {:?}", e),
+            Ok(()) => info!("Metrics collector thread stopped"),
+            Err(e) => error!("Metrics collector thread stopped with error: {:?}", e),
         }
     }
 }
