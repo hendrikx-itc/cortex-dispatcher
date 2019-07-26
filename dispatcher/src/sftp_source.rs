@@ -20,7 +20,6 @@ use crate::event::FileEvent;
 use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
-use crate::base_types;
 
 use cortex_core::sftp_connection::SftpConnection;
 use cortex_core::SftpDownload;
@@ -48,7 +47,7 @@ where
     T: 'static,
 {
     pub fn start(
-        stop_receiver: oneshot::Receiver<base_types::ControlCommand>,
+        stop_receiver: oneshot::Receiver<()>,
         amqp_client: lapin_futures::Client,
         config: settings::SftpSource,
         mut sender: UnboundedSender<FileEvent>,
@@ -151,12 +150,19 @@ where
                                             match download_result {
                                                 Ok(_) => {
                                                     // Notify about new data from this SFTP source
-                                                    sender
+                                                    let send_result = sender
                                                         .try_send(FileEvent {
                                                             source_name: sftp_source_name_2.clone(),
                                                             path: PathBuf::from(command.path),
-                                                        })
-                                                        .unwrap();
+                                                        });
+
+                                                    match send_result {
+                                                        Ok(_) => (),
+                                                        Err(e) => {
+                                                            error!("Error sending download notification: {}", e);
+                                                        }
+                                                    }
+
                                                     Box::new(
                                                         channel
                                                             .basic_ack(message.delivery_tag, false),

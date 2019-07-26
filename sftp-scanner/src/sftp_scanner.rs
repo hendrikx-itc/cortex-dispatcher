@@ -60,7 +60,7 @@ pub fn start_scanner(
             thread::sleep(time::Duration::from_millis(1000));
         };
 
-        loop {
+        while !stop.load(Ordering::Relaxed) {
             let scan_start = time::Instant::now();
             debug!("Started scanning {}", &sftp_source.name);
 
@@ -83,12 +83,10 @@ pub fn start_scanner(
                 .with_label_values(&[&sftp_source.name])
                 .inc_by(scan_duration.as_millis() as i64);
 
-            if stop.load(Ordering::Relaxed) {
-                debug!("Stopping SFTP scanner because stop flag is set");
-                break;
+            if !stop.load(Ordering::Relaxed) {
+                // Prevent long waits on shutdown by only sleeping when the stop flag is not set
+                thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
             }
-
-            thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
         }
     })
 }

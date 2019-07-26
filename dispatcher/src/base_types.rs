@@ -93,8 +93,3 @@ pub struct CortexConfig {
     pub directory_targets: std::sync::Arc<Mutex<Vec<settings::DirectoryTarget>>>,
     pub connections: std::sync::Arc<Mutex<Vec<settings::Connection>>>,
 }
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum ControlCommand {
-    ShutDown
-}

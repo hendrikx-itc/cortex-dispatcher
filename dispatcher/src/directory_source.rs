@@ -13,7 +13,7 @@ use futures::stream::Stream;
 extern crate failure;
 extern crate lapin_futures;
 
-use crate::base_types::{Source, ControlCommand};
+use crate::base_types::Source;
 use crate::event::FileEvent;
 use crate::settings;
 
@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
-) -> (thread::JoinHandle<()>, oneshot::Sender<ControlCommand>, Vec<Source>) {
+) -> (thread::JoinHandle<()>, oneshot::Sender<()>, Vec<Source>) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -40,7 +40,7 @@ pub fn start_directory_sources(
     > = HashMap::new();
     let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
 
-    let (stop_sender, stop_receiver) = oneshot::channel::<ControlCommand>();
+    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
@@ -86,7 +86,7 @@ pub fn start_directory_sources(
     )
 }
 
-fn start_inotify_event_thread(mut inotify: Inotify, receiver: oneshot::Receiver<ControlCommand>, mut watch_mapping: HashMap<
+fn start_inotify_event_thread(mut inotify: Inotify, receiver: oneshot::Receiver<()>, mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
         (settings::DirectorySource, UnboundedSender<FileEvent>)
     >) -> thread::JoinHandle<()> {
