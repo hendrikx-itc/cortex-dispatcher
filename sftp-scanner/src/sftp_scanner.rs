@@ -60,32 +60,36 @@ pub fn start_scanner(
             thread::sleep(time::Duration::from_millis(1000));
         };
 
+        let scan_interval = time::Duration::from_millis(sftp_source.scan_interval);
+        let mut next_scan = time::Instant::now();
+
         while !stop.load(Ordering::Relaxed) {
-            let scan_start = time::Instant::now();
-            debug!("Started scanning {}", &sftp_source.name);
+            if time::Instant::now() > next_scan {
+                next_scan += scan_interval;
 
-            scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
+                let scan_start = time::Instant::now();
+                debug!("Started scanning {}", &sftp_source.name);
 
-            let scan_end = time::Instant::now();
+                scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
 
-            let scan_duration = scan_end.duration_since(scan_start);
+                let scan_end = time::Instant::now();
 
-            debug!(
-                "Finished scanning {} in {} ms",
-                &sftp_source.name,
-                scan_duration.as_millis()
-            );
+                let scan_duration = scan_end.duration_since(scan_start);
 
-            metrics::DIR_SCAN_COUNTER
-                .with_label_values(&[&sftp_source.name])
-                .inc();
-            metrics::DIR_SCAN_DURATION
-                .with_label_values(&[&sftp_source.name])
-                .inc_by(scan_duration.as_millis() as i64);
+                debug!(
+                    "Finished scanning {} in {} ms",
+                    &sftp_source.name,
+                    scan_duration.as_millis()
+                );
 
-            if !stop.load(Ordering::Relaxed) {
-                // Prevent long waits on shutdown by only sleeping when the stop flag is not set
-                thread::sleep(time::Duration::from_millis(sftp_source.scan_interval));
+                metrics::DIR_SCAN_COUNTER
+                    .with_label_values(&[&sftp_source.name])
+                    .inc();
+                metrics::DIR_SCAN_DURATION
+                    .with_label_values(&[&sftp_source.name])
+                    .inc_by(scan_duration.as_millis() as i64);
+            } else {
+                thread::sleep(time::Duration::from_millis(200));
             }
         }
     })
