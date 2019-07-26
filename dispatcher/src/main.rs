@@ -1,3 +1,5 @@
+use std::io::Write;
+
 extern crate clap;
 extern crate config;
 
