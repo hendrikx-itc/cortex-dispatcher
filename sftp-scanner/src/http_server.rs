@@ -17,7 +17,7 @@ pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>,
         let bind_result = HttpServer::new(|| {
             App::new()
                 .wrap(middleware::Logger::default())
-                .service(web::resource("/metrics").to(metrics))
+                .service(web::resource("/api/metrics").to(metrics))
         })
         .bind(addr);
 
