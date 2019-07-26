@@ -44,7 +44,9 @@ fn main() {
     let mut env_logger_builder = env_logger::builder();
 
     if matches.is_present("service") {
-        env_logger_builder.default_format_timestamp(false);
+        env_logger_builder.format(|buf, record| {
+            writeln!(buf, "{}  {}", record.level(), record.args())
+        });
     }
 
     env_logger_builder.init();

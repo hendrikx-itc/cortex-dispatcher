@@ -2,6 +2,7 @@ use std::thread;
 use std::time::Duration;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::Write;
 
 use crate::lapin::{BasicProperties, ConnectionProperties};
 use crate::lapin::options::BasicPublishOptions;
@@ -53,7 +54,9 @@ fn main() {
     // When run as a service no timestamps are logged, we expect the service manager to append
     // timestamps to the logs.
     if matches.is_present("service") {
-        env_logger_builder.default_format_timestamp(false);
+        env_logger_builder.format(|buf, record| {
+            writeln!(buf, "{}  {}", record.level(), record.args())
+        });
     }
 
     env_logger_builder.init();
