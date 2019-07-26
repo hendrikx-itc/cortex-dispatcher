@@ -1,6 +1,6 @@
 [package]
 name = "cortex-dispatcher"
-version = "0.1.17"
+version = "0.1.18"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
 description = """
@@ -15,7 +15,7 @@ repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 [package.metadata.deb]
 assets = [
     ["target/release/cortex-dispatcher", "/usr/bin/", "755"],
-    ["static-web/*", "/usr/lib/cortex-dispatcher/static-web/", "644"]
+    ["static-web/*", "/usr/lib/cortex/static-web/", "644"]
 ]
 
 [dependencies]
