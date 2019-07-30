@@ -1,6 +1,7 @@
 use std::net::TcpStream;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ssh2::{Session, Sftp};
 
@@ -74,5 +75,56 @@ impl SftpConnection {
             OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
         Ok(SftpConnection {_tcp: tcp, sftp})
+    }
+}
+
+pub struct SftpConnectionManager {
+    _conn: Option<Arc<Box<SftpConnection>>>,
+    address: String,
+    username: String,
+    password: Option<String>,
+    key_file: Option<PathBuf>,
+    compress: bool
+}
+
+impl SftpConnectionManager
+{
+    pub fn new(address: String, username: String, password: Option<String>, key_file: Option<PathBuf>, compress: bool) -> SftpConnectionManager {
+        SftpConnectionManager {
+            _conn: None,
+            address: address,
+            username: username,
+            password: password,
+            key_file: key_file,
+            compress: compress
+        }
+    }
+
+    pub fn connect(&self) -> Result<SftpConnection, SftpError> {
+        SftpConnection::new(
+            &self.address.clone(),
+            &self.username.clone(),
+            self.password.clone(),
+            self.key_file.clone(),
+            self.compress,
+        )
+    }
+
+    pub fn get(&mut self) -> Arc<Box<SftpConnection>> {
+        match &self._conn {
+            None => {
+                let conn = Arc::new(Box::new(self.connect().unwrap()));
+                self._conn = Some(conn.clone());
+
+                conn.clone()
+            },
+            Some(conn) => {
+                conn.clone()
+            }
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self._conn = None;
     }
 }

@@ -1,9 +1,9 @@
 use std::convert::TryFrom;
+use std::fmt;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
 
 extern crate failure;
 
@@ -13,15 +13,18 @@ use lapin_futures::types::FieldTable;
 
 use tokio::prelude::*;
 use tokio::runtime::current_thread::Runtime;
-use tokio::sync::mpsc::{UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
+
+use retry::retry;
+use retry::delay::{Exponential, jitter};
 
 use crate::event::FileEvent;
 use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
 
-use cortex_core::sftp_connection::SftpConnection;
+use cortex_core::sftp_connection::SftpConnectionManager;
 use cortex_core::SftpDownload;
 
 use failure::Error;
@@ -34,9 +37,56 @@ where
     T: Persistence,
 {
     pub sftp_source: settings::SftpSource,
-    pub sftp_connection: SftpConnection,
+    pub sftp_connection: SftpConnectionManager,
     pub persistence: T,
     pub local_storage_path: PathBuf,
+}
+
+enum SftpErrorSource {
+    SshError(ssh2::Error),
+    IoError(std::io::Error),
+    Other,
+}
+
+pub struct SftpError {
+    source: SftpErrorSource,
+    msg: String,
+}
+
+impl SftpError {
+    fn new(source: SftpErrorSource, msg: String) -> SftpError {
+        SftpError { source, msg }
+    }
+}
+
+impl fmt::Display for SftpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.source {
+            SftpErrorSource::SshError(ref e) => write!(f, "{}: {}", self.msg, e),
+            SftpErrorSource::IoError(ref e) => write!(f, "{}: {}", self.msg, e),
+            SftpErrorSource::Other => write!(f, "{}", self.msg)
+        }
+    }
+}
+
+impl fmt::Debug for SftpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.source {
+            SftpErrorSource::SshError(ref e) => e.fmt(f),
+            SftpErrorSource::IoError(ref e) => e.fmt(f),
+            SftpErrorSource::Other => write!(f, "{}", self.msg)
+        }
+    }
+}
+
+impl std::error::Error for SftpError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.source {
+            SftpErrorSource::SshError(ref e) => Some(e),
+            SftpErrorSource::IoError(ref e) => Some(e),
+            SftpErrorSource::Other => None
+        }
+    }
 }
 
 impl<T> SftpDownloader<T>
@@ -55,28 +105,19 @@ where
         persistence: T,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            let conn = loop {
-                let conn_result = SftpConnection::new(
-                    &config.address.clone(),
-                    &config.username.clone(),
-                    config.password.clone(),
-                    config.key_file.clone(),
-                    config.compress,
-                );
-
-                match conn_result {
-                    Ok(c) => break c,
-                    Err(e) => error!("Could not connect: {}", e),
-                }
-
-                thread::sleep(Duration::from_millis(1000));
-            };
+            let conn_mgr = SftpConnectionManager::new(
+                config.address.clone(),
+                config.username.clone(),
+                config.password.clone(),
+                config.key_file.clone(),
+                config.compress,
+            );
 
             let mut runtime = Runtime::new().unwrap();
 
             let mut sftp_downloader = SftpDownloader {
                 sftp_source: config.clone(),
-                sftp_connection: conn,
+                sftp_connection: conn_mgr,
                 persistence: persistence,
                 local_storage_path: data_dir.clone(),
             };
@@ -88,6 +129,8 @@ where
                 .create_channel()
                 .map_err(Error::from)
                 .and_then(|channel| {
+
+                    let channel_nack = channel.clone();
                     info!("Created channel with id {}", channel.id());
 
                     let queue_name = format!("source.{}", &sftp_source_name);
@@ -128,69 +171,61 @@ where
                                 )
                                 .map(|stream| (channel, stream))
                         })
+                        .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("{}", e)))
                         .and_then(move |(channel, stream)| {
-                            stream.for_each(
-                                move |message| -> Box<
-                                    dyn Future<Item = (), Error = lapin_futures::Error>
-                                        + 'static
-                                        + Send,
-                                > {
-                                    metrics::MESSAGES_RECEIVED_COUNTER
-                                        .with_label_values(&[&sftp_source_name_2])
-                                        .inc();
-                                    debug!("Received message from RabbitMQ");
+                            stream
+                            .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("Error parsing message: {}", e)))
+                            .and_then(move |message| -> Result<(SftpDownload, u64), SftpError> {
+                                metrics::MESSAGES_RECEIVED_COUNTER
+                                    .with_label_values(&[&sftp_source_name_2])
+                                    .inc();
+                                debug!("Received message from RabbitMQ");
 
-                                    let deserialize_result: serde_json::Result<SftpDownload> =
-                                        serde_json::from_slice(message.data.as_slice());
+                                let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
 
-                                    match deserialize_result {
-                                        Ok(command) => {
-                                            let download_result = sftp_downloader.handle(&command);
+                                match deserialize_result {
+                                    Ok(sftp_download) => Ok((sftp_download, message.delivery_tag)),
+                                    Err(e) => Err(SftpError::new(SftpErrorSource::Other, format!("Error parsing message: {}", e)))
+                                }
+                            })
+                            .and_then(move |(command, delivery_tag)| {
+                                let retry_strategy = Exponential::from_millis(100).map(jitter).take(3);
 
-                                            match download_result {
-                                                Ok(_) => {
-                                                    // Notify about new data from this SFTP source
-                                                    let send_result = sender
-                                                        .try_send(FileEvent {
-                                                            source_name: sftp_source_name_2.clone(),
-                                                            path: PathBuf::from(command.path),
-                                                        });
+                                retry(retry_strategy, || -> Result<FileEvent, SftpError> {
+                                    sftp_downloader.handle(&command)
+                                })
+                                .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("Error parsing message: {}", e)))
+                                .map(move |file_event| (file_event, delivery_tag))
 
-                                                    match send_result {
-                                                        Ok(_) => (),
-                                                        Err(e) => {
-                                                            error!("Error sending download notification: {}", e);
-                                                        }
-                                                    }
+                                //sftp_downloader.handle(&command).map(|file_event| (file_event, delivery_tag))
+                            })
+                            .and_then(move |(file_event, delivery_tag)|{
+                                // Notify about new data from this SFTP source
+                                sender
+                                    .try_send(file_event)
+                                    .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("Error sending file event: {}", e)))
+                                    .map(|_| delivery_tag)
+                            }) 
+                            .and_then(move |delivery_tag| {
+                                Box::new(
+                                    channel
+                                        .basic_ack(delivery_tag, false)
+                                        .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("{}", e)))
+                                )
+                            })
+                            .or_else(move |e| {
+                                error!("Error downloading: {}", e);
 
-                                                    Box::new(
-                                                        channel
-                                                            .basic_ack(message.delivery_tag, false),
-                                                    )
-                                                }
-                                                Err(e) => {
-                                                    error!(
-                                                        "Error downloading {}: {}",
-                                                        &command.path, e
-                                                    );
-                                                    Box::new(channel.basic_nack(
-                                                        message.delivery_tag,
-                                                        false,
-                                                        false,
-                                                    ))
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("Error deserializing command: {}", e);
-                                            Box::new(channel.basic_nack(
-                                                message.delivery_tag,
-                                                false,
-                                                false,
-                                            ))
-                                        }
-                                    }
-                                },
+                                Box::new(channel_nack.basic_nack(
+                                    100,//delivery_tag,
+                                    false,
+                                    false,
+                                ).map_err(|e| SftpError::new(SftpErrorSource::Other, format!("{}", e))))
+                            })
+                            .for_each(
+                                |_| -> Result<(), SftpError> {
+                                    Ok(())
+                                }
                             )
                         })
                         .and_then(|_| {
@@ -205,7 +240,11 @@ where
 
             let stoppable_stream = stream.into_future().select2(stop_receiver.into_future());
 
-            runtime.spawn(stoppable_stream.map(|_result| debug!("End SFTP stream")).map_err(|_e| error!("Error: ")));
+            runtime.spawn(
+                stoppable_stream
+                    .map(|_result| debug!("End SFTP stream"))
+                    .map_err(|_e| error!("Error: ")),
+            );
 
             runtime.run().unwrap();
 
@@ -213,7 +252,7 @@ where
         })
     }
 
-    pub fn handle(&mut self, msg: &SftpDownload) -> Result<(), String> {
+    pub fn handle(&mut self, msg: &SftpDownload) -> Result<FileEvent, SftpError> {
         let remote_path = Path::new(&msg.path);
 
         let local_path = if remote_path.is_absolute() {
@@ -241,12 +280,20 @@ where
             }
         }
 
-        let open_result = self.sftp_connection.sftp.open(&remote_path);
+        let conn = self.sftp_connection.get();
+
+        let open_result = conn.sftp.open(&remote_path);
 
         let mut remote_file = match open_result {
             Ok(remote_file) => remote_file,
             Err(e) => {
-                return Err(format!("Error opening remote file {}: {}", msg.path, e));
+                // Reset the connection on an error, so that it will reconnect next time.
+                self.sftp_connection.reset();
+
+                return Err(SftpError::new(
+                    SftpErrorSource::SshError(e),
+                    format!("Error opening remote file {}", msg.path),
+                ));
             }
         };
 
@@ -263,10 +310,12 @@ where
                     );
                 }
                 Err(e) => {
-                    return Err(format!(
-                        "Error creating containing directory '{}': {}",
-                        local_path_parent.to_str().unwrap(),
-                        e
+                    return Err(SftpError::new(
+                        SftpErrorSource::IoError(e),
+                        format!(
+                            "Error creating containing directory '{}'",
+                            local_path_parent.to_str().unwrap()
+                        ),
                     ));
                 }
             }
@@ -277,10 +326,9 @@ where
         let mut local_file = match file_create_result {
             Ok(file) => file,
             Err(e) => {
-                return Err(format!(
-                    "Could not create file {}: {}",
-                    local_path.to_str().unwrap(),
-                    e
+                return Err(SftpError::new(
+                    SftpErrorSource::IoError(e),
+                    format!("Error creating local file {}", local_path.to_str().unwrap()),
                 ));
             }
         };
@@ -315,7 +363,7 @@ where
                     .inc_by(bytes_copied as i64);
 
                 if msg.remove {
-                    let unlink_result = self.sftp_connection.sftp.unlink(&remote_path);
+                    let unlink_result = conn.sftp.unlink(&remote_path);
 
                     match unlink_result {
                         Ok(_) => {
@@ -330,12 +378,12 @@ where
                     }
                 }
 
-                Ok(())
+                Ok(FileEvent {
+                    source_name: self.sftp_source.name.clone(),
+                    path: local_path,
+                })
             }
-            Err(e) => Err(format!(
-                "{} error downloading '{}': {}",
-                self.sftp_source.name, msg.path, e
-            )),
+            Err(e) => Err(SftpError::new(SftpErrorSource::IoError(e), "".to_string())),
         }
     }
 }
