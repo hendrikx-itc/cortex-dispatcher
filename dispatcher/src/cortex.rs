@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "linux")]
 extern crate inotify;
@@ -10,7 +11,7 @@ extern crate failure;
 use failure::Error;
 
 extern crate lapin_futures;
-use lapin_futures::{ConnectionProperties};
+use lapin;
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
@@ -26,6 +27,10 @@ use r2d2_postgres::PostgresConnectionManager;
 use signal_hook;
 use signal_hook::iterator::Signals;
 
+use crossbeam_channel::{bounded, Receiver};
+
+use cortex_core::SftpDownload;
+
 use crate::base_types::{Connection, RabbitMQNotify, Source, Target, CortexConfig, Notify};
 
 #[cfg(target_os = "linux")]
@@ -38,6 +43,7 @@ use crate::metrics_collector::metrics_collector;
 use crate::persistence::{Persistence, PostgresPersistence};
 use crate::settings;
 use crate::sftp_source::SftpDownloader;
+use crate::sftp_command_consumer::SftpCommandConsumer;
 
 fn stream_consuming_future(
     stream: Box<futures::Stream<Item = FileEvent, Error = ()> + Send>,
@@ -50,7 +56,7 @@ fn connect_channel(
 ) -> impl Future<Item = lapin_futures::Channel, Error = Error> + Send + 'static {
     lapin_futures::Client::connect(
         addr,
-        ConnectionProperties::default(),
+        lapin::ConnectionProperties::default(),
     )
     .map_err(Error::from)
     .and_then(|client| client.create_channel().map_err(Error::from))
@@ -165,35 +171,45 @@ pub fn run(settings: settings::Settings) {
 
     let persistence = PostgresPersistence::new(connection_manager);
 
-    let mut source_sender_pairs: Vec<(oneshot::Receiver<()>, settings::SftpSource, UnboundedSender<FileEvent>)> =
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+
+    stop_commands.push(Box::new(move || {
+        stop_clone.swap(true, Ordering::Relaxed);
+    }));
+
+    let mut source_sender_pairs: Vec<(settings::SftpSource, Receiver<SftpDownload>, UnboundedSender<FileEvent>)> =
         Vec::new();
 
+
+	let mut command_consumers = Vec::new();
+
     let mut sources = Vec::new();
+
+	let amqp_conn = lapin::Connection::connect(&settings.command_queue.address, lapin::ConnectionProperties::default()).wait().expect("connection error");
 
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
 
-        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+		let (s, r) = bounded(10);
 
-        stop_commands.push(Box::new(move || {
-            stop_sender.send(()).unwrap();
-        }));
+		command_consumers.push(
+			SftpCommandConsumer::start(stop.clone(), amqp_conn.clone(), sftp_source.clone(), s)
+		);
 
-        source_sender_pairs.push((stop_receiver, sftp_source.clone(), sender));
+        source_sender_pairs.push((sftp_source.clone(), r, sender));
         sources.push(Source {
             name: sftp_source.name.clone(),
             receiver: receiver,
         });
     });
 
-    let (sftp_join_handles, connect_future) = connect_sftp_downloaders(
-        &settings.command_queue.address,
+    let sftp_join_handles = connect_sftp_downloaders(
+		stop,
         source_sender_pairs,
         settings.storage.directory.clone(),
         persistence,
     );
-
-    runtime.spawn(connect_future);
 
     #[cfg(target_os = "linux")]
     sources.append(&mut directory_sources);
@@ -275,10 +291,7 @@ pub fn run(settings: settings::Settings) {
 
     wait_for(web_server_join_handle, "http server");
 
-    let l = Arc::try_unwrap(sftp_join_handles).expect("Cannot unwrap Arc");
-    let jhs = l.into_inner().expect("Cannot unlock Mutex");
-
-    jhs.into_iter().for_each(|jh| {
+    sftp_join_handles.into_iter().for_each(|jh| {
         wait_for(jh, "sftp download");
     });
 }
@@ -320,47 +333,25 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
 /// Connect to RabbitMQ and when the connection is made, start all SFTP
 /// downloaders that consume commands from it.
 fn connect_sftp_downloaders<T>(
-    rabbitmq_address: &str,
-    sftp_sources: Vec<(oneshot::Receiver<()>, settings::SftpSource, UnboundedSender<FileEvent>)>,
+	stop: Arc<AtomicBool>,
+    sftp_sources: Vec<(settings::SftpSource, Receiver<SftpDownload>, UnboundedSender<FileEvent>)>,
     storage_directory: std::path::PathBuf,
     persistence: T,
-) -> (
-    Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
-    impl Future<Item = (), Error = ()>,
-)
+) -> Vec<thread::JoinHandle<()>>
 where
     T: Persistence,
     T: Send,
     T: Clone,
     T: 'static,
 {
-    let join_handles = Arc::new(Mutex::new(Vec::new()));
-    let join_handles_result = join_handles.clone();
-
-    let stream = lapin_futures::Client::connect(
-        &rabbitmq_address,
-        ConnectionProperties::default(),
-    )
-    .map_err(failure::Error::from)
-    .and_then(move |client| {
-        for (stop_receiver, sftp_source, sender) in sftp_sources {
-            let mut jhs = join_handles.lock().unwrap();
-
-            jhs.push(SftpDownloader::start(
-                stop_receiver,
-                client.clone(),
-                sftp_source.clone(),
-                sender,
-                storage_directory.clone(),
-                persistence.clone(),
-            ));
-        }
-
-        futures::future::ok(())
-    })
-    .map_err(|e| {
-        error!("{}", e);
-    });
-
-    (join_handles_result, stream)
+	sftp_sources.into_iter().map(|(sftp_source, receiver, sender)| {
+		SftpDownloader::start(
+			stop.clone(),
+			receiver.clone(),
+			sftp_source.clone(),
+			sender,
+			storage_directory.clone(),
+			persistence.clone(),
+		)
+	}).collect()
 }

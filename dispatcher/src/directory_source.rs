@@ -11,7 +11,7 @@ use futures::future::{Future, IntoFuture};
 use futures::stream::Stream;
 
 extern crate failure;
-extern crate lapin_futures;
+extern crate lapin;
 
 use crate::base_types::Source;
 use crate::event::FileEvent;

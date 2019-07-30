@@ -19,6 +19,7 @@ mod metrics_collector;
 mod persistence;
 mod settings;
 mod sftp_source;
+mod sftp_command_consumer;
 
 use settings::Settings;
 

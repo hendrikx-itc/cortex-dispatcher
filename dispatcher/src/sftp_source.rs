@@ -3,21 +3,15 @@ use std::fmt;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::thread;
+use std::{thread, time};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 extern crate failure;
 
-extern crate lapin_futures;
-use lapin_futures::options::{BasicConsumeOptions, QueueBindOptions, QueueDeclareOptions};
-use lapin_futures::types::FieldTable;
-
-use tokio::prelude::*;
-use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::oneshot;
 
-use retry::retry;
-use retry::delay::{Exponential, jitter};
+use crossbeam_channel::Receiver;
 
 use crate::event::FileEvent;
 use crate::metrics;
@@ -26,8 +20,6 @@ use crate::settings;
 
 use cortex_core::sftp_connection::SftpConnectionManager;
 use cortex_core::SftpDownload;
-
-use failure::Error;
 
 use sha2::{Digest, Sha256};
 use tee::TeeReader;
@@ -97,8 +89,8 @@ where
     T: 'static,
 {
     pub fn start(
-        stop_receiver: oneshot::Receiver<()>,
-        amqp_client: lapin_futures::Client,
+    	stop: Arc<AtomicBool>,
+		receiver: Receiver<SftpDownload>,
         config: settings::SftpSource,
         mut sender: UnboundedSender<FileEvent>,
         data_dir: PathBuf,
@@ -113,8 +105,6 @@ where
                 config.compress,
             );
 
-            let mut runtime = Runtime::new().unwrap();
-
             let mut sftp_downloader = SftpDownloader {
                 sftp_source: config.clone(),
                 sftp_connection: conn_mgr,
@@ -122,131 +112,47 @@ where
                 local_storage_path: data_dir.clone(),
             };
 
-            let sftp_source_name = config.name.clone();
-            let sftp_source_name_2 = config.name.clone();
+			let timeout = time::Duration::from_millis(100);
 
-            let stream = amqp_client
-                .create_channel()
-                .map_err(Error::from)
-                .and_then(|channel| {
+        	while !stop.load(Ordering::Relaxed) {
+				let receive_result = receiver.recv_timeout(timeout);
 
-                    let channel_nack = channel.clone();
-                    info!("Created channel with id {}", channel.id());
+				match receive_result {
+					Ok(command) => {
+						let download_result = sftp_downloader.handle(&command);
 
-                    let queue_name = format!("source.{}", &sftp_source_name);
+						match download_result {
+							Ok(_) => {
+								// Notify about new data from this SFTP source
+								let send_result = sender
+									.try_send(FileEvent {
+										source_name: config.name.clone(),
+										path: PathBuf::from(command.path),
+									});
 
-                    channel
-                        .queue_declare(
-                            &queue_name,
-                            QueueDeclareOptions::default(),
-                            FieldTable::default(),
-                        )
-                        .map(|queue| (channel, queue))
-                        .and_then(move |(channel, queue)| {
-                            info!("Channel {} declared queue {}", channel.id(), &queue_name);
+								match send_result {
+									Ok(_) => (),
+									Err(e) => {
+										error!("Error sending download notification: {}", e);
+									}
+								}
 
-                            let routing_key = format!("source.{}", &sftp_source_name);
-                            let exchange = "amq.direct";
+								
 
-                            channel
-                                .queue_bind(
-                                    &queue_name,
-                                    &exchange,
-                                    &routing_key,
-                                    QueueBindOptions::default(),
-                                    FieldTable::default(),
-                                )
-                                .map(|_| (channel, queue))
-                        })
-                        .and_then(move |(channel, queue)| {
-                            // basic_consume returns a future of a message
-                            // stream. Any time a message arrives for this consumer,
-                            // the for_each method would be called
-                            channel
-                                .basic_consume(
-                                    &queue,
-                                    "cortex-dispatcher",
-                                    BasicConsumeOptions::default(),
-                                    FieldTable::default(),
-                                )
-                                .map(|stream| (channel, stream))
-                        })
-                        .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("{}", e)))
-                        .and_then(move |(channel, stream)| {
-                            stream
-                            .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("Error parsing message: {}", e)))
-                            .and_then(move |message| -> Result<(SftpDownload, u64), SftpError> {
-                                metrics::MESSAGES_RECEIVED_COUNTER
-                                    .with_label_values(&[&sftp_source_name_2])
-                                    .inc();
-                                debug!("Received message from RabbitMQ");
-
-                                let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
-
-                                match deserialize_result {
-                                    Ok(sftp_download) => Ok((sftp_download, message.delivery_tag)),
-                                    Err(e) => Err(SftpError::new(SftpErrorSource::Other, format!("Error parsing message: {}", e)))
-                                }
-                            })
-                            .and_then(move |(command, delivery_tag)| {
-                                let retry_strategy = Exponential::from_millis(100).map(jitter).take(3);
-
-                                retry(retry_strategy, || -> Result<FileEvent, SftpError> {
-                                    sftp_downloader.handle(&command)
-                                })
-                                .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("Error parsing message: {}", e)))
-                                .map(move |file_event| (file_event, delivery_tag))
-
-                                //sftp_downloader.handle(&command).map(|file_event| (file_event, delivery_tag))
-                            })
-                            .and_then(move |(file_event, delivery_tag)|{
-                                // Notify about new data from this SFTP source
-                                sender
-                                    .try_send(file_event)
-                                    .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("Error sending file event: {}", e)))
-                                    .map(|_| delivery_tag)
-                            }) 
-                            .and_then(move |delivery_tag| {
-                                Box::new(
-                                    channel
-                                        .basic_ack(delivery_tag, false)
-                                        .map_err(|e| SftpError::new(SftpErrorSource::Other, format!("{}", e)))
-                                )
-                            })
-                            .or_else(move |e| {
-                                error!("Error downloading: {}", e);
-
-                                Box::new(channel_nack.basic_nack(
-                                    100,//delivery_tag,
-                                    false,
-                                    false,
-                                ).map_err(|e| SftpError::new(SftpErrorSource::Other, format!("{}", e))))
-                            })
-                            .for_each(
-                                |_| -> Result<(), SftpError> {
-                                    Ok(())
-                                }
-                            )
-                        })
-                        .and_then(|_| {
-                            info!("Consumer stream ended");
-                            future::ok(())
-                        })
-                        .map_err(Error::from)
-                })
-                .map_err(|e| {
-                    error!("{}", e);
-                });
-
-            let stoppable_stream = stream.into_future().select2(stop_receiver.into_future());
-
-            runtime.spawn(
-                stoppable_stream
-                    .map(|_result| debug!("End SFTP stream"))
-                    .map_err(|_e| error!("Error: ")),
-            );
-
-            runtime.run().unwrap();
+								//self.channel.basic_ack(delivery.delivery_tag, BasicAckOptions::default()).as_error().expect("basic_ack");
+							}
+							Err(e) => {
+								error!(
+									"Error downloading {}: {}",
+									&command.path, e
+								);
+								//self.channel.basic_nack(delivery.delivery_tag, BasicNackOptions::default()).as_error().expect("basic_nack");
+							}
+						}
+					},
+					Err(e) => ()
+				}
+            }
 
             debug!("SFTP source stream ended");
         })
