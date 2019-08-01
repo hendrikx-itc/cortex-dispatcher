@@ -160,7 +160,7 @@ where
 							}
 							Err(e) => {
 								error!(
-									"Error downloading {}: {}",
+									"Error downloading {}: {:?}",
 									&command.path, e
 								);
 							}

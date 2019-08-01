@@ -15,7 +15,7 @@ use lapin;
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::mpsc::unbounded_channel;
 use tokio_executor::enter;
 use tokio::sync::oneshot;
 
@@ -27,9 +27,7 @@ use r2d2_postgres::PostgresConnectionManager;
 use signal_hook;
 use signal_hook::iterator::Signals;
 
-use crossbeam_channel::{bounded, Receiver};
-
-use cortex_core::SftpDownload;
+use crossbeam_channel::bounded;
 
 use crate::base_types::{Connection, RabbitMQNotify, Source, Target, CortexConfig, Notify};
 
@@ -40,7 +38,7 @@ use crate::directory_target::to_stream;
 use crate::event::FileEvent;
 use crate::http_server::start_http_server;
 use crate::metrics_collector::metrics_collector;
-use crate::persistence::{Persistence, PostgresPersistence};
+use crate::persistence::PostgresPersistence;
 use crate::settings;
 use crate::sftp_source::SftpDownloader;
 use crate::sftp_command_consumer::SftpCommandConsumer;
@@ -178,13 +176,10 @@ pub fn run(settings: settings::Settings) {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
-    let mut source_sender_pairs: Vec<(settings::SftpSource, Receiver<SftpDownload>, UnboundedSender<FileEvent>)> =
-        Vec::new();
-
-
 	let mut command_consumers = Vec::new();
 
     let mut sources = Vec::new();
+    let mut sftp_join_handles = Vec::new();
 
 	let amqp_conn = lapin::Connection::connect(&settings.command_queue.address, lapin::ConnectionProperties::default()).wait().expect("connection error");
 
@@ -197,19 +192,24 @@ pub fn run(settings: settings::Settings) {
 			SftpCommandConsumer::start(stop.clone(), amqp_conn.clone(), sftp_source.clone(), s)
 		);
 
-        source_sender_pairs.push((sftp_source.clone(), r, sender));
+        for n in 0..sftp_source.thread_count {
+            sftp_join_handles.push(SftpDownloader::start(
+                stop.clone(),
+                r.clone(),
+                sftp_source.clone(),
+                sender.clone(),
+                settings.storage.directory.clone(),
+                persistence.clone(),
+            ));
+
+            info!("Started {} download thread {}", &sftp_source.name, n + 1);
+        }
+
         sources.push(Source {
             name: sftp_source.name.clone(),
             receiver: receiver,
         });
     });
-
-    let sftp_join_handles = connect_sftp_downloaders(
-		stop,
-        source_sender_pairs,
-        settings.storage.directory.clone(),
-        persistence,
-    );
 
     #[cfg(target_os = "linux")]
     sources.append(&mut directory_sources);
@@ -331,30 +331,4 @@ fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
             error!("{} thread stopped with error: {:?}", thread_name, e);
         }
     }
-}
-
-/// Connect to RabbitMQ and when the connection is made, start all SFTP
-/// downloaders that consume commands from it.
-fn connect_sftp_downloaders<T>(
-	stop: Arc<AtomicBool>,
-    sftp_sources: Vec<(settings::SftpSource, Receiver<SftpDownload>, UnboundedSender<FileEvent>)>,
-    storage_directory: std::path::PathBuf,
-    persistence: T,
-) -> Vec<thread::JoinHandle<()>>
-where
-    T: Persistence,
-    T: Send,
-    T: Clone,
-    T: 'static,
-{
-	sftp_sources.into_iter().map(|(sftp_source, receiver, sender)| {
-		SftpDownloader::start(
-			stop.clone(),
-			receiver.clone(),
-			sftp_source.clone(),
-			sender,
-			storage_directory.clone(),
-			persistence.clone(),
-		)
-	}).collect()
 }
