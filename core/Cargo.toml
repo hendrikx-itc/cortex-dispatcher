@@ -1,6 +1,6 @@
 [package]
 name = "cortex-core"
-version = "0.1.2"
+version = "0.1.19"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
 
