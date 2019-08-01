@@ -45,6 +45,8 @@ impl ConsumerDelegate for SftpCommandConsumer
                     Ok(_) => debug!("Message sent to downloaders"),
                     Err(e) => error!("Error sending message to downloaders: {}", e)
                 }
+
+                self.channel.basic_ack(delivery.delivery_tag, BasicAckOptions::default()).as_error().expect("basic_ack");
             }
             Err(e) => {
                 error!("Error deserializing command: {}", e);
