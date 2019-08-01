@@ -248,7 +248,10 @@ pub fn run(settings: settings::Settings) {
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
         stop_commands.push(Box::new(move || {
-            stop_sender.send(()).unwrap();
+            match stop_sender.send(()) {
+				Ok(_) => (),
+				Err(e) => error!("Error sending stop signal: {:?}", e)
+			}
         }));
 
         let stoppable_dispatcher = local_event_dispatcher.select2(stop_receiver.into_future());

@@ -11,7 +11,8 @@ extern crate failure;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, RecvTimeoutError};
+use retry::{retry, delay::Fixed, OperationResult};
 
 use crate::event::FileEvent;
 use crate::metrics;
@@ -112,14 +113,34 @@ where
                 local_storage_path: data_dir.clone(),
             };
 
-			let timeout = time::Duration::from_millis(100);
+			let timeout = time::Duration::from_millis(500);
 
         	while !stop.load(Ordering::Relaxed) {
 				let receive_result = receiver.recv_timeout(timeout);
 
 				match receive_result {
 					Ok(command) => {
-						let download_result = sftp_downloader.handle(&command);
+						let retry_policy = Fixed::from_millis(100).take(3);
+						let download_result = retry(retry_policy, || {
+							match sftp_downloader.handle(&command) {
+								Ok(file_event) => OperationResult::Ok(file_event),
+								Err(e) => {
+									match e.source {
+										SftpErrorSource::SshError(ie) => {
+											if ie.code() == 0 {
+												let new_err = SftpError::new(SftpErrorSource::SshError(ie), "".to_string());
+												OperationResult::Retry(new_err)
+											} else {
+												let new_err = SftpError::new(SftpErrorSource::SshError(ie), "".to_string());
+												OperationResult::Err(new_err)
+											}
+										}
+										SftpErrorSource::IoError(_) => OperationResult::Err(e),
+										SftpErrorSource::Other => OperationResult::Err(e)
+									}
+								}
+							}
+						});
 
 						match download_result {
 							Ok(_) => {
@@ -136,21 +157,23 @@ where
 										error!("Error sending download notification: {}", e);
 									}
 								}
-
-								
-
-								//self.channel.basic_ack(delivery.delivery_tag, BasicAckOptions::default()).as_error().expect("basic_ack");
 							}
 							Err(e) => {
 								error!(
 									"Error downloading {}: {}",
 									&command.path, e
 								);
-								//self.channel.basic_nack(delivery.delivery_tag, BasicNackOptions::default()).as_error().expect("basic_nack");
 							}
 						}
 					},
-					Err(e) => ()
+					Err(e) => {
+						match e {
+							RecvTimeoutError::Timeout => (),
+							RecvTimeoutError::Disconnected => {
+								error!("Channel disconnected")
+							}
+						}
+					}
 				}
             }
 
@@ -193,8 +216,10 @@ where
         let mut remote_file = match open_result {
             Ok(remote_file) => remote_file,
             Err(e) => {
-                // Reset the connection on an error, so that it will reconnect next time.
-                self.sftp_connection.reset();
+				if e.code() == 0 {
+					// Reset the connection on an error, so that it will reconnect next time.
+					self.sftp_connection.reset();
+				}
 
                 return Err(SftpError::new(
                     SftpErrorSource::SshError(e),
