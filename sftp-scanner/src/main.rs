@@ -4,18 +4,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write;
 
-use crate::lapin::{BasicProperties, ConnectionProperties};
-use crate::lapin::options::BasicPublishOptions;
 use env_logger;
-use failure::Error;
 use futures::stream::Stream;
-use futures::sync::mpsc::{channel, Receiver};
-use futures::{Future, IntoFuture};
-use lapin_futures as lapin;
+use futures::Future;
 use log::{debug, error, info};
-use serde_json;
 use tokio;
 use tokio_executor::enter;
+
+use crossbeam_channel::bounded;
 
 use signal_hook;
 use signal_hook::iterator::Signals;
@@ -36,13 +32,13 @@ extern crate postgres;
 extern crate serde_yaml;
 
 extern crate cortex_core;
-use cortex_core::SftpDownload;
 
 mod cmd;
 mod http_server;
 mod metrics;
 mod settings;
 mod sftp_scanner;
+mod amqp_sender;
 
 use settings::Settings;
 
@@ -82,7 +78,7 @@ fn main() {
     let mut stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>> = Vec::new();
 
     // Setup the channel that connects to the RabbitMQ queue for SFTP download commands.
-    let (cmd_sender, cmd_receiver) = channel(4096);
+    let (cmd_sender, cmd_receiver) = bounded(4096);
 
     let stop = Arc::new(AtomicBool::new(false));
 
@@ -134,18 +130,14 @@ fn main() {
         actix_system.stop();
     }));
 
-    let (stop_sender, stop_receiver) = tokio::sync::oneshot::channel();
-
-    stop_commands.push(Box::new(move || {
-        stop_sender.send(()).unwrap();
-    }));
+    let amqp_sender_join_handle = amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address);
 
     // Use a stream to connect the command channel to the AMQP queue.
-    let future = channel_to_amqp(stop_receiver, cmd_receiver, &settings.command_queue.address);
+    //let future = channel_to_amqp(stop_receiver, cmd_receiver, &settings.command_queue.address);
 
     runtime.spawn(setup_signal_handler(stop_commands));
 
-    runtime.spawn(future);
+    //runtime.spawn(future);
 
     entered
         .block_on(runtime.shutdown_on_idle())
@@ -171,6 +163,13 @@ fn main() {
     match res {
         Ok(()) => info!("Http server thread stopped"),
         Err(e) => error!("Http server thread stopped with error: {:?}", e),
+    }
+
+    let res = amqp_sender_join_handle.join();
+
+    match res {
+        Ok(()) => info!("AMQP sender thread stopped"),
+        Err(e) => error!("AMQP sender thread stopped with error: {:?}", e),
     }
 
     if let Some(join_handle) = metrics_collector_join_handle {
@@ -204,60 +203,6 @@ fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'stat
         .map_err(|e| panic!("{}", e.0))
 }
 
-/// Connects a channel receiver to an AMQP queue.
-fn channel_to_amqp(
-    stop_receiver: tokio::sync::oneshot::Receiver<()>,
-    receiver: Receiver<SftpDownload>,
-    addr: &str,
-) -> impl Future<Item = (), Error = ()> + Send + 'static {
-    connect_channel(&addr)
-        .map(move |channel| {
-            let stream = receiver.for_each(move |cmd| {
-                let command_str = serde_json::to_string(&cmd).unwrap();
-
-                let exchange = "amq.direct";
-
-                let routing_key = format!("source.{}", &cmd.sftp_source);
-
-                let future = channel
-                    .basic_publish(
-                        exchange,
-                        &routing_key,
-                        command_str.as_bytes().to_vec(),
-                        BasicPublishOptions::default(),
-                        BasicProperties::default(),
-                    )
-                    .and_then(move |_request_result| {
-                        debug!("Command sent: {}", cmd);
-                        // No confirmation/ack is expected
-                        Ok(())
-                    })
-                    .map_err(|e| {
-                        error!("Error sending command: {:?}", e);
-                    });
-
-                tokio::spawn(future);
-
-                Ok(())
-            });
-
-            let stoppable_stream = stream.into_future().select2(stop_receiver.into_future());
-
-            tokio::spawn(stoppable_stream.map(|_result| debug!("End amqp command stream")).map_err(|_e| error!("Error: ")));
-        })
-        .and_then(|_| Ok(()))
-        .map_err(|e| error!("Error: {:?}", e))
-}
-
-fn connect_channel(
-    addr: &str,
-) -> impl Future<Item = lapin::Channel, Error = Error> + Send + 'static {
-    lapin::Client::connect(addr, ConnectionProperties::default())
-        .map_err(Error::from)
-        .and_then(|client| {
-            client.create_channel().map_err(Error::from)
-        })
-}
 
 fn load_settings(config_file: &str) -> Settings {
     info!("Loading configuration from file {}", config_file);

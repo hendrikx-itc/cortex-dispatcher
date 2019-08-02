@@ -1,6 +1,6 @@
 [package]
 name = "cortex-sftp-scanner"
-version = "0.1.20"
+version = "0.1.21"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
 description = "A service to scan for files on SFTP servers and enqueue jobs for the Cortex dispatcher."
@@ -15,6 +15,7 @@ config = "0.9"
 env_logger = "0.6.2"
 failure = "0.1.5"
 futures = "0.1"
+lapin = "0.25.0"
 lapin-futures = "0.25.0"
 log = "0.4"
 owning_ref = "0.4.0"
@@ -35,3 +36,5 @@ cortex-core = { path = "../core" }
 actix-web = "1.0.5"
 actix-rt = "0.2.4"
 signal-hook = { version = "0.1.10", features = ["tokio-support"] }
+retry = "0.5.1"
+crossbeam-channel = "0.3"

@@ -4,8 +4,10 @@ use std::{thread, time};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::sync::mpsc::Sender;
+use crossbeam_channel::{Sender, SendTimeoutError};
 use log::{debug, error, info};
+
+use retry::{retry, delay::Fixed, OperationResult};
 
 extern crate chrono;
 use chrono::prelude::*;
@@ -187,11 +189,26 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                         remove: sftp_source.remove
                     };
 
-                    let send_result = sender.try_send(command);
+                    let retry_policy = Fixed::from_millis(100);
+                    let send_timeout = time::Duration::from_millis(1000);
+
+                    let send_result = retry(retry_policy, || {
+                        let result = sender.send_timeout(command.clone(), send_timeout);
+
+                        match result {
+                            Ok(v) => OperationResult::Ok(v),
+                            Err(e) => {
+                                match e {
+                                    SendTimeoutError::Timeout(timeout) => OperationResult::Retry(timeout),
+                                    SendTimeoutError::Disconnected(timeout) => OperationResult::Err(timeout)
+                                }
+                            }
+                        }
+                    });
 
                     match send_result {
                         Ok(_) => (),
-                        Err(e) => error!("Error sending download message on channel: {}", e)
+                        Err(e) => error!("Error sending download message on channel: {:?}", e)
                     }
                 } else {
                     debug!("{} already encountered {}", sftp_source.name, path_str);
