@@ -647,6 +647,7 @@ dependencies = [
  "lazy_static 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "postgres 0.16.0-rc.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "proctitle 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "prometheus 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "r2d2 0.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "r2d2_postgres 0.15.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -679,6 +680,7 @@ dependencies = [
  "cortex-core 0.1.20",
  "crossbeam-channel 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "error-chain 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.28 (registry+https://github.com/rust-lang/crates.io-index)",
  "lapin 0.25.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -687,6 +689,7 @@ dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "owning_ref 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "postgres 0.15.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "proctitle 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "prometheus 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 1.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "retry 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2001,6 +2004,16 @@ version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "unicode-xid 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "proctitle"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "lazy_static 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.58 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -3568,6 +3581,7 @@ dependencies = [
 "checksum postgres-shared 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "ffac35b3e0029b404c24a3b82149b4e904f293e8ca4a327eefa24d3ca50df36f"
 "checksum ppv-lite86 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)" = "e3cbf9f658cdb5000fcf6f362b8ea2ba154b9f146a61c7a20d647034c6b6561b"
 "checksum proc-macro2 0.4.30 (registry+https://github.com/rust-lang/crates.io-index)" = "cf3d2011ab5c909338f7887f4fc896d35932e29146c12c8d01da6b22a80ba759"
+"checksum proctitle 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "924cd8a0de90723d63fed19c5035ea129913a0bc998b37686a67f1eaf6a2aab5"
 "checksum prometheus 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5567486d5778e2c6455b1b90ff1c558f29e751fc018130fa182e15828e728af1"
 "checksum protobuf 2.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7e9076cae823584ab4d8fab3a111658d1232faf106611dc8378161b7d062b628"
 "checksum publicsuffix 1.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5afecba86dcf1e4fd610246f89899d1924fe12e1e89f555eb7c7f710f3c5ad1d"

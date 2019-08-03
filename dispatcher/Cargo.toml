@@ -54,6 +54,7 @@ r2d2_postgres = "0.15.0-rc.1"
 tera = "0.11"
 signal-hook = { version = "0.1.10", features = ["tokio-support"] }
 retry = "0.5.1"
+proctitle = "0.1.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = "0.7"

@@ -30,6 +30,10 @@ extern crate lazy_static;
 extern crate chrono;
 extern crate postgres;
 extern crate serde_yaml;
+extern crate proctitle;
+
+#[macro_use]
+extern crate error_chain;
 
 extern crate cortex_core;
 
@@ -39,6 +43,14 @@ mod metrics;
 mod settings;
 mod sftp_scanner;
 mod amqp_sender;
+
+// We'll put our errors in an `errors` module, and other modules in
+// this crate will `use errors::*;` to get access to everything
+// `error_chain!` creates.
+mod errors {
+    // Create the Error, ErrorKind, ResultExt, and Result types
+    error_chain!{}
+}
 
 use settings::Settings;
 

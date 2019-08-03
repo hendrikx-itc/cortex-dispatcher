@@ -12,11 +12,19 @@ use retry::{retry, delay::Fixed, OperationResult};
 extern crate chrono;
 use chrono::prelude::*;
 
+use proctitle;
+
 use cortex_core::sftp_connection::SftpConnection;
 use cortex_core::SftpDownload;
 
 use crate::metrics;
 use crate::settings::SftpSource;
+
+
+error_chain! {
+    errors { DisconnectedError }
+}
+
 
 /// Starts a new thread with an SFTP scanner for the specified source.
 ///
@@ -32,6 +40,8 @@ pub fn start_scanner(
     sftp_source: SftpSource,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
+        proctitle::set_title(format!("sftp-scanner {}", &sftp_source.name));
+
         let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
 
         let conn = match conn_result {
@@ -45,22 +55,28 @@ pub fn start_scanner(
             }
         };
 
-        let sftp_connection = loop {
-            let conn_result = SftpConnection::new(
-                &sftp_source.address.clone(),
-                &sftp_source.username.clone(),
-                sftp_source.password.clone(),
-                sftp_source.key_file.clone(),
-                false,
-            );
+		let sftp_source_clone = sftp_source.clone();
 
-            match conn_result {
-                Ok(c) => break c,
-                Err(e) => error!("Could not connect: {}", e),
-            }
+		let connect = move || {
+			loop {
+				let conn_result = SftpConnection::new(
+					&sftp_source_clone.address.clone(),
+					&sftp_source_clone.username.clone(),
+					sftp_source_clone.password.clone(),
+					sftp_source_clone.key_file.clone(),
+					false,
+				);
 
-            thread::sleep(time::Duration::from_millis(1000));
-        };
+				match conn_result {
+					Ok(c) => break c,
+					Err(e) => error!("Could not connect: {}", e),
+				}
+
+				thread::sleep(time::Duration::from_millis(1000));
+			}
+		};
+
+        let mut sftp_connection = connect();
 
         let scan_interval = time::Duration::from_millis(sftp_source.scan_interval);
         let mut next_scan = time::Instant::now();
@@ -72,7 +88,19 @@ pub fn start_scanner(
                 let scan_start = time::Instant::now();
                 debug!("Started scanning {}", &sftp_source.name);
 
-                scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
+                let scan_result = scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
+
+				match scan_result {
+					Ok(_) => (),
+					Err(e) => {
+						match e {
+							Error(ErrorKind::DisconnectedError, _) => {
+								sftp_connection = connect();
+							},
+							_ => ()
+						}
+					}
+				}
 
                 let scan_end = time::Instant::now();
 
@@ -97,11 +125,11 @@ pub fn start_scanner(
     })
 }
 
-fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
-    scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender);
+fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
+    scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender)
 }
 
-fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) {
+fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
     debug!("Directory scan started for {}", &directory.to_str().unwrap());
 
     let read_result = sftp_connection
@@ -111,8 +139,11 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
     let paths = match read_result {
         Ok(paths) => paths,
         Err(e) => {
-            error!("Could not read directory {}: {}", &directory.to_str().unwrap(), e);
-            return;
+			if e.code() == 0 {
+				return Err(ErrorKind::DisconnectedError.into());
+			} else {
+				return Err(Error::with_chain(e, "could not read directory"));
+			}
         }
     };
 
@@ -126,7 +157,17 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
         if stat.is_dir() {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
-            scan_directory(stop, sftp_source, &dir, sftp_connection, conn, sender);
+            let scan_result = scan_directory(stop, sftp_source, &dir, sftp_connection, conn, sender);
+
+			match scan_result {
+				Ok(_) => (),
+				Err(e) => {
+					match e {
+						Error(ErrorKind::DisconnectedError, _) => return Err(e),
+						_ => ()
+					}
+				}
+			}
         } else {
             let file_size: u64 = stat.size.unwrap();
 
@@ -136,7 +177,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                 Ok(size) => size,
                 Err(e) => {
                     error!("Could not convert file size to type that can be stored in database: {}", e);
-                    return;
+					continue;
                 }
             };
 
@@ -218,4 +259,6 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
             }
         }
     }
+
+	Ok(())
 }

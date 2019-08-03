@@ -38,3 +38,5 @@ actix-rt = "0.2.4"
 signal-hook = { version = "0.1.10", features = ["tokio-support"] }
 retry = "0.5.1"
 crossbeam-channel = "0.3"
+proctitle = "0.1.1"
+error-chain = "0.12.1"
