@@ -86,7 +86,7 @@ pub fn start_scanner(
                 next_scan += scan_interval;
 
                 let scan_start = time::Instant::now();
-                debug!("Started scanning {}", &sftp_source.name);
+                info!("Started scanning {}", &sftp_source.name);
 
                 let scan_result = scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
 
@@ -106,7 +106,7 @@ pub fn start_scanner(
 
                 let scan_duration = scan_end.duration_since(scan_start);
 
-                debug!(
+                info!(
                     "Finished scanning {} in {} ms",
                     &sftp_source.name,
                     scan_duration.as_millis()
