@@ -143,13 +143,9 @@ where
 						});
 
 						match download_result {
-							Ok(_) => {
+							Ok(file_event) => {
 								// Notify about new data from this SFTP source
-								let send_result = sender
-									.try_send(FileEvent {
-										source_name: config.name.clone(),
-										path: PathBuf::from(command.path),
-									});
+								let send_result = sender.try_send(file_event);
 
 								match send_result {
 									Ok(_) => (),
