@@ -34,6 +34,9 @@ extern crate sha2;
 extern crate tee;
 
 #[macro_use]
+extern crate error_chain;
+
+#[macro_use]
 extern crate prometheus;
 
 #[macro_use]

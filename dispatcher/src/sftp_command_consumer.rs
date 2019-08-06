@@ -60,7 +60,7 @@ impl ConsumerDelegate for SftpCommandConsumer
 impl SftpCommandConsumer
 {
     pub fn start(
-    	stop: Arc<AtomicBool>,
+        stop: Arc<AtomicBool>,
         amqp_client: Connection,
         config: settings::SftpSource,
         sender: Sender<SftpDownload>
@@ -100,7 +100,7 @@ impl SftpCommandConsumer
                 .expect("basic_consume")
                 .set_delegate(sftp_downloader);
 
-        	while !stop.load(Ordering::Relaxed) {
+            while !stop.load(Ordering::Relaxed) {
                 thread::sleep(time::Duration::from_millis(100));
             }
 

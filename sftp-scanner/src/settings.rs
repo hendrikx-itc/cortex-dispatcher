@@ -75,7 +75,7 @@ impl Default for Settings {
                     regex: Regex::new("^.*\\.xml$").unwrap(),
                     directory: "upload/red".to_string(),
                     deduplicate: false,
-		    remove: true,
+            remove: true,
                     scan_interval: 3000
                 },
                 SftpSource {
@@ -87,7 +87,7 @@ impl Default for Settings {
                     regex: Regex::new("^.*\\.xml$").unwrap(),
                     directory: "upload/blue".to_string(),
                     deduplicate: false,
-		    remove: true,
+            remove: true,
                     scan_interval: 2000
                 },
             ],

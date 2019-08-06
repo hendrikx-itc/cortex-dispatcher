@@ -43,9 +43,9 @@ where
         let mut client = self.conn_pool.get().unwrap();
 
         let execute_result = client.execute(
-			"insert into dispatcher.sftp_download (remote, path, size, hash) values ($1, $2, $3, $4)",
-			&[&source, &path, &size, &hash]
-		);
+            "insert into dispatcher.sftp_download (remote, path, size, hash) values ($1, $2, $3, $4)",
+            &[&source, &path, &size, &hash]
+        );
 
         match execute_result {
             Ok(_) => {}

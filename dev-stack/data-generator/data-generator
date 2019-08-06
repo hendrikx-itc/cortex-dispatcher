@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import os
+import datetime
+import time
+import logging
+
+import pysftp
+
+
+def main():
+    root_logger = logging.getLogger('')
+    root_logger.setLevel(logging.INFO)
+
+    cnopts = pysftp.CnOpts()
+    cnopts.hostkeys = None
+
+    storage_path = '.'
+
+    interval = datetime.timedelta(seconds=30)
+    next_run = datetime.datetime.now()
+
+    with pysftp.Connection('localhost', port=2222, username='cortex', password='password', cnopts=cnopts) as sftp:
+        while True:
+            now = datetime.datetime.now()
+
+            if now > next_run:
+                logging.info("Data generation start")
+
+                generate_data(sftp, storage_path, next_run)
+
+                next_run += interval
+
+                logging.info("Done, waiting for next run at {}".format(next_run))
+
+            time.sleep(100)
+
+
+def send_file(sftp, storage_path, file_name):
+    file_path = os.path.join(storage_path, file_name)
+
+    generate_file(file_path)
+
+    sftp.put(file_path, file_name)
+
+    os.remove(file_path)
+
+
+def generate_data(sftp, storage_path, timestamp):
+    with sftp.cd('upload/blue/1'):
+        for i in range(100):
+            file_name = 'test_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+
+            send_file(sftp, storage_path, file_name)
+
+
+def generate_file(file_path):
+    with open(file_path, 'w') as out_file:
+        out_file.writelines(generate_file_lines())
+
+    logging.info("Written {}".format(file_path))
+
+
+def generate_file_lines():
+    for i in range(10000):
+        yield ','.join(str(i) for i in range(30))
+
+
+if __name__ == '__main__':
+    main()

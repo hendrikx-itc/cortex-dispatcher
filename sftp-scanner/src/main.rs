@@ -37,12 +37,16 @@ extern crate error_chain;
 
 extern crate cortex_core;
 
+use cortex_core::wait_for;
+
 mod cmd;
 mod http_server;
 mod metrics;
 mod settings;
 mod sftp_scanner;
 mod amqp_sender;
+
+use sftp_scanner::Error;
 
 // We'll put our errors in an `errors` module, and other modules in
 // this crate will `use errors::*;` to get access to everything
@@ -102,7 +106,7 @@ fn main() {
 
     // Start every configured scanner in it's own thread and have them send commands to the
     // command channel.
-    let scanner_threads: Vec<(String, thread::JoinHandle<()>)> = settings
+    let scanner_threads: Vec<(String, thread::JoinHandle<Result<(), Error>>)> = settings
         .sftp_sources
         .clone()
         .into_iter()
@@ -144,12 +148,7 @@ fn main() {
 
     let amqp_sender_join_handle = amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address);
 
-    // Use a stream to connect the command channel to the AMQP queue.
-    //let future = channel_to_amqp(stop_receiver, cmd_receiver, &settings.command_queue.address);
-
     runtime.spawn(setup_signal_handler(stop_commands));
-
-    //runtime.spawn(future);
 
     entered
         .block_on(runtime.shutdown_on_idle())
@@ -158,39 +157,14 @@ fn main() {
     for (source_name, scanner_thread) in scanner_threads {
         info!("Waiting for scanner thread '{}' to stop", &source_name);
 
-        let res = scanner_thread.join();
-
-        match res {
-            Ok(()) => {
-                info!("Scanner thread '{}' stopped", &source_name);
-            }
-            Err(e) => {
-                error!("Scanner thread '{}' stopped with error: {:?}", &source_name, e)
-            }
-        }
+        wait_for(scanner_thread, "Scanner");
     }
 
-    let res = web_server_join_handle.join();
-
-    match res {
-        Ok(()) => info!("Http server thread stopped"),
-        Err(e) => error!("Http server thread stopped with error: {:?}", e),
-    }
-
-    let res = amqp_sender_join_handle.join();
-
-    match res {
-        Ok(()) => info!("AMQP sender thread stopped"),
-        Err(e) => error!("AMQP sender thread stopped with error: {:?}", e),
-    }
+    wait_for(web_server_join_handle, "Http server");
+    wait_for(amqp_sender_join_handle, "AMQP sender");
 
     if let Some(join_handle) = metrics_collector_join_handle {
-        let res = join_handle.join();
-
-        match res {
-            Ok(()) => info!("Metrics collector thread stopped"),
-            Err(e) => error!("Metrics collector thread stopped with error: {:?}", e),
-        }
+        wait_for(join_handle, "Metrics collector");
     }
 }
 

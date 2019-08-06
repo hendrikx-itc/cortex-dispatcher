@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::{thread, time};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::RefCell;
 
 use crossbeam_channel::{Sender, SendTimeoutError};
 use log::{debug, error, info};
@@ -22,7 +23,10 @@ use crate::settings::SftpSource;
 
 
 error_chain! {
-    errors { DisconnectedError }
+    errors {
+        DisconnectedError
+        ConnectInterrupted
+    }
 }
 
 
@@ -38,7 +42,7 @@ pub fn start_scanner(
     mut sender: Sender<SftpDownload>,
     db_url: String,
     sftp_source: SftpSource,
-) -> thread::JoinHandle<()> {
+) -> thread::JoinHandle<Result<()>> {
     thread::spawn(move || {
         proctitle::set_title(format!("sftp-scanner {}", &sftp_source.name));
 
@@ -55,52 +59,82 @@ pub fn start_scanner(
             }
         };
 
-		let sftp_source_clone = sftp_source.clone();
+        let connect = |config: &SftpSource, stop: Arc<AtomicBool>| -> Result<SftpConnection> {
+            while !stop.load(Ordering::Relaxed) {
+                let conn_result = SftpConnection::new(
+                    &config.address.clone(),
+                    &config.username.clone(),
+                    config.password.clone(),
+                    config.key_file.clone(),
+                    false,
+                );
 
-		let connect = move || {
-			loop {
-				let conn_result = SftpConnection::new(
-					&sftp_source_clone.address.clone(),
-					&sftp_source_clone.username.clone(),
-					sftp_source_clone.password.clone(),
-					sftp_source_clone.key_file.clone(),
-					false,
-				);
+                match conn_result {
+                    Ok(c) => return Ok(c),
+                    Err(e) => error!("Could not connect: {}", e),
+                }
 
-				match conn_result {
-					Ok(c) => break c,
-					Err(e) => error!("Could not connect: {}", e),
-				}
+                thread::sleep(time::Duration::from_millis(1000));
+            }
 
-				thread::sleep(time::Duration::from_millis(1000));
-			}
-		};
+            Err(ErrorKind::ConnectInterrupted.into())
+        };
 
-        let mut sftp_connection = connect();
+        let connect_result = connect(&sftp_source, stop.clone());
+
+        let sftp_connection = match connect_result {
+            Ok(c) => Arc::new(RefCell::new(c)),
+            Err(e) => return Err(e)
+        };
 
         let scan_interval = time::Duration::from_millis(sftp_source.scan_interval);
         let mut next_scan = time::Instant::now();
 
         while !stop.load(Ordering::Relaxed) {
             if time::Instant::now() > next_scan {
-                next_scan += scan_interval;
+                // Increase next_scan until it is past now, because it can
+                // happen that the process has stalled on SFTP reconnect,
+                // causing a number of scheduled scan misses.
+                while next_scan < time::Instant::now() {
+                    next_scan += scan_interval;
+                }
 
                 let scan_start = time::Instant::now();
                 info!("Started scanning {}", &sftp_source.name);
 
-                let scan_result = scan_source(&stop, &sftp_source, &sftp_connection, &conn, &mut sender);
+                let scan_result = retry(Fixed::from_millis(1000), || {
+                    match scan_source(&stop, &sftp_source, sftp_connection.clone(), &conn, &mut sender) {
+                        Ok(v) => OperationResult::Ok(v),
+                        Err(e) => {
+                            match e {
+                                Error(ErrorKind::DisconnectedError, _) => {
+                                    let connect_result = connect(&sftp_source, stop.clone());
 
-				match scan_result {
-					Ok(_) => (),
-					Err(e) => {
-						match e {
-							Error(ErrorKind::DisconnectedError, _) => {
-								sftp_connection = connect();
-							},
-							_ => ()
-						}
-					}
-				}
+                                    match connect_result {
+                                        Ok(c) => {
+                                            sftp_connection.replace(c);
+                                            OperationResult::Retry(e)
+                                        },
+                                        Err(er) => {
+                                            OperationResult::Err(er)
+                                        }
+                                    }
+                                },
+                                _ => OperationResult::Err(e)
+                            }
+                        }
+                    }
+                });
+
+                match scan_result {
+                    Ok(_) => (),
+                    Err(e) => {
+                        error!(
+                            "Error scanning {}: {}",
+                            &sftp_source.name, e
+                        );
+                    }
+                }
 
                 let scan_end = time::Instant::now();
 
@@ -121,29 +155,31 @@ pub fn start_scanner(
             } else {
                 thread::sleep(time::Duration::from_millis(200));
             }
-        }
+        };
+
+        Ok(())
     })
 }
 
-fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
+fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
     scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender)
 }
 
-fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: &SftpConnection, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
+fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
     debug!("Directory scan started for {}", &directory.to_str().unwrap());
 
-    let read_result = sftp_connection
+    let read_result = sftp_connection.borrow()
         .sftp
         .readdir(directory);
 
     let paths = match read_result {
         Ok(paths) => paths,
         Err(e) => {
-			if e.code() == 0 {
-				return Err(ErrorKind::DisconnectedError.into());
-			} else {
-				return Err(Error::with_chain(e, "could not read directory"));
-			}
+            if e.code() == 0 {
+                return Err(ErrorKind::DisconnectedError.into());
+            } else {
+                return Err(Error::with_chain(e, "could not read directory"));
+            }
         }
     };
 
@@ -157,17 +193,17 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
         if stat.is_dir() {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
-            let scan_result = scan_directory(stop, sftp_source, &dir, sftp_connection, conn, sender);
+            let scan_result = scan_directory(stop, sftp_source, &dir, sftp_connection.clone(), conn, sender);
 
-			match scan_result {
-				Ok(_) => (),
-				Err(e) => {
-					match e {
-						Error(ErrorKind::DisconnectedError, _) => return Err(e),
-						_ => ()
-					}
-				}
-			}
+            match scan_result {
+                Ok(_) => (),
+                Err(e) => {
+                    match e {
+                        Error(ErrorKind::DisconnectedError, _) => return Err(e),
+                        _ => ()
+                    }
+                }
+            }
         } else {
             let file_size: u64 = stat.size.unwrap();
 
@@ -177,7 +213,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                 Ok(size) => size,
                 Err(e) => {
                     error!("Could not convert file size to type that can be stored in database: {}", e);
-					continue;
+                    continue;
                 }
             };
 
@@ -260,5 +296,5 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
         }
     }
 
-	Ok(())
+    Ok(())
 }

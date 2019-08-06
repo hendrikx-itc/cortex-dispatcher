@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(target_os = "linux")]
@@ -28,6 +27,8 @@ use signal_hook;
 use signal_hook::iterator::Signals;
 
 use crossbeam_channel::bounded;
+
+use cortex_core::wait_for;
 
 use crate::base_types::{Connection, RabbitMQNotify, Source, Target, CortexConfig, Notify};
 
@@ -176,21 +177,21 @@ pub fn run(settings: settings::Settings) {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
-	let mut command_consumers = Vec::new();
+    let mut command_consumers = Vec::new();
 
     let mut sources = Vec::new();
     let mut sftp_join_handles = Vec::new();
 
-	let amqp_conn = lapin::Connection::connect(&settings.command_queue.address, lapin::ConnectionProperties::default()).wait().expect("connection error");
+    let amqp_conn = lapin::Connection::connect(&settings.command_queue.address, lapin::ConnectionProperties::default()).wait().expect("connection error");
 
     settings.sftp_sources.iter().for_each(|sftp_source| {
         let (sender, receiver) = unbounded_channel();
 
-		let (s, r) = bounded(10);
+        let (s, r) = bounded(10);
 
-		command_consumers.push(
-			SftpCommandConsumer::start(stop.clone(), amqp_conn.clone(), sftp_source.clone(), s)
-		);
+        command_consumers.push(
+            SftpCommandConsumer::start(stop.clone(), amqp_conn.clone(), sftp_source.clone(), s)
+        );
 
         for n in 0..sftp_source.thread_count {
             sftp_join_handles.push(SftpDownloader::start(
@@ -249,9 +250,9 @@ pub fn run(settings: settings::Settings) {
 
         stop_commands.push(Box::new(move || {
             match stop_sender.send(()) {
-				Ok(_) => (),
-				Err(e) => error!("Error sending stop signal: {:?}", e)
-			}
+                Ok(_) => (),
+                Err(e) => error!("Error sending stop signal: {:?}", e)
+            }
         }));
 
         let stoppable_dispatcher = local_event_dispatcher.select2(stop_receiver.into_future());
@@ -318,17 +319,4 @@ fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'stat
             }
         })
         .map_err(|e| panic!("{}", e.0))
-}
-
-fn wait_for(join_handle: thread::JoinHandle<()>, thread_name: &str) {
-    let join_result = join_handle.join();
-
-    match join_result {
-        Ok(()) => {
-            info!("{} thread stopped", thread_name);
-        }
-        Err(e) => {
-            error!("{} thread stopped with error: {:?}", thread_name, e);
-        }
-    }
 }
