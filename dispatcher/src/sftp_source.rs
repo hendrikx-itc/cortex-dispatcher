@@ -59,28 +59,7 @@ where
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
         thread::spawn(move || {
-            let connect = |config: &settings::SftpSource, stop: Arc<AtomicBool>| -> Result<SftpConnection> {
-                while !stop.load(Ordering::Relaxed) {
-                    let conn_result = SftpConnection::new(
-                        &config.address.clone(),
-                        &config.username.clone(),
-                        config.password.clone(),
-                        config.key_file.clone(),
-                        false,
-                    );
-
-                    match conn_result {
-                        Ok(c) => return Ok(c),
-                        Err(e) => error!("Could not connect: {}", e),
-                    }
-
-                    thread::sleep(time::Duration::from_millis(1000));
-                }
-
-                Err(ErrorKind::ConnectInterrupted.into())
-            };
-
-            let connect_result = connect(&config, stop.clone());
+            let connect_result = Self::connect(&config, stop.clone());
 
             let sftp_connection = match connect_result {
                 Ok(c) => Arc::new(RefCell::new(c)),
@@ -106,7 +85,7 @@ where
                                 Err(e) => {
                                     match e {
                                         Error(ErrorKind::DisconnectedError, _) => {
-                                            let connect_result = connect(&config, stop.clone());
+                                            let connect_result = Self::connect(&config, stop.clone());
 
                                             match connect_result {
                                                 Ok(c) => {
@@ -118,8 +97,6 @@ where
                                                 }
                                             }
                                         },
-                                        //Error(ErrorKind::NoSuchFileError, _) => OperationResult::Err(e),
-                                        //Error(ee, a) => OperationResult::Err(e),
                                         _ => OperationResult::Err(e)
                                     }
                                 }
@@ -156,6 +133,27 @@ where
 
             Ok(())
         })
+    }
+
+    fn connect(config: &settings::SftpSource, stop: Arc<AtomicBool>) -> Result<SftpConnection> {
+        while !stop.load(Ordering::Relaxed) {
+            let conn_result = SftpConnection::new(
+                &config.address.clone(),
+                &config.username.clone(),
+                config.password.clone(),
+                config.key_file.clone(),
+                false,
+            );
+
+            match conn_result {
+                Ok(c) => return Ok(c),
+                Err(e) => error!("Could not connect: {}", e),
+            }
+
+            thread::sleep(time::Duration::from_millis(1000));
+        }
+
+        Err(ErrorKind::ConnectInterrupted.into())
     }
 
     pub fn handle(&mut self, sftp_connection: Arc<RefCell<SftpConnection>>, msg: &SftpDownload) -> Result<FileEvent> {
