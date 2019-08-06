@@ -12,6 +12,8 @@ use lapin::{
   types::FieldTable,
 };
 
+use proctitle::set_title;
+
 use crossbeam_channel::Sender;
 
 use crate::metrics;
@@ -66,6 +68,7 @@ impl SftpCommandConsumer
         sender: Sender<SftpDownload>
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
+            set_title(format!("sftp_cmd_rcv {}", config.name));
             let channel = amqp_client.create_channel().wait().expect("create_channel");
 
             let sftp_downloader = Box::new(SftpCommandConsumer {
