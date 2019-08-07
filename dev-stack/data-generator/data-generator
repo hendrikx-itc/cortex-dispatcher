@@ -35,10 +35,10 @@ def main():
             time.sleep(100)
 
 
-def send_file(sftp, storage_path, file_name):
+def send_file(sftp, storage_path, file_name, generate_lines):
     file_path = os.path.join(storage_path, file_name)
 
-    generate_file(file_path)
+    generate_file(file_path, generate_lines)
 
     sftp.put(file_path, file_name)
 
@@ -48,21 +48,46 @@ def send_file(sftp, storage_path, file_name):
 def generate_data(sftp, storage_path, timestamp):
     with sftp.cd('upload/blue/1'):
         for i in range(100):
-            file_name = 'test_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+            file_name = 'test_blue_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
 
-            send_file(sftp, storage_path, file_name)
+            send_file(sftp, storage_path, file_name, line_generator(1000, 30))
+
+    with sftp.cd('upload/blue/2'):
+        for i in range(1000):
+            file_name = 'test_blue_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+
+            send_file(sftp, storage_path, file_name, line_generator(50, 8))
+
+    with sftp.cd('upload/red'):
+        generated_files = []
+
+        for i in range(1000):
+            file_name = 'test_red_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+
+            send_file(sftp, storage_path, file_name, line_generator(50, 8))
+            generated_files.append(file_name)
+
+        for file_name in generated_files:
+            try:
+                sftp.remove(file_name)
+                logging.info("Removed {}".format(file_name))
+            except IOError as e:
+                pass
 
 
-def generate_file(file_path):
+def generate_file(file_path, generate_lines):
     with open(file_path, 'w') as out_file:
-        out_file.writelines(generate_file_lines())
+        out_file.writelines(generate_lines())
 
     logging.info("Written {}".format(file_path))
 
 
-def generate_file_lines():
-    for i in range(10000):
-        yield ','.join(str(i) for i in range(30))
+def line_generator(num_lines, num_columns):
+    def generate_lines():
+        for i in range(num_lines):
+            yield ','.join(str(i) for i in range(num_columns))
+
+    return generate_lines
 
 
 if __name__ == '__main__':
