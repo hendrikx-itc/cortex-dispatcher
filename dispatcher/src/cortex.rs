@@ -61,6 +61,8 @@ fn connect_channel(
     .and_then(|client| client.create_channel().map_err(Error::from))
 }
 
+type StopCmd = Box<dyn FnOnce() -> () + Send + 'static>;
+
 pub fn run(settings: settings::Settings) {
     let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
@@ -68,59 +70,14 @@ pub fn run(settings: settings::Settings) {
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
 
     // Will hold all functions that stop components of the SFTP scannner
-    let mut stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>> = Vec::new();
+    let mut stop_commands: Vec<StopCmd> = Vec::new();
 
     settings.directory_targets.iter().for_each(|target_conf| {
-        let (sender, receiver) = unbounded_channel();
+        let (stoppable_stream, stop_cmd, target) = setup_directory_target(target_conf);
 
-        let target_stream = to_stream(target_conf, receiver);
+        stop_commands.push(stop_cmd);
 
-        let target_stream = match &target_conf.notify {
-            Some(conf) => match conf {
-                settings::Notify::RabbitMQ(notify_conf) => {
-                    let amqp_channel = connect_channel(&notify_conf.address);
-
-                    let message_template = notify_conf.message_template.clone();
-                    let exchange = notify_conf.exchange.clone();
-                    let routing_key = notify_conf.routing_key.clone();
-
-                    let address = notify_conf.address.clone();
-
-                    Box::new(
-                        amqp_channel
-                            .map_err(move |e| {
-                                error!("Error connecting to AMQP channel {}: {}", address, e);
-                            })
-                            .and_then(|channel| {
-                                let notify = RabbitMQNotify {
-                                    message_template: message_template,
-                                    channel: channel,
-                                    exchange: exchange,
-                                    routing_key: routing_key,
-                                };
-
-                                stream_consuming_future(notify.and_then_notify(target_stream))
-                            }),
-                    )
-                }
-            },
-            None => stream_consuming_future(Box::new(target_stream)),
-        };
-
-        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
-
-        stop_commands.push(Box::new(move || {
-            stop_sender.send(()).unwrap();
-        }));
-
-        let stoppable_stream = target_stream.into_future().select2(stop_receiver.into_future());
-
-        runtime.spawn(stoppable_stream.map(|_result| debug!("End directory target stream")).map_err(|_e| error!("Error: ")));
-
-        let target = Arc::new(Target {
-            name: target_conf.name.clone(),
-            sender: sender,
-        });
+        runtime.spawn(stoppable_stream);
 
         targets.insert(target_conf.name.clone(), target);
     });
@@ -319,4 +276,61 @@ fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'stat
             }
         })
         .map_err(|e| panic!("{}", e.0))
+}
+
+fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Future<Item=(), Error=()>, StopCmd, Arc<Target>) {
+    let (sender, receiver) = unbounded_channel();
+
+    let target_stream = to_stream(target_conf, receiver);
+
+    let target_stream = match &target_conf.notify {
+        Some(conf) => match conf {
+            settings::Notify::RabbitMQ(notify_conf) => {
+                let amqp_channel = connect_channel(&notify_conf.address);
+
+                let message_template = notify_conf.message_template.clone();
+                let exchange = notify_conf.exchange.clone();
+                let routing_key = notify_conf.routing_key.clone();
+
+                let address = notify_conf.address.clone();
+
+                Box::new(
+                    amqp_channel
+                        .map_err(move |e| {
+                            error!("Error connecting to AMQP channel {}: {}", address, e);
+                        })
+                        .and_then(|channel| {
+                            let notify = RabbitMQNotify {
+                                message_template: message_template,
+                                channel: channel,
+                                exchange: exchange,
+                                routing_key: routing_key,
+                            };
+
+                            stream_consuming_future(notify.and_then_notify(target_stream))
+                        }),
+                )
+            }
+        },
+        None => stream_consuming_future(Box::new(target_stream)),
+    };
+
+    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+
+    let stoppable_stream = target_stream
+        .into_future()
+        .select2(stop_receiver.into_future())
+        .map(|_result| debug!("End directory target stream"))
+        .map_err(|_e| error!("Error: "));
+
+    let stop_cmd = Box::new(move || {
+        stop_sender.send(()).unwrap();
+    });
+
+    let target = Arc::new(Target {
+        name: target_conf.name.clone(),
+        sender: sender,
+    });
+
+    (stoppable_stream, stop_cmd, target)
 }
