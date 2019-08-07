@@ -15,7 +15,7 @@ use chrono::prelude::*;
 
 use proctitle;
 
-use cortex_core::sftp_connection::SftpConnection;
+use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
 use cortex_core::SftpDownload;
 
 use crate::metrics;
@@ -59,32 +59,19 @@ pub fn start_scanner(
             }
         };
 
-        let connect = |config: &SftpSource, stop: Arc<AtomicBool>| -> Result<SftpConnection> {
-            while !stop.load(Ordering::Relaxed) {
-                let conn_result = SftpConnection::new(
-                    &config.address.clone(),
-                    &config.username.clone(),
-                    config.password.clone(),
-                    config.key_file.clone(),
-                    false,
-                );
-
-                match conn_result {
-                    Ok(c) => return Ok(c),
-                    Err(e) => error!("Could not connect: {}", e),
-                }
-
-                thread::sleep(time::Duration::from_millis(1000));
-            }
-
-            Err(ErrorKind::ConnectInterrupted.into())
+        let sftp_config = SftpConfig {
+            address: sftp_source.address.clone(),
+            username: sftp_source.username.clone(),
+            password: sftp_source.password.clone(),
+            key_file: sftp_source.key_file.clone(),
+            compress: false,
         };
 
-        let connect_result = connect(&sftp_source, stop.clone());
+        let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
         let sftp_connection = match connect_result {
             Ok(c) => Arc::new(RefCell::new(c)),
-            Err(e) => return Err(e)
+            Err(e) => return Err(Error::with_chain(e, "Error reconnecting SFTP"))
         };
 
         let scan_interval = time::Duration::from_millis(sftp_source.scan_interval);
@@ -108,19 +95,19 @@ pub fn start_scanner(
                         Err(e) => {
                             match e {
                                 Error(ErrorKind::DisconnectedError, _) => {
-                                    let connect_result = connect(&sftp_source, stop.clone());
+                                    let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
                                     match connect_result {
                                         Ok(c) => {
                                             sftp_connection.replace(c);
-                                            OperationResult::Retry(e)
+                                            OperationResult::Retry(Error::with_chain(e, "Reconnected SFTP"))
                                         },
                                         Err(er) => {
-                                            OperationResult::Err(er)
+                                            OperationResult::Err(Error::with_chain(er, "Error reconnecting SFTP"))
                                         }
                                     }
                                 },
-                                _ => OperationResult::Err(e)
+                                _ => OperationResult::Err(Error::with_chain(e, "Unexpected error"))
                             }
                         }
                     }

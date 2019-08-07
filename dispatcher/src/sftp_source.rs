@@ -20,7 +20,7 @@ use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
 
-use cortex_core::sftp_connection::SftpConnection;
+use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
 use cortex_core::SftpDownload;
 
 use sha2::{Digest, Sha256};
@@ -59,11 +59,19 @@ where
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
         thread::spawn(move || {
-            let connect_result = Self::connect(&config, stop.clone());
+            let sftp_config = SftpConfig {
+                address: config.address.clone(),
+                username: config.username.clone(),
+                password: config.password.clone(),
+                key_file: config.key_file.clone(),
+                compress: config.compress
+            };
+
+            let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
             let sftp_connection = match connect_result {
                 Ok(c) => Arc::new(RefCell::new(c)),
-                Err(e) => return Err(e)
+                Err(e) => return Err(Error::with_chain(e, "SFTP connect failed"))
             };
 
             let mut sftp_downloader = SftpDownloader {
@@ -74,7 +82,7 @@ where
 
             let timeout = time::Duration::from_millis(500);
 
-            while !stop.load(Ordering::Relaxed) {
+            while !(stop.load(Ordering::Relaxed) && receiver.is_empty()) {
                 let receive_result = receiver.recv_timeout(timeout);
 
                 match receive_result {
@@ -85,7 +93,7 @@ where
                                 Err(e) => {
                                     match e {
                                         Error(ErrorKind::DisconnectedError, _) => {
-                                            let connect_result = Self::connect(&config, stop.clone());
+                                            let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
                                             match connect_result {
                                                 Ok(c) => {
@@ -93,7 +101,7 @@ where
                                                     OperationResult::Retry(e)
                                                 },
                                                 Err(er) => {
-                                                    OperationResult::Err(er)
+                                                    OperationResult::Err(Error::with_chain(er, "Error reconnecting SFTP"))
                                                 }
                                             }
                                         },
@@ -108,7 +116,7 @@ where
                                 // Notify about new data from this SFTP source
                                 sender
                                     .try_send(file_event)
-                                    .chain_err(|| "Error sending download notification")?;
+                                    .map_err(|e| Error::with_chain(e, "Error notifying consumers of new file"))?;
                             }
                             Err(e) => {
                                 error!(
@@ -133,27 +141,6 @@ where
 
             Ok(())
         })
-    }
-
-    fn connect(config: &settings::SftpSource, stop: Arc<AtomicBool>) -> Result<SftpConnection> {
-        while !stop.load(Ordering::Relaxed) {
-            let conn_result = SftpConnection::new(
-                &config.address.clone(),
-                &config.username.clone(),
-                config.password.clone(),
-                config.key_file.clone(),
-                false,
-            );
-
-            match conn_result {
-                Ok(c) => return Ok(c),
-                Err(e) => error!("Could not connect: {}", e),
-            }
-
-            thread::sleep(time::Duration::from_millis(1000));
-        }
-
-        Err(ErrorKind::ConnectInterrupted.into())
     }
 
     pub fn handle(&mut self, sftp_connection: Arc<RefCell<SftpConnection>>, msg: &SftpDownload) -> Result<FileEvent> {

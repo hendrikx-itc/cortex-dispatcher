@@ -7,6 +7,9 @@ extern crate serde_derive;
 extern crate chrono;
 use chrono::prelude::*;
 
+#[macro_use]
+extern crate error_chain;
+
 extern crate log;
 
 use log::{info, error};
