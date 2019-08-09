@@ -1,10 +1,11 @@
 use std::os::unix::fs::symlink;
+use std::fs::{hard_link, copy};
 
 use futures::stream::Stream;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::event::FileEvent;
-use crate::settings;
+use crate::{settings, settings::LocalTargetMethod};
 
 pub fn to_stream(
     settings: &settings::DirectoryTarget,
@@ -12,6 +13,7 @@ pub fn to_stream(
 ) -> impl futures::Stream<Item = FileEvent, Error = ()> {
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
+    let method = settings.method.clone();
 
     receiver.map_err(|_| ()).map(move |file_event: FileEvent| {
         let source_path_str = file_event.path.to_str().unwrap();
@@ -19,19 +21,53 @@ pub fn to_stream(
         let target_path = target_directory.join(file_name);
         let target_path_str = target_path.to_str().unwrap();
 
-        info!("FileEvent for {}: {}", &target_name, &source_path_str);
+        debug!("FileEvent for {}: {}", &target_name, &source_path_str);
 
-        let result = symlink(&file_event.path, &target_path);
+        match method {
+            LocalTargetMethod::Copy => {
+                let result = copy(&file_event.path, &target_path);
 
-        match result {
-            Ok(()) => {
-                info!("{} symlinked to {}", &source_path_str, &target_path_str);
-            }
-            Err(e) => {
-                error!(
-                    "Error symlinking {} to {}: {}",
-                    &source_path_str, &target_path_str, &e
-                );
+                match result {
+                    Ok(size) => {
+                        debug!("{} copied {} bytes to {}", &source_path_str, size, &target_path_str);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error copying {} to {}: {}",
+                            &source_path_str, &target_path_str, &e
+                        );
+                    }
+                }
+            },
+            LocalTargetMethod::Hardlink => {
+                let result = hard_link(&file_event.path, &target_path);
+
+                match result {
+                    Ok(()) => {
+                        debug!("{} hardlinked to {}", &source_path_str, &target_path_str);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error hardlinking {} to {}: {}",
+                            &source_path_str, &target_path_str, &e
+                        );
+                    }
+                }
+            },
+            LocalTargetMethod::Symlink => {
+                let result = symlink(&file_event.path, &target_path);
+
+                match result {
+                    Ok(()) => {
+                        debug!("{} symlinked to {}", &source_path_str, &target_path_str);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error symlinking {} to {}: {}",
+                            &source_path_str, &target_path_str, &e
+                        );
+                    }
+                }
             }
         }
 

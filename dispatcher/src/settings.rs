@@ -70,10 +70,23 @@ pub enum Notify {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum LocalTargetMethod {
+    Copy,
+    Symlink,
+    Hardlink
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DirectoryTarget {
     pub name: String,
     pub directory: PathBuf,
+    #[serde(default = "default_local_target_method")]
+    pub method: LocalTargetMethod,
     pub notify: Option<Notify>,
+}
+
+fn default_local_target_method() -> LocalTargetMethod {
+    LocalTargetMethod::Hardlink
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -164,6 +177,7 @@ impl Default for Settings {
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),
                 directory: PathBuf::from("/cortex/storage/red-consumer"),
+                method: LocalTargetMethod::Hardlink,
                 notify: Some(Notify::RabbitMQ(RabbitMQNotify {
                     message_template: "".to_string(),
                     address: "127.0.0.1:5672".parse().unwrap(),
