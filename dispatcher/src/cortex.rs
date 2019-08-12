@@ -134,8 +134,6 @@ pub fn run(settings: settings::Settings) {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
-    let mut command_consumers = Vec::new();
-
     let mut sources = Vec::new();
     let mut sftp_join_handles = Vec::new();
 
@@ -146,9 +144,7 @@ pub fn run(settings: settings::Settings) {
 
         let (s, r) = bounded(10);
 
-        command_consumers.push(
-            SftpCommandConsumer::start(stop.clone(), amqp_conn.clone(), sftp_source.clone(), s)
-        );
+        SftpCommandConsumer::start(amqp_conn.clone(), sftp_source.clone(), s);
 
         for n in 0..sftp_source.thread_count {
             sftp_join_handles.push(SftpDownloader::start(

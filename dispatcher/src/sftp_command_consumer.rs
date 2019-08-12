@@ -1,7 +1,3 @@
-use std::{thread, time};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 extern crate failure;
 
 extern crate lapin;
@@ -11,8 +7,6 @@ use lapin::{
   options::*,
   types::FieldTable,
 };
-
-use proctitle::set_title;
 
 use crossbeam_channel::Sender;
 
@@ -62,52 +56,42 @@ impl ConsumerDelegate for SftpCommandConsumer
 impl SftpCommandConsumer
 {
     pub fn start(
-        stop: Arc<AtomicBool>,
         amqp_client: Connection,
         config: settings::SftpSource,
         sender: Sender<SftpDownload>
-    ) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            set_title(format!("sftp_cmd_rcv {}", config.name));
-            let channel = amqp_client.create_channel().wait().expect("create_channel");
+    ) {
+        let channel = amqp_client.create_channel().wait().expect("create_channel");
 
-            let sftp_downloader = Box::new(SftpCommandConsumer {
-                sftp_source: config.clone(),
-                channel: channel.clone(),
-                sender: sender.clone()
-            });
+        let sftp_downloader = Box::new(SftpCommandConsumer {
+            sftp_source: config.clone(),
+            channel: channel.clone(),
+            sender: sender.clone()
+        });
 
-            info!("Created channel with id {}", channel.id());
+        info!("Created channel with id {}", channel.id());
 
-            let queue_name = format!("source.{}", &config.name);
+        let queue_name = format!("source.{}", &config.name);
 
-            let queue = channel.queue_declare(
-                &queue_name,
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            ).wait().expect("queue_declare");
+        let queue = channel.queue_declare(
+            &queue_name,
+            QueueDeclareOptions::default(),
+            FieldTable::default(),
+        ).wait().expect("queue_declare");
 
-            info!("Channel {} declared queue {}", channel.id(), &queue_name);
+        info!("Channel {} declared queue {}", channel.id(), &queue_name);
 
-            let routing_key = format!("source.{}", &config.name);
-            let exchange = "amq.direct";
+        let routing_key = format!("source.{}", &config.name);
+        let exchange = "amq.direct";
 
-            channel
-                .queue_bind(&queue_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::default())
-                .wait()
-                .expect("queue_bind");
+        channel
+            .queue_bind(&queue_name, &exchange, &routing_key, QueueBindOptions::default(), FieldTable::default())
+            .wait()
+            .expect("queue_bind");
 
-            channel
-                .basic_consume(&queue, "cortex-dispatcher", BasicConsumeOptions::default(), FieldTable::default())
-                .wait()
-                .expect("basic_consume")
-                .set_delegate(sftp_downloader);
-
-            while !stop.load(Ordering::Relaxed) {
-                thread::sleep(time::Duration::from_millis(100));
-            }
-
-            debug!("SFTP source stream ended");
-        })
+        channel
+            .basic_consume(&queue, "cortex-dispatcher", BasicConsumeOptions::default(), FieldTable::default())
+            .wait()
+            .expect("basic_consume")
+            .set_delegate(sftp_downloader);
     }
 }
