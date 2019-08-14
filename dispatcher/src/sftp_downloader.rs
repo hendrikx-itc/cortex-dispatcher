@@ -7,11 +7,10 @@ use std::{thread, time};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use proctitle;
 extern crate failure;
 
-use tokio::sync::mpsc::UnboundedSender;
-
-use crossbeam_channel::{Receiver, RecvTimeoutError};
+use crossbeam_channel::{Sender, Receiver, RecvTimeoutError};
 
 use retry::{retry, OperationResult, delay::Fixed};
 
@@ -54,11 +53,12 @@ where
         stop: Arc<AtomicBool>,
         receiver: Receiver<SftpDownload>,
         config: settings::SftpSource,
-        mut sender: UnboundedSender<FileEvent>,
+        sender: Sender<FileEvent>,
         data_dir: PathBuf,
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
         thread::spawn(move || {
+            proctitle::set_title("sftp_dl");
             let sftp_config = SftpConfig {
                 address: config.address.clone(),
                 username: config.username.clone(),
@@ -130,7 +130,8 @@ where
                         match e {
                             RecvTimeoutError::Timeout => (),
                             RecvTimeoutError::Disconnected => {
-                                error!("Channel disconnected")
+                                error!("Channel disconnected");
+                                thread::sleep(timeout)
                             }
                         }
                     }

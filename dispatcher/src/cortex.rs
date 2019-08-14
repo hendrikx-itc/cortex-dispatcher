@@ -1,3 +1,4 @@
+use std::thread;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
@@ -6,11 +7,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "linux")]
 extern crate inotify;
 
-extern crate failure;
+//extern crate failure;
 use failure::Error;
 
 extern crate lapin_futures;
-use lapin;
+use lapin_futures::{ConnectionProperties};
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
@@ -18,7 +19,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_executor::enter;
 use tokio::sync::oneshot;
 
-use futures::future::{Future, IntoFuture};
+use futures::future::{Future, IntoFuture, ok};
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
@@ -26,11 +27,12 @@ use r2d2_postgres::PostgresConnectionManager;
 use signal_hook;
 use signal_hook::iterator::Signals;
 
-use crossbeam_channel::bounded;
+use crossbeam_channel::{bounded, Sender, Receiver};
 
 use cortex_core::wait_for;
+use cortex_core::SftpDownload;
 
-use crate::base_types::{Connection, RabbitMQNotify, Source, Target, CortexConfig, Notify};
+use crate::base_types::{Connection, RabbitMQNotify, Target, CortexConfig, Notify};
 
 #[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
@@ -41,8 +43,8 @@ use crate::http_server::start_http_server;
 use crate::metrics_collector::metrics_collector;
 use crate::persistence::PostgresPersistence;
 use crate::settings;
-use crate::sftp_source::SftpDownloader;
-use crate::sftp_command_consumer::SftpCommandConsumer;
+use crate::sftp_downloader;
+use crate::sftp_command_consumer;
 
 fn stream_consuming_future(
     stream: Box<futures::Stream<Item = FileEvent, Error = ()> + Send>,
@@ -130,40 +132,88 @@ pub fn run(settings: settings::Settings) {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
 
+    let mut sources = Vec::new();
+
     stop_commands.push(Box::new(move || {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
-    let mut sources = Vec::new();
-    let mut sftp_join_handles = Vec::new();
+    let sftp_join_handles: Arc<Mutex<Vec<thread::JoinHandle<std::result::Result<(), sftp_downloader::Error>>>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let amqp_conn = lapin::Connection::connect(&settings.command_queue.address, lapin::ConnectionProperties::default()).wait().expect("connection error");
+    struct SftpSourceChannels {
+        pub sftp_source: settings::SftpSource,
+        pub cmd_sender: Sender<SftpDownload>,
+        pub cmd_receiver: Receiver<SftpDownload>,
+        pub file_event_sender: Sender<FileEvent>,
+        pub file_event_receiver: Receiver<FileEvent>,
+        pub stop_receiver: oneshot::Receiver<()>
+    }
 
-    settings.sftp_sources.iter().for_each(|sftp_source| {
-        let (sender, receiver) = unbounded_channel();
+    let sftp_source_channels: Vec<SftpSourceChannels> = settings.sftp_sources.iter().map(|sftp_source| {
+        let (cmd_sender, cmd_receiver) = bounded::<SftpDownload>(10);
+        let (file_event_sender, file_event_receiver) = bounded::<FileEvent>(10);
+        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
-        let (s, r) = bounded(10);
+        stop_commands.push(Box::new(move || {
+            match stop_sender.send(()) {
+                Ok(_) => (),
+                Err(e) => error!("Error sending stop signal: {:?}", e)
+            }
+        }));
 
-        SftpCommandConsumer::start(amqp_conn.clone(), sftp_source.clone(), s);
-
-        for n in 0..sftp_source.thread_count {
-            sftp_join_handles.push(SftpDownloader::start(
-                stop.clone(),
-                r.clone(),
-                sftp_source.clone(),
-                sender.clone(),
-                settings.storage.directory.clone(),
-                persistence.clone(),
-            ));
-
-            info!("Started {} download thread {}", &sftp_source.name, n + 1);
+        SftpSourceChannels {
+            sftp_source: sftp_source.clone(),
+            cmd_sender: cmd_sender,
+            cmd_receiver: cmd_receiver,
+            file_event_sender: file_event_sender,
+            file_event_receiver: file_event_receiver,
+            stop_receiver: stop_receiver
         }
+    }).collect();
 
-        sources.push(Source {
-            name: sftp_source.name.clone(),
-            receiver: receiver,
+    let storage_directory = settings.storage.directory.clone();
+
+    let jhs = sftp_join_handles.clone();
+
+    let connect_future = lapin_futures::Client::connect(
+        &settings.command_queue.address,
+        ConnectionProperties::default(),
+    )
+    .map_err(failure::Error::from)
+    .and_then(move |client| {
+        sftp_source_channels.into_iter().for_each(|channels| {
+            for n in 0..channels.sftp_source.thread_count {
+                let join_handle = sftp_downloader::SftpDownloader::start(
+                    stop.clone(),
+                    channels.cmd_receiver.clone(),
+                    channels.sftp_source.clone(),
+                    channels.file_event_sender.clone(),
+                    storage_directory.clone(),
+                    persistence.clone(),
+                );
+
+                let guard = jhs.lock();
+
+                guard.unwrap().push(join_handle);
+
+                info!("Started {} download thread {}", &channels.sftp_source.name, n + 1);
+            }
+
+            let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), channels.cmd_sender.clone())
+                .into_future()
+                .select2(channels.stop_receiver.into_future())
+                .map(|_result| debug!("End SFTP command stream"))
+                .map_err(|_e| error!("Error: "));
+
+            debug!("Spawning AMQP stream");
+            tokio::spawn(stream);
         });
-    });
+
+        ok(())
+    })
+    .map_err(|_| ());
+
+    runtime.spawn(connect_future);
 
     #[cfg(target_os = "linux")]
     sources.append(&mut directory_sources);
@@ -237,6 +287,7 @@ pub fn run(settings: settings::Settings) {
 
     runtime.spawn(setup_signal_handler(stop_commands));
 
+    // Wait until all tasks have finished
     entered
         .block_on(runtime.shutdown_on_idle())
         .expect("Shutdown cannot error");
@@ -248,7 +299,7 @@ pub fn run(settings: settings::Settings) {
 
     wait_for(web_server_join_handle, "http server");
 
-    sftp_join_handles.into_iter().for_each(|jh| {
+    Arc::try_unwrap(sftp_join_handles).expect("still users of handles").into_inner().unwrap().into_iter().for_each(|jh| {
         wait_for(jh, "sftp download");
     });
 }
@@ -330,3 +381,4 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
 
     (stoppable_stream, stop_cmd, target)
 }
+

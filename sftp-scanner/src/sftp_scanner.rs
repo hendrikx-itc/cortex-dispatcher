@@ -107,7 +107,10 @@ pub fn start_scanner(
                                         }
                                     }
                                 },
-                                _ => OperationResult::Err(Error::with_chain(e, "Unexpected error"))
+                                _ => {
+                                    let msg = format!("Unexpected error: {}", &e);
+                                    OperationResult::Err(Error::with_chain(e, msg))
+                                }
                             }
                         }
                     }
@@ -207,7 +210,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
             let path_str = path.to_str().unwrap().to_string();
 
             if sftp_source.regex.is_match(file_name) {
-                debug!(" - {} - matches!", path_str);
+                debug!("'{}' - matches", path_str);
 
                 let file_requires_download =
                     if sftp_source.deduplicate {
@@ -260,7 +263,10 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                         let result = sender.send_timeout(command.clone(), send_timeout);
 
                         match result {
-                            Ok(v) => OperationResult::Ok(v),
+                            Ok(v) => {
+                                debug!("Sent message {} on channel", command);
+                                OperationResult::Ok(v)
+                            },
                             Err(e) => {
                                 match e {
                                     SendTimeoutError::Timeout(timeout) => OperationResult::Retry(timeout),

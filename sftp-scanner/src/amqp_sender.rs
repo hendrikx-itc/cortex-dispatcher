@@ -38,6 +38,7 @@ pub fn start_sender(stop: Arc<AtomicBool>, receiver: Receiver<SftpDownload>, add
                     channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), BasicProperties::default())
                         .wait()
                         .expect("basic_publish");
+                    debug!("Sent on AMQP");
                 },
                 Err(e) => {
                     match e {
