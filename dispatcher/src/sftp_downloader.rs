@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use proctitle;
 extern crate failure;
 
-use crossbeam_channel::{Sender, Receiver, RecvTimeoutError};
+use crossbeam_channel::{Receiver, RecvTimeoutError};
 
 use retry::{retry, OperationResult, delay::Fixed};
 
@@ -53,12 +53,13 @@ where
         stop: Arc<AtomicBool>,
         receiver: Receiver<SftpDownload>,
         config: settings::SftpSource,
-        sender: Sender<FileEvent>,
+        mut sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         data_dir: PathBuf,
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
         thread::spawn(move || {
             proctitle::set_title("sftp_dl");
+
             let sftp_config = SftpConfig {
                 address: config.address.clone(),
                 username: config.username.clone(),
@@ -114,13 +115,20 @@ where
                         match download_result {
                             Ok(file_event) => {
                                 // Notify about new data from this SFTP source
-                                sender
-                                    .try_send(file_event)
-                                    .map_err(|e| Error::with_chain(e, "Error notifying consumers of new file"))?;
+                                let send_result = sender.try_send(file_event);
+
+                                match send_result {
+                                    Ok(_) => {
+                                        debug!("Sent SFTP FileEvent to channel");
+                                    },
+                                    Err(e) => {
+                                        error!("Error notifying consumers of new file: {}", e);
+                                    }
+                                }
                             }
                             Err(e) => {
-                                error!(
-                                    "Error downloading {}: {}",
+                                warn!(
+                                    "Could not download '{}': {}",
                                     &command.path, e
                                 );
                             }

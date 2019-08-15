@@ -70,3 +70,5 @@ pub fn wait_for<T>(join_handle: thread::JoinHandle<T>, thread_name: &str) {
         }
     }
 }
+
+pub type StopCmd = Box<dyn FnOnce() -> () + Send + 'static>;

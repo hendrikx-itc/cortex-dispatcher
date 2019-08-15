@@ -13,6 +13,8 @@ use futures::stream::Stream;
 extern crate failure;
 extern crate lapin;
 
+use cortex_core::{StopCmd};
+
 use crate::base_types::Source;
 use crate::event::FileEvent;
 use crate::settings;
@@ -24,7 +26,7 @@ use tokio::sync::oneshot;
 
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
-) -> (thread::JoinHandle<()>, oneshot::Sender<()>, Vec<Source>) {
+) -> (thread::JoinHandle<()>, StopCmd, Vec<Source>) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -39,8 +41,6 @@ pub fn start_directory_sources(
         (settings::DirectorySource, UnboundedSender<FileEvent>),
     > = HashMap::new();
     let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
-
-    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
@@ -63,7 +63,7 @@ pub fn start_directory_sources(
             }
             Err(e) => {
                 error!(
-                    "Failed to add inotify watch on '{}': {}",
+                    "[E02003] Failed to add inotify watch on '{}': {}",
                     &directory_source.directory.to_str().unwrap(),
                     e
                 );
@@ -71,11 +71,11 @@ pub fn start_directory_sources(
         };
     });
 
-    let join_handle = start_inotify_event_thread(inotify, stop_receiver, watch_mapping);
+    let (join_handle, stop_cmd) = start_inotify_event_thread(inotify, watch_mapping);
 
     (
         join_handle,
-        stop_sender,
+        stop_cmd,
         result_sources
             .into_iter()
             .map(move |(name, receiver)| Source {
@@ -86,17 +86,33 @@ pub fn start_directory_sources(
     )
 }
 
-fn start_inotify_event_thread(mut inotify: Inotify, receiver: oneshot::Receiver<()>, mut watch_mapping: HashMap<
+fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
         (settings::DirectorySource, UnboundedSender<FileEvent>)
-    >) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let mut runtime = Runtime::new().unwrap();
+    >) -> (thread::JoinHandle<()>, StopCmd) {
+    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+
+    let stop_cmd = Box::new(move || {
+        stop_sender.send(()).unwrap();
+    });
+
+    let join_handle = thread::spawn(move || {
+        let runtime_result = Runtime::new();
+
+        let mut runtime = match runtime_result {
+            Ok(r) => r,
+            Err(e) => {
+                error!("[E01002] Error starting Tokio runtime for inotify thread: {}", e);
+                return
+            }
+        };
+
+        debug!("Tokio runtime created");
 
         let buffer: Vec<u8> = vec![0; 1024];
 
         let stream = inotify
-            .event_stream(buffer)
+            .event_stream(buffer).map_err(|e| error!("Error in inotify stream: {}", e))
             .for_each(move |event: inotify::Event<std::ffi::OsString>| {
                 let name = event.name.expect("Could not decode name");
 
@@ -113,20 +129,34 @@ fn start_inotify_event_thread(mut inotify: Inotify, receiver: oneshot::Receiver<
 
                 debug!("Sending FileEvent: {:?}", &file_event);
 
-                sender.try_send(file_event).unwrap();
+                let send_result = sender.try_send(file_event);
 
-                Ok(())
+                match send_result {
+                    Ok(_) => {
+                        debug!("File event from inotify sent on local channel");
+                        futures::future::ok(())
+                    },
+                    Err(e) => {
+                        error!("[E02001] Error sending file event on local channel: {}", e);
+                        futures::future::err(())
+                    }
+                }
             })
             .map_err(|e| {
-                error!("{}", e);
+                error!("[E02002] {:?}", e);
             });
 
-        let stoppable_stream = stream.into_future().select2(receiver.into_future());
+        let stoppable_stream = stream
+            //.select2(stop_receiver.into_future())
+            .map(|_| debug!("End inotify stream"))
+            .map_err(|_| error!("[E01001] Error in inotify stream"));
 
-        runtime.spawn(stoppable_stream.map(|_result| debug!("End inotify stream")).map_err(|_e| error!("Error: ")));
+        runtime.spawn(stoppable_stream);
 
         runtime.run().unwrap();
 
         debug!("Inotify source stream ended")
-    })
+    });
+
+    (join_handle, stop_cmd)
 }

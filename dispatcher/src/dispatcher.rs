@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "linux")]
 extern crate inotify;
 
-//extern crate failure;
-use failure::Error;
+use failure::{Error, err_msg};
 
 extern crate lapin_futures;
 use lapin_futures::{ConnectionProperties};
@@ -29,10 +28,9 @@ use signal_hook::iterator::Signals;
 
 use crossbeam_channel::{bounded, Sender, Receiver};
 
-use cortex_core::wait_for;
-use cortex_core::SftpDownload;
+use cortex_core::{wait_for, SftpDownload, StopCmd};
 
-use crate::base_types::{Connection, RabbitMQNotify, Target, CortexConfig, Notify};
+use crate::base_types::{Connection, RabbitMQNotify, Target, CortexConfig, Notify, Source};
 
 #[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
@@ -63,21 +61,70 @@ fn connect_channel(
     .and_then(|client| client.create_channel().map_err(Error::from))
 }
 
-type StopCmd = Box<dyn FnOnce() -> () + Send + 'static>;
+struct Stop {
+    stop_commands: Vec<StopCmd>
+}
+
+impl std::fmt::Debug for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Stop")
+    }
+}
+
+impl Stop {
+    fn new() -> Stop {
+        Stop {
+            stop_commands: Vec::new()
+        }
+    }
+
+    fn stop(self) {
+        for stop_command in self.stop_commands {
+            stop_command();
+        }
+    }
+
+    fn add_command(&mut self, cmd: StopCmd) {
+        self.stop_commands.push(cmd);
+    }
+
+    fn make_stoppable_stream<S>(&mut self, stream: S, name: String) -> impl Future<Item=(), Error=()>
+        where S: Future<Item=(), Error=()> {
+        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+
+        self.stop_commands.push(Box::new(move || {
+            match stop_sender.send(()) {
+                Ok(_) => (),
+                Err(e) => error!("Error sending stop signal: {:?}", e)
+            }
+        }));
+
+        stream
+            //.select2(stop_receiver.into_future())
+            .map(|_| debug!("End stream"))
+            .map_err(move |_| error!("Error in stoppable stream {}", &name))
+    }
+}
 
 pub fn run(settings: settings::Settings) {
     let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
+    // List of targets with their file event channels
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
 
-    // Will hold all functions that stop components of the SFTP scannner
-    let mut stop_commands: Vec<StopCmd> = Vec::new();
+    // List of sources with their file event channels
+    let sources: Arc<Mutex<Vec<Source>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let connections: Arc<Mutex<Vec<Connection>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // Stop orchestrator
+    let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
 
     settings.directory_targets.iter().for_each(|target_conf| {
         let (stoppable_stream, stop_cmd, target) = setup_directory_target(target_conf);
 
-        stop_commands.push(stop_cmd);
+        stop.lock().unwrap().add_command(stop_cmd);
 
         runtime.spawn(stoppable_stream);
 
@@ -87,54 +134,51 @@ pub fn run(settings: settings::Settings) {
     let prometheus_push_conf = settings.prometheus_push.clone();
 
     if let Some(conf) = prometheus_push_conf {
-        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
-
-        stop_commands.push(Box::new(move || {
-            stop_sender.send(()).unwrap();
-        }));
-
         let metrics_coll = metrics_collector(conf.gateway.clone(), conf.interval);
 
-        let stoppable_metrics_coll = metrics_coll.select2(stop_receiver.into_future());
-
-        runtime.spawn(stoppable_metrics_coll.map(|_result| debug!("End metrics stream")).map_err(|_e| error!("Error: ")));
+        runtime.spawn(stop.lock().unwrap().make_stoppable_stream(metrics_coll, String::from("metrics collector")));
 
         info!("Prometheus metrics push collector configured");
     };
 
     #[cfg(target_os = "linux")]
-    let (directory_sources_join_handle, inotify_stop_sender, mut directory_sources) =
+    let (directory_sources_join_handle, inotify_stop_cmd, mut directory_sources) =
         start_directory_sources(settings.directory_sources.clone());
 
-    stop_commands.push(Box::new(move || {
-        inotify_stop_sender.send(()).unwrap();
-    }));
+    stop.lock().unwrap().add_command(inotify_stop_cmd);
 
-    let connections: Vec<Connection> = settings
+    #[cfg(target_os = "linux")]
+    {
+        let guard = sources.lock();
+        
+        guard.unwrap().append(&mut directory_sources);
+    }
+
+    settings
         .connections
         .iter()
-        .map(|conn_conf| {
+        .for_each(|conn_conf| {
             let target = targets.get(&conn_conf.target).unwrap().clone();
 
-            Connection {
-                source_name: conn_conf.source.clone(),
-                target: target,
-                filter: conn_conf.filter.clone(),
-            }
-        })
-        .collect();
+            connections.lock().unwrap().push(
+                Connection {
+                    source_name: conn_conf.source.clone(),
+                    target: target,
+                    filter: conn_conf.filter.clone(),
+                }
+            );
+        });
+
 
     let connection_manager =
         PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
 
     let persistence = PostgresPersistence::new(connection_manager);
 
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_clone = stop.clone();
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop_flag.clone();
 
-    let mut sources = Vec::new();
-
-    stop_commands.push(Box::new(move || {
+    stop.lock().unwrap().add_command(Box::new(move || {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
@@ -144,17 +188,17 @@ pub fn run(settings: settings::Settings) {
         pub sftp_source: settings::SftpSource,
         pub cmd_sender: Sender<SftpDownload>,
         pub cmd_receiver: Receiver<SftpDownload>,
-        pub file_event_sender: Sender<FileEvent>,
-        pub file_event_receiver: Receiver<FileEvent>,
+        pub file_event_sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
+        pub file_event_receiver: tokio::sync::mpsc::UnboundedReceiver<FileEvent>,
         pub stop_receiver: oneshot::Receiver<()>
     }
 
     let sftp_source_channels: Vec<SftpSourceChannels> = settings.sftp_sources.iter().map(|sftp_source| {
-        let (cmd_sender, cmd_receiver) = bounded::<SftpDownload>(10);
-        let (file_event_sender, file_event_receiver) = bounded::<FileEvent>(10);
+        let (cmd_sender, cmd_receiver) = bounded::<SftpDownload>(1000);
+        let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
-        stop_commands.push(Box::new(move || {
+        stop.lock().unwrap().add_command(Box::new(move || {
             match stop_sender.send(()) {
                 Ok(_) => (),
                 Err(e) => error!("Error sending stop signal: {:?}", e)
@@ -174,6 +218,9 @@ pub fn run(settings: settings::Settings) {
     let storage_directory = settings.storage.directory.clone();
 
     let jhs = sftp_join_handles.clone();
+    let th_sources = Arc::clone(&sources);
+
+    let stop_clone = Arc::clone(&stop);
 
     let connect_future = lapin_futures::Client::connect(
         &settings.command_queue.address,
@@ -184,7 +231,7 @@ pub fn run(settings: settings::Settings) {
         sftp_source_channels.into_iter().for_each(|channels| {
             for n in 0..channels.sftp_source.thread_count {
                 let join_handle = sftp_downloader::SftpDownloader::start(
-                    stop.clone(),
+                    stop_flag.clone(),
                     channels.cmd_receiver.clone(),
                     channels.sftp_source.clone(),
                     channels.file_event_sender.clone(),
@@ -199,11 +246,17 @@ pub fn run(settings: settings::Settings) {
                 info!("Started {} download thread {}", &channels.sftp_source.name, n + 1);
             }
 
+            th_sources.lock().unwrap().push(Source {
+                name: channels.sftp_source.name.clone(),
+                receiver: channels.file_event_receiver
+            });
+
+            let name = channels.sftp_source.name.clone();
+
             let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), channels.cmd_sender.clone())
-                .into_future()
-                .select2(channels.stop_receiver.into_future())
-                .map(|_result| debug!("End SFTP command stream"))
-                .map_err(|_e| error!("Error: "));
+                //.select2(channels.stop_receiver.into_future())
+                .map(|_| debug!("End SFTP command stream"))
+                .map_err(move |_| error!("Error in AMQP stream '{}'", &name));
 
             debug!("Spawning AMQP stream");
             tokio::spawn(stream);
@@ -211,57 +264,46 @@ pub fn run(settings: settings::Settings) {
 
         ok(())
     })
+    .and_then(move |_| {
+        Arc::try_unwrap(sources).expect("still users of sources").into_inner().unwrap().into_iter().for_each(|source| {
+            // Filter connections belonging to this source
+            let source_connections: Vec<Connection> = connections.lock().unwrap()
+                .iter()
+                .filter(|c| c.source_name == source.name)
+                .cloned()
+                .collect();
+
+            let source_name = source.name.clone();
+
+            let stream_future = source.receiver.map_err(Error::from).for_each(move |file_event| {
+                debug!(
+                    "FileEvent from {}: {}",
+                    &source_name,
+                    file_event.path.to_str().unwrap()
+                );
+
+                source_connections
+                    .deref()
+                    .iter()
+                    .filter(|c| c.filter.event_matches(&file_event))
+                    .for_each(|c| {
+                        let mut s = c.target.sender.clone();
+                        s.try_send(file_event.clone()).unwrap();
+                    });
+
+                futures::future::ok(())
+            }).map_err(|_| ());
+
+            debug!("Spawing local event dispatcher for {}", &source.name);
+
+            tokio::spawn(stop_clone.lock().unwrap().make_stoppable_stream(stream_future, String::from("local event connection")));
+        });
+
+        ok(())
+    })
     .map_err(|_| ());
 
     runtime.spawn(connect_future);
-
-    #[cfg(target_os = "linux")]
-    sources.append(&mut directory_sources);
-
-    let local_event_dispatchers = sources.into_iter().map(|source| {
-        // Filter connections belonging to this source
-        let source_connections: Vec<Connection> = connections
-            .iter()
-            .filter(|c| c.source_name == source.name)
-            .cloned()
-            .collect();
-
-        let source_name = source.name.clone();
-
-        source.receiver.map_err(|_| ()).for_each(move |file_event| {
-            debug!(
-                "FileEvent from {}: {}",
-                &source_name,
-                file_event.path.to_str().unwrap()
-            );
-
-            source_connections
-                .deref()
-                .iter()
-                .filter(|c| c.filter.event_matches(&file_event))
-                .for_each(|c| {
-                    let mut s = c.target.sender.clone();
-                    s.try_send(file_event.clone()).unwrap();
-                });
-
-            futures::future::ok(())
-        })
-    });
-
-    for local_event_dispatcher in local_event_dispatchers {
-        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
-
-        stop_commands.push(Box::new(move || {
-            match stop_sender.send(()) {
-                Ok(_) => (),
-                Err(e) => error!("Error sending stop signal: {:?}", e)
-            }
-        }));
-
-        let stoppable_dispatcher = local_event_dispatcher.select2(stop_receiver.into_future());
-
-        runtime.spawn(stoppable_dispatcher.map(|_result| debug!("End connection stream")).map_err(|_e| error!("Error: ")));
-    }
 
     let cortex_config = CortexConfig {
         sftp_sources: Arc::new(Mutex::new(settings.sftp_sources)),
@@ -277,15 +319,29 @@ pub fn run(settings: settings::Settings) {
         cortex_config,
     );
 
-    stop_commands.push(Box::new(move || {
+    stop.lock().unwrap().add_command(Box::new(move || {
         tokio::spawn(actix_http_server.stop(true));
     }));
 
-    stop_commands.push(Box::new(move || {
+    stop.lock().unwrap().add_command(Box::new(move || {
         actix_system.stop();
     }));
 
-    runtime.spawn(setup_signal_handler(stop_commands));
+    let spawn_signal_handler = futures::future::poll_fn(move || -> futures::Poll<(), Error> {
+        let s_stop = Arc::clone(&stop);
+
+        let unwrap_result = Arc::try_unwrap(s_stop);
+
+        match unwrap_result {
+            Ok(unwrapped) => {
+                tokio::spawn(setup_signal_handler(unwrapped.into_inner().unwrap()));
+                Ok(futures::Async::Ready(()))
+            },
+            Err(_) => Err(err_msg("Could not unwrap Arc"))
+        }
+    }).map_err(|_| ());
+
+    runtime.spawn(spawn_signal_handler);
 
     // Wait until all tasks have finished
     entered
@@ -304,7 +360,7 @@ pub fn run(settings: settings::Settings) {
     });
 }
 
-fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>) -> impl Future<Item = (), Error = ()> + Send + 'static {
+fn setup_signal_handler(stop: Stop) -> impl Future<Item = (), Error = ()> + Send + 'static {
     let signals = Signals::new(&[
         signal_hook::SIGHUP,
         signal_hook::SIGTERM,
@@ -318,9 +374,7 @@ fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'stat
         .map(move |sig| {
             info!("signal: {}", sig.0.unwrap());
 
-            for stop_command in stop_commands {
-                stop_command();
-            }
+            stop.stop();
         })
         .map_err(|e| panic!("{}", e.0))
 }
@@ -333,6 +387,8 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
     let target_stream = match &target_conf.notify {
         Some(conf) => match conf {
             settings::Notify::RabbitMQ(notify_conf) => {
+                debug!("Connecting notifier to directory target stream");
+
                 let amqp_channel = connect_channel(&notify_conf.address);
 
                 let message_template = notify_conf.message_template.clone();
@@ -347,6 +403,8 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
                             error!("Error connecting to AMQP channel {}: {}", address, e);
                         })
                         .and_then(|channel| {
+                            debug!("Notifying on AMQP queue");
+
                             let notify = RabbitMQNotify {
                                 message_template: message_template,
                                 channel: channel,
@@ -364,11 +422,12 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
 
     let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
+    let name = target_conf.name.clone();
+
     let stoppable_stream = target_stream
-        .into_future()
-        .select2(stop_receiver.into_future())
+        //.select2(stop_receiver.into_future())
         .map(|_result| debug!("End directory target stream"))
-        .map_err(|_e| error!("Error: "));
+        .map_err(move |_| error!("Error in directory target stream '{}'", &name));
 
     let stop_cmd = Box::new(move || {
         stop_sender.send(()).unwrap();

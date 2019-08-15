@@ -15,7 +15,9 @@ pub fn to_stream(
     let target_directory = settings.directory.clone();
     let method = settings.method.clone();
 
-    receiver.map_err(|_| ()).map(move |file_event: FileEvent| {
+    receiver.map_err(|e| {
+        error!("Error receiving: {}", e);
+    }).map(move |file_event: FileEvent| {
         let source_path_str = file_event.path.to_str().unwrap();
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);

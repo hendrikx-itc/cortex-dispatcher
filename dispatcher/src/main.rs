@@ -9,7 +9,7 @@ extern crate env_logger;
 
 mod base_types;
 mod cmd;
-mod cortex;
+mod dispatcher;
 mod directory_source;
 mod directory_target;
 mod event;
@@ -97,5 +97,5 @@ fn main() {
 
     info!("Configuration loaded");
 
-    cortex::run(settings);
+    dispatcher::run(settings);
 }

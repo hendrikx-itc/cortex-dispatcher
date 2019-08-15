@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use futures::future::Future;
+use futures::future::{Future, Either};
+use futures::stream::Stream;
 use tera::{Context, Tera};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -40,30 +41,46 @@ impl Notify for RabbitMQNotify {
 
         let mut tera = Tera::default();
 
-        tera.add_raw_template(template_name, &self.message_template)
-            .unwrap();
+        if let Err(e) = tera.add_raw_template(template_name, &self.message_template) {
+            error!("Error adding template: {}", e);
+        }
 
-        Box::new(stream.and_then(move |file_event| {
+        Box::new(stream.map_err(|e| error!("Error in file event stream: {:?}", e)).and_then(move |file_event| {
             let mut context = Context::new();
             context.insert("file_path", &file_event.path);
-            let message_str = tera.render(template_name, &context).unwrap();
-            let message_str_log = message_str.clone();
-            channel
-                .basic_publish(
-                    &exchange,
-                    &routing_key,
-                    message_str.as_bytes().to_vec(),
-                    BasicPublishOptions::default(),
-                    BasicProperties::default(),
-                )
-                .and_then(move |_request_result| {
-                    debug!("Notification sent: {}", message_str_log);
-                    // No confirmation/ack is expected
-                    Ok(file_event)
-                })
-                .map_err(|e| {
-                    error!("Error sending notification: {:?}", e);
-                })
+
+            let render_result = tera.render(template_name, &context);
+
+            match render_result {
+                Ok(message_str) => {
+                    let message_str_log = message_str.clone();
+                    Either::A(
+                        channel
+                            .basic_publish(
+                                &exchange,
+                                &routing_key,
+                                message_str.as_bytes().to_vec(),
+                                BasicPublishOptions::default(),
+                                BasicProperties::default(),
+                            )
+                            .and_then(move |_| {
+                                debug!("Notification sent to AMQP queue: {}", message_str_log);
+
+                                futures::future::ok(file_event)
+                            })
+                            .map_err(|e| {
+                                error!("Error sending notification: {:?}", e);
+                            })
+                    )
+                },
+                Err(e) => {
+                    error!("Error rendering template");
+                    Either::B(
+                        futures::future::ok(file_event)
+                    )
+                }
+            }
+
         }))
     }
 }
