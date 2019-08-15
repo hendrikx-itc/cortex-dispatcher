@@ -127,9 +127,19 @@ where
                                 }
                             }
                             Err(e) => {
+                                let msg = match e {
+                                    retry::Error::<Error>::Operation { error, total_delay, tries } => {
+                                        let msg_list: Vec<String> = error.iter().map(|sub_err| sub_err.to_string()).collect();
+                                        String::from(msg_list.join(": "))
+                                    },
+                                    retry::Error::Internal(int) => {
+                                        int
+                                    }
+                                };
+
                                 warn!(
-                                    "Could not download '{}': {}",
-                                    &command.path, e
+                                    "[W01001] Could not download '{}': {}",
+                                    &command.path, msg
                                 );
                             }
                         }

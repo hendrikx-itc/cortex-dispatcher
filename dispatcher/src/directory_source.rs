@@ -7,7 +7,7 @@ extern crate inotify;
 
 use inotify::{Inotify, WatchMask};
 
-use futures::future::{Future, IntoFuture};
+use futures::future::Future;
 use futures::stream::Stream;
 
 extern crate failure;

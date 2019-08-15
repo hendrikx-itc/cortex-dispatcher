@@ -18,7 +18,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_executor::enter;
 use tokio::sync::oneshot;
 
-use futures::future::{Future, IntoFuture, ok};
+use futures::future::{Future, ok};
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
