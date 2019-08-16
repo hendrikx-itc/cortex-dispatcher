@@ -137,8 +137,8 @@ where
                                     }
                                 };
 
-                                warn!(
-                                    "[W01001] Could not download '{}': {}",
+                                error!(
+                                    "[E01003] Error downloading '{}': {}",
                                     &command.path, msg
                                 );
                             }
