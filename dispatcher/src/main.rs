@@ -26,6 +26,9 @@ use settings::Settings;
 #[macro_use]
 extern crate serde_derive;
 
+extern crate failure_derive;
+extern crate failure;
+
 extern crate postgres;
 
 extern crate chrono;

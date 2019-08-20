@@ -128,9 +128,9 @@ where
                             }
                             Err(e) => {
                                 let msg = match e {
-                                    retry::Error::<Error>::Operation { error, total_delay, tries } => {
+                                    retry::Error::<Error>::Operation { error, total_delay: _, tries: _ } => {
                                         let msg_list: Vec<String> = error.iter().map(|sub_err| sub_err.to_string()).collect();
-                                        String::from(msg_list.join(": "))
+                                        format!("{}", msg_list.join(": "))
                                     },
                                     retry::Error::Internal(int) => {
                                         int

@@ -45,8 +45,8 @@ use crate::sftp_downloader;
 use crate::sftp_command_consumer;
 
 fn stream_consuming_future(
-    stream: Box<futures::Stream<Item = FileEvent, Error = ()> + Send>,
-) -> Box<futures::Future<Item = (), Error = ()> + Send> {
+    stream: Box<dyn futures::Stream<Item = FileEvent, Error = ()> + Send>,
+) -> Box<dyn futures::Future<Item = (), Error = ()> + Send> {
     Box::new(stream.for_each(|_| futures::future::ok(())))
 }
 

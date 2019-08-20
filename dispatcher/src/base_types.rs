@@ -14,7 +14,7 @@ pub trait Notify {
     fn and_then_notify<T>(
         &self,
         stream: T,
-    ) -> Box<futures::Stream<Item = FileEvent, Error = ()> + Send>
+    ) -> Box<dyn futures::Stream<Item = FileEvent, Error = ()> + Send>
     where
         T: futures::Stream<Item = FileEvent, Error = ()> + 'static + Send;
 }
@@ -30,7 +30,7 @@ impl Notify for RabbitMQNotify {
     fn and_then_notify<T>(
         &self,
         stream: T,
-    ) -> Box<futures::Stream<Item = FileEvent, Error = ()> + Send>
+    ) -> Box<dyn futures::Stream<Item = FileEvent, Error = ()> + Send>
     where
         T: futures::Stream<Item = FileEvent, Error = ()> + 'static + Send,
     {
