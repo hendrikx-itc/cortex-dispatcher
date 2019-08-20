@@ -145,10 +145,10 @@ pub fn run(settings: settings::Settings) {
     let (directory_sources_join_handle, inotify_stop_cmd, mut directory_sources) =
         start_directory_sources(settings.directory_sources.clone());
 
-    stop.lock().unwrap().add_command(inotify_stop_cmd);
-
     #[cfg(target_os = "linux")]
     {
+        stop.lock().unwrap().add_command(inotify_stop_cmd);
+
         let guard = sources.lock();
         
         guard.unwrap().append(&mut directory_sources);
