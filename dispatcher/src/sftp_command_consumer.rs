@@ -67,11 +67,11 @@ impl Display for ConsumeError {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Fail)]
 enum ConsumeErrorKind {
-    ChannelFull { delivery_tag: u64},
-    ChannelDisconnected{delivery_tag: u64},
-    UnrecoverableDownLoad{delivery_tag: u64},
-    RecoverableDownload{delivery_tag: u64},
-    DeserializeError{delivery_tag: u64},
+    ChannelFull,
+    ChannelDisconnected,
+    UnrecoverableDownLoad,
+    RecoverableDownload,
+    DeserializeError,
 	RetryFailure,
     UnknownStreamError,
 	AckFailure,
@@ -96,8 +96,6 @@ pub fn start(
 
 	let future = channel_future.and_then(move |channel| {
 		let ch = channel.clone();
-		let or_else_ch = channel.clone();
-		let and_then_ch = channel.clone();
 		let id = channel.id();
 		info!("Created channel with id {}", id);
 
@@ -131,6 +129,8 @@ pub fn start(
 			stream.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |message| {
 				let action_source_name = sftp_source_name_2.clone();
 				let action_command_sender = command_sender.clone();
+				let then_delivery_tag = message.delivery_tag;
+				let or_else_delivery_tag = message.delivery_tag;
 
 				let action = move || {
 					debug!("Received message from AMQP queue");
@@ -148,14 +148,14 @@ pub fn start(
 								Ok(_) => Ok(message.delivery_tag),
 								Err(e) => {
 									match e {
-										TrySendError::Disconnected(_) => Err(e.context(ConsumeErrorKind::ChannelDisconnected { delivery_tag: message.delivery_tag })),
-										TrySendError::Full(_) => Err(e.context(ConsumeErrorKind::ChannelFull { delivery_tag: message.delivery_tag }))
+										TrySendError::Disconnected(_) => Err(e.context(ConsumeErrorKind::ChannelDisconnected)),
+										TrySendError::Full(_) => Err(e.context(ConsumeErrorKind::ChannelFull))
 									}
 								}
 							}
 						},
 						Err(e) => {
-							Err(e.context(ConsumeErrorKind::DeserializeError{delivery_tag: message.delivery_tag}))
+							Err(e.context(ConsumeErrorKind::DeserializeError))
 						}
 					}
 				};
@@ -172,36 +172,48 @@ pub fn start(
 					.map(jitter)
 					.take(3);
 
-				RetryIf::spawn(retry_strategy, action, condition).map_err(|e| ConsumeError::from(ConsumeErrorKind::RetryFailure))
-			}).and_then(move |delivery_tag| {
-				debug!("Sent command on channel");
-				and_then_ch.basic_ack(delivery_tag, false)
-					.map(|v| ())
-					.map_err(|e| ConsumeError::from(ConsumeErrorKind::AckFailure))
-			}).or_else(move |e| {
-				let map_to_empty = |v| ();
-				let map_to_consume_err = |e| ConsumeError::from(ConsumeErrorKind::NackFailure);
-				match e.inner.get_context() {
-					ConsumeErrorKind::DeserializeError{delivery_tag: delivery_tag} => {
-						error!("Error deserializing message: {}", e);
-						or_else_ch.basic_nack(*delivery_tag, false, false)
-							.map(map_to_empty)
-							.map_err(map_to_consume_err)
-					}
-					ConsumeErrorKind::ChannelFull{delivery_tag: delivery_tag} => {
-						error!("Error sending command on channel: channel full");
-						// Put the message back on the queue, because we could temporarily not process it
-						or_else_ch.basic_nack(*delivery_tag, false, true)
-							.map(map_to_empty)
-							.map_err(map_to_consume_err)
-					},
-					ConsumeErrorKind::ChannelDisconnected{delivery_tag: delivery_tag} => {
-						error!("Channel disconnectd");
-						or_else_ch.basic_nack(*delivery_tag, false, true)
-							.map(map_to_empty)
-							.map_err(map_to_consume_err)
-					}
-				}
+				let or_else_ch = ch.clone();
+				let and_then_ch = ch.clone();
+
+				RetryIf::spawn(retry_strategy, action, condition)
+					.map_err(|e| ConsumeError::from(ConsumeErrorKind::RetryFailure))
+					.then(move |_| {
+						debug!("Sent command on channel");
+						and_then_ch.basic_ack(then_delivery_tag, false)
+							.map(|v| ())
+							.map_err(|e| ConsumeError::from(ConsumeErrorKind::AckFailure))
+					})
+					.or_else(move |e| {
+						let map_to_empty = |v| ();
+						let map_to_consume_err = |e| ConsumeError::from(ConsumeErrorKind::NackFailure);
+						match e.inner.get_context() {
+							ConsumeErrorKind::DeserializeError => {
+								error!("Error deserializing message: {}", e);
+								or_else_ch.basic_nack(or_else_delivery_tag, false, false)
+									.map(map_to_empty)
+									.map_err(map_to_consume_err)
+							}
+							ConsumeErrorKind::ChannelFull => {
+								error!("Error sending command on channel: channel full");
+								// Put the message back on the queue, because we could temporarily not process it
+								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
+									.map(map_to_empty)
+									.map_err(map_to_consume_err)
+							},
+							ConsumeErrorKind::ChannelDisconnected => {
+								error!("Channel disconnected");
+								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
+									.map(map_to_empty)
+									.map_err(map_to_consume_err)
+							}
+							_ => {
+								error!("Other error");
+								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
+									.map(map_to_empty)
+									.map_err(map_to_consume_err)
+							}
+						}
+					})
 			}).for_each(|_| Ok(()))
 		});
 
