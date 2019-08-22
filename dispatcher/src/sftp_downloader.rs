@@ -94,13 +94,13 @@ where
                                 Err(e) => {
                                     match e {
                                         Error(ErrorKind::DisconnectedError, _) => {
-                                            info!("Sftp connection disconnected, reconnecting")
+                                            info!("Sftp connection disconnected, reconnecting");
                                             let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
                                             match connect_result {
                                                 Ok(c) => {
                                                     sftp_connection.replace(c);
-                                                    info!("Sftp connection reconnected")
+                                                    info!("Sftp connection reconnected");
                                                     OperationResult::Retry(e)
                                                 },
                                                 Err(er) => {
@@ -219,7 +219,7 @@ where
             }
 
             let mut local_file = File::create(&local_path)
-                .chain_err(|| format!("Error creating local file {}", local_path.to_str().unwrap()))?;
+                .chain_err(|| format!("Error creating local file '{}'", local_path.to_str().unwrap()))?;
 
             let mut sha256 = Sha256::new();
 
