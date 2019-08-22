@@ -200,7 +200,8 @@ where
             let mut remote_file = match open_result {
                 Ok(remote_file) => remote_file,
                 Err(e) => {
-                    error!("Error opening file: {}", e);
+                    let path_str = remote_path.to_string_lossy();
+                    error!("Error opening file '{}': {}", &path_str, e);
                     match e.code() {
                         0 => return Err(ErrorKind::DisconnectedError.into()),
                         2 => return Err(ErrorKind::NoSuchFileError.into()),
