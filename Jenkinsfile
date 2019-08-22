@@ -27,6 +27,7 @@ pipeline {
                 
                 sshagent (credentials: ['615de4ee-505f-40d9-8994-1c53d4796725']) {
                     publishPackages 'target/debian', 'common/stable', 'xenial'
+                    publishPackages 'target/debian', 'common/bionic', 'bionic'
                 }
 
                 dir('sftp-scanner') {
@@ -35,6 +36,7 @@ pipeline {
                 
                 sshagent (credentials: ['615de4ee-505f-40d9-8994-1c53d4796725']) {
                     publishPackages 'target/debian', 'common/stable', 'xenial'
+                    publishPackages 'target/debian', 'common/bionic', 'bionic'
                 }
             }
         }
