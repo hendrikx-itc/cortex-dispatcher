@@ -148,7 +148,7 @@ where
                         match e {
                             RecvTimeoutError::Timeout => (),
                             RecvTimeoutError::Disconnected => {
-                                error!("Channel disconnected");
+                                error!("[E02005] Channel disconnected");
                                 thread::sleep(timeout)
                             }
                         }
@@ -198,6 +198,7 @@ where
             let mut remote_file = match open_result {
                 Ok(remote_file) => remote_file,
                 Err(e) => {
+                    error!("Error opening file: {}", e);
                     match e.code() {
                         0 => return Err(ErrorKind::DisconnectedError.into()),
                         2 => return Err(ErrorKind::NoSuchFileError.into()),

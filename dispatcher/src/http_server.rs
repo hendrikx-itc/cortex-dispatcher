@@ -151,7 +151,7 @@ fn metrics() -> impl Responder {
 
     match encode_result {
         Ok(_) => {}
-        Err(e) => error!("Error encoding metrics: {}", e),
+        Err(e) => error!("[E02011] Error encoding metrics: {}", e),
     }
 
     String::from_utf8(buffer).unwrap()

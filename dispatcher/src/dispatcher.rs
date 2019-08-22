@@ -95,14 +95,14 @@ impl Stop {
         self.stop_commands.push(Box::new(move || {
             match stop_sender.send(()) {
                 Ok(_) => (),
-                Err(e) => error!("Error sending stop signal: {:?}", e)
+                Err(e) => error!("[E02009] Error sending stop signal: {:?}", e)
             }
         }));
 
         stream
             //.select2(stop_receiver.into_future())
             .map(|_| debug!("End stream"))
-            .map_err(move |_| error!("Error in stoppable stream {}", &name))
+            .map_err(move |_| error!("[E02010] Error in stoppable stream {}", &name))
     }
 }
 
@@ -201,7 +201,7 @@ pub fn run(settings: settings::Settings) {
         stop.lock().unwrap().add_command(Box::new(move || {
             match stop_sender.send(()) {
                 Ok(_) => (),
-                Err(e) => error!("Error sending stop signal: {:?}", e)
+                Err(e) => error!("[E02008] Error sending stop signal: {:?}", e)
             }
         }));
 
@@ -256,7 +256,7 @@ pub fn run(settings: settings::Settings) {
             let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), channels.cmd_sender.clone())
                 //.select2(channels.stop_receiver.into_future())
                 .map(|_| debug!("End SFTP command stream"))
-                .map_err(move |_| error!("Error in AMQP stream '{}'", &name));
+                .map_err(move |_| error!("[E02007] Error in AMQP stream '{}'", &name));
 
             debug!("Spawning AMQP stream");
             tokio::spawn(stream);
@@ -400,7 +400,7 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
                 Box::new(
                     amqp_channel
                         .map_err(move |e| {
-                            error!("Error connecting to AMQP channel {}: {}", address, e);
+                            error!("[E01008] Error connecting to AMQP channel {}: {}", address, e);
                         })
                         .and_then(|channel| {
                             debug!("Notifying on AMQP queue");
@@ -427,7 +427,7 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
     let stoppable_stream = target_stream
         //.select2(stop_receiver.into_future())
         .map(|_result| debug!("End directory target stream"))
-        .map_err(move |_| error!("Error in directory target stream '{}'", &name));
+        .map_err(move |_| error!("[E02006] Error in directory target stream '{}'", &name));
 
     let stop_cmd = Box::new(move || {
         stop_sender.send(()).unwrap();

@@ -16,14 +16,14 @@ pub fn to_stream(
     let method = settings.method.clone();
 
     receiver.map_err(|e| {
-        error!("Error receiving: {}", e);
+        error!("[E01006] Error receiving: {}", e);
     }).map(move |file_event: FileEvent| {
         let source_path_str = file_event.path.to_str().unwrap();
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);
         let target_path_str = target_path.to_str().unwrap();
 
-        debug!("FileEvent for {}: {}", &target_name, &source_path_str);
+        debug!("FileEvent for {}: '{}'", &target_name, &source_path_str);
 
         match method {
             LocalTargetMethod::Copy => {
@@ -31,11 +31,11 @@ pub fn to_stream(
 
                 match result {
                     Ok(size) => {
-                        debug!("{} copied {} bytes to {}", &source_path_str, size, &target_path_str);
+                        debug!("'{}' copied {} bytes to '{}'", &source_path_str, size, &target_path_str);
                     }
                     Err(e) => {
                         error!(
-                            "Error copying {} to {}: {}",
+                            "[E01005] Error copying '{}' to '{}': {}",
                             &source_path_str, &target_path_str, &e
                         );
                     }
@@ -46,11 +46,11 @@ pub fn to_stream(
 
                 match result {
                     Ok(()) => {
-                        debug!("{} hardlinked to {}", &source_path_str, &target_path_str);
+                        debug!("Hardlinked '{}' to '{}'", &source_path_str, &target_path_str);
                     }
                     Err(e) => {
                         error!(
-                            "Error hardlinking {} to {}: {}",
+                            "[E01004] Error hardlinking '{}' to '{}': {}",
                             &source_path_str, &target_path_str, &e
                         );
                     }
@@ -61,11 +61,11 @@ pub fn to_stream(
 
                 match result {
                     Ok(()) => {
-                        debug!("{} symlinked to {}", &source_path_str, &target_path_str);
+                        debug!("Symlinked '{}' to '{}'", &source_path_str, &target_path_str);
                     }
                     Err(e) => {
                         error!(
-                            "Error symlinking {} to {}: {}",
+                            "[E01007] Error symlinking '{}' to '{}': {}",
                             &source_path_str, &target_path_str, &e
                         );
                     }

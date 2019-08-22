@@ -112,7 +112,7 @@ fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
         let buffer: Vec<u8> = vec![0; 1024];
 
         let stream = inotify
-            .event_stream(buffer).map_err(|e| error!("Error in inotify stream: {}", e))
+            .event_stream(buffer).map_err(|e| error!("[E02004] Error in inotify stream: {}", e))
             .for_each(move |event: inotify::Event<std::ffi::OsString>| {
                 let name = event.name.expect("Could not decode name");
 
