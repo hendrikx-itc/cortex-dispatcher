@@ -1,3 +1,4 @@
+use std::fmt;
 use std::convert::TryFrom;
 use std::path::{Path, PathBuf};
 use std::{thread, time};
@@ -117,7 +118,25 @@ pub fn start_scanner(
                 });
 
                 match scan_result {
-                    Ok(_) => (),
+                    Ok(sr) => {
+                        let scan_end = time::Instant::now();
+
+                        let scan_duration = scan_end.duration_since(scan_start);
+
+                        info!(
+                            "Finished scanning {} in {} ms - {}",
+                            &sftp_source.name,
+                            scan_duration.as_millis(),
+                            &sr
+                        );
+
+                        metrics::DIR_SCAN_COUNTER
+                            .with_label_values(&[&sftp_source.name])
+                            .inc();
+                        metrics::DIR_SCAN_DURATION
+                            .with_label_values(&[&sftp_source.name])
+                            .inc_by(scan_duration.as_millis() as i64);
+                    },
                     Err(e) => {
                         error!(
                             "Error scanning {}: {}",
@@ -126,22 +145,6 @@ pub fn start_scanner(
                     }
                 }
 
-                let scan_end = time::Instant::now();
-
-                let scan_duration = scan_end.duration_since(scan_start);
-
-                info!(
-                    "Finished scanning {} in {} ms",
-                    &sftp_source.name,
-                    scan_duration.as_millis()
-                );
-
-                metrics::DIR_SCAN_COUNTER
-                    .with_label_values(&[&sftp_source.name])
-                    .inc();
-                metrics::DIR_SCAN_DURATION
-                    .with_label_values(&[&sftp_source.name])
-                    .inc_by(scan_duration.as_millis() as i64);
             } else {
                 thread::sleep(time::Duration::from_millis(200));
             }
@@ -151,12 +154,44 @@ pub fn start_scanner(
     })
 }
 
-fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
+struct ScanResult {
+    /// Number of files encountered during the scan
+    pub encountered_files: u64,
+    /// Number of files that matched the criteria of the source
+    pub matching_files: u64,
+    /// Number of files dispatched on the channel
+    pub dispatched_files: u64
+}
+
+impl ScanResult {
+    fn new() -> ScanResult {
+        ScanResult {
+            encountered_files: 0,
+            matching_files: 0,
+            dispatched_files: 0
+        }
+    }
+
+    fn add(&mut self, other: &ScanResult) {
+        self.encountered_files += other.encountered_files;
+        self.matching_files += other.encountered_files;
+        self.dispatched_files += other.dispatched_files;
+    }
+}
+
+impl fmt::Display for ScanResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "encountered: {}, matching: {}, dispatched: {}", self.encountered_files, self.matching_files, self.dispatched_files)
+    }
+}
+
+fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
     scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender)
 }
 
-fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<()> {
+fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
     debug!("Directory scan started for {}", &directory.to_str().unwrap());
+    let mut scan_result = ScanResult::new();
 
     let read_result = sftp_connection.borrow()
         .sftp
@@ -183,10 +218,12 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
         if stat.is_dir() {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
-            let scan_result = scan_directory(stop, sftp_source, &dir, sftp_connection.clone(), conn, sender);
+            let result = scan_directory(stop, sftp_source, &dir, sftp_connection.clone(), conn, sender);
 
-            match scan_result {
-                Ok(_) => (),
+            match result {
+                Ok(sr) => {
+                    scan_result.add(&sr);
+                },
                 Err(e) => {
                     match e {
                         Error(ErrorKind::DisconnectedError, _) => return Err(e),
@@ -195,6 +232,8 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                 }
             }
         } else {
+            scan_result.encountered_files += 1;
+
             let file_size: u64 = stat.size.unwrap();
 
             let cast_result = i64::try_from(file_size);
@@ -210,6 +249,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
             let path_str = path.to_str().unwrap().to_string();
 
             if sftp_source.regex.is_match(file_name) {
+                scan_result.matching_files += 1;
                 debug!("'{}' - matches", path_str);
 
                 let file_requires_download =
@@ -264,6 +304,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
 
                         match result {
                             Ok(v) => {
+                                scan_result.dispatched_files += 1;
                                 debug!("Sent message {} on channel", command);
                                 OperationResult::Ok(v)
                             },
@@ -289,5 +330,5 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
         }
     }
 
-    Ok(())
+    Ok(scan_result)
 }
