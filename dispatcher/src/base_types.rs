@@ -74,7 +74,7 @@ impl Notify for RabbitMQNotify {
                     )
                 },
                 Err(e) => {
-                    error!("Error rendering template");
+                    error!("Error rendering template: {}", e);
                     Either::B(
                         futures::future::ok(file_event)
                     )

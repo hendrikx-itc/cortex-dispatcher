@@ -69,8 +69,6 @@ impl Display for ConsumeError {
 enum ConsumeErrorKind {
     ChannelFull,
     ChannelDisconnected,
-    UnrecoverableDownLoad,
-    RecoverableDownload,
     DeserializeError,
 	RetryFailure,
     UnknownStreamError,
@@ -92,7 +90,7 @@ pub fn start(
     let sftp_source_name_2 = sftp_source_name.clone();
 
 	let channel_future = amqp_client.create_channel();
-	let channel_future = channel_future.map_err(|e| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
+	let channel_future = channel_future.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
 
 	let future = channel_future.and_then(move |channel| {
 		let ch = channel.clone();
@@ -104,7 +102,7 @@ pub fn start(
 
 		let queue_declare_future = channel
 			.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default())
-			.map_err(|e| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
+			.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
 
 		let consume_future = queue_declare_future.and_then(move |queue| {
 			info!("channel {} declared queue '{}'", id, &queue_name);
@@ -117,11 +115,11 @@ pub fn start(
 				&routing_key,
 				QueueBindOptions::default(),
 				FieldTable::default(),
-			).map_err(|e| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |_| {
+			).map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |_| {
 				debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
 				channel
 					.basic_consume(&queue, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default())
-					.map_err(|e| ConsumeError::from(ConsumeErrorKind::UnknownStreamError))
+					.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError))
 			})
 		});
 
@@ -176,16 +174,16 @@ pub fn start(
 				let and_then_ch = ch.clone();
 
 				RetryIf::spawn(retry_strategy, action, condition)
-					.map_err(|e| ConsumeError::from(ConsumeErrorKind::RetryFailure))
+					.map_err(|_| ConsumeError::from(ConsumeErrorKind::RetryFailure))
 					.then(move |_| {
 						debug!("Sent command on channel");
 						and_then_ch.basic_ack(then_delivery_tag, false)
-							.map(|v| ())
-							.map_err(|e| ConsumeError::from(ConsumeErrorKind::AckFailure))
+							.map(|_| ())
+							.map_err(|_| ConsumeError::from(ConsumeErrorKind::AckFailure))
 					})
 					.or_else(move |e| {
-						let map_to_empty = |v| ();
-						let map_to_consume_err = |e| ConsumeError::from(ConsumeErrorKind::NackFailure);
+						let map_to_empty = |_| ();
+						let map_to_consume_err = |_| ConsumeError::from(ConsumeErrorKind::NackFailure);
 						match e.inner.get_context() {
 							ConsumeErrorKind::DeserializeError => {
 								error!("Error deserializing message: {}", e);
@@ -218,7 +216,7 @@ pub fn start(
 		});
 
 		handled_stream
-	}).map_err(|e| ());
+	}).map_err(|e| error!("Unexpected error: {}", e));
 
 	Box::new(future)
 }
