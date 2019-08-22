@@ -94,11 +94,13 @@ where
                                 Err(e) => {
                                     match e {
                                         Error(ErrorKind::DisconnectedError, _) => {
+                                            info!("Sftp connection disconnected, reconnecting")
                                             let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
                                             match connect_result {
                                                 Ok(c) => {
                                                     sftp_connection.replace(c);
+                                                    info!("Sftp connection reconnected")
                                                     OperationResult::Retry(e)
                                                 },
                                                 Err(er) => {
