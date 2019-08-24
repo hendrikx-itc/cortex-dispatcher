@@ -74,7 +74,8 @@ enum ConsumeErrorKind {
 	RetryFailure,
     UnknownStreamError,
 	AckFailure,
-	NackFailure
+	NackFailure,
+	SetupError
 }
 
 impl Display for ConsumeErrorKind {
@@ -91,8 +92,8 @@ pub fn start(
 ) -> Box<dyn Future<Item=(), Error=()> + Send> {
     let sftp_source_name_2 = sftp_source_name.clone();
 
-	let channel_future = amqp_client.create_channel();
-	let channel_future = channel_future.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
+	let channel_future = amqp_client.create_channel()
+		.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
 
 	let future = channel_future.and_then(move |channel| {
 		let ch = channel.clone();
@@ -105,7 +106,7 @@ pub fn start(
 
 		let queue_declare_future = channel
 			.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default())
-			.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
+			.map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError));
 
 		let consume_future = queue_declare_future.and_then(move |queue| {
 			info!("channel {} declared queue '{}'", id, &queue_name);
@@ -118,7 +119,7 @@ pub fn start(
 				&routing_key,
 				QueueBindOptions::default(),
 				FieldTable::default(),
-			).map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |_| {
+			).map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError)).and_then(move |_| {
 				debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
 
 				let ack_stream = ack_receiver.map_err(|e| {
@@ -143,12 +144,12 @@ pub fn start(
 				// Setup command consuming stream
 				channel
 					.basic_consume(&queue, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default())
-					.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError))
+					.map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError))
 			})
 		});
 
-		let handled_stream = consume_future.and_then(|stream|{
-			stream.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |message| {
+		let handled_stream = consume_future.and_then(|stream| {
+			stream.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).for_each(move |message| {
 				let action_source_name = sftp_source_name_2.clone();
 				let action_command_sender = command_sender.clone();
 				let then_delivery_tag = message.delivery_tag;
@@ -167,7 +168,7 @@ pub fn start(
 							let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download.clone()));
 							
 							match send_result {
-								Ok(_) => Ok(message.delivery_tag),
+								Ok(_) => Ok(()),
 								Err(e) => {
 									match e {
 										TrySendError::Disconnected(_) => Err(e.context(ConsumeErrorKind::ChannelDisconnected)),
@@ -198,61 +199,64 @@ pub fn start(
 				let and_then_ch = ch.clone();
 
 				RetryIf::spawn(retry_strategy, action, condition)
-					.map_err(|_| ConsumeError::from(ConsumeErrorKind::RetryFailure))
-					.then(move |_| {
-						debug!("Sent command on channel");
-					})
+					.and_then(|_| futures::future::ok(()) )
 					.or_else(move |e| {
 						let map_to_empty = |_| ();
 						let map_to_consume_err = |_| ConsumeError::from(ConsumeErrorKind::NackFailure);
-						match e.inner.get_context() {
-							ConsumeErrorKind::DeserializeError => {
-								error!("Error deserializing message: {}", e);
-								or_else_ch.basic_nack(or_else_delivery_tag, false, false)
-									.map(map_to_empty)
-									.map_err(map_to_consume_err)
-							}
-							ConsumeErrorKind::ChannelFull => {
-								error!("Error sending command on channel: channel full");
-								// Put the message back on the queue, because we could temporarily not process it
-								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
-									.map(map_to_empty)
-									.map_err(map_to_consume_err)
-							},
-							ConsumeErrorKind::ChannelDisconnected => {
-								error!("Channel disconnected");
-								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
-									.map(map_to_empty)
-									.map_err(map_to_consume_err)
-							},
 
-							ConsumeErrorKind::RetryFailure => {
-								error!("Error retrying message handling")
-
+						let requeue_message = match e {
+							tokio_retry::Error::OperationError(er) => {
+								match er.get_context() {
+									ConsumeErrorKind::DeserializeError => {
+										error!("Error deserializing message: {}", er);
+										false
+									}
+									ConsumeErrorKind::ChannelFull => {
+										error!("Error sending command on channel: channel full");
+										// Put the message back on the queue, because we could temporarily not process it
+										true
+									},
+									ConsumeErrorKind::ChannelDisconnected => {
+										error!("Channel disconnected");
+										true
+									},
+									ConsumeErrorKind::RetryFailure => {
+										error!("Error retrying message handling");
+										true
+									},
+									ConsumeErrorKind::UnknownStreamError => {
+										error!("Unknown stream error");
+										true
+									},
+									ConsumeErrorKind::AckFailure => {
+										error!("Error sending ack");
+										true
+									},
+									ConsumeErrorKind::NackFailure => {
+										error!("Error sending nack");
+										true
+									},
+									ConsumeErrorKind::SetupError => {
+										error!("Setup error should not occur here");
+										true
+									}
+								}
 							},
-							ConsumeErrorKind::UnknownStreamError => {
-								error!("Unknown stream error")
-							},
-							ConsumeErrorKind::AckFailure => {
-								error!("Error sending ack")
-							},
-							ConsumeErrorKind::NackFailure => {
-								error!("Error sending nack")
+							tokio_retry::Error::TimerError(te) => {
+								error!("Retry timer error: {}", te);
+								true
 							}
+						};
 
-							_ => {
-								error!("Other error");
-								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
-									.map(map_to_empty)
-									.map_err(map_to_consume_err)
-							}
-						}
+						or_else_ch.basic_nack(or_else_delivery_tag, false, requeue_message)
+							.map(map_to_empty)
+							.map_err(map_to_consume_err)
 					})
-			}).for_each(|_| Ok(()))
+			})
 		});
 
 		handled_stream
-	}).map_err(|e| error!("Unexpected error: {}", e));
+	}).map_err(|_| ());
 
 	Box::new(future)
 }
