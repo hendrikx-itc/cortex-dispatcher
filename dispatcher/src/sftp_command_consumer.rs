@@ -201,9 +201,6 @@ pub fn start(
 					.map_err(|_| ConsumeError::from(ConsumeErrorKind::RetryFailure))
 					.then(move |_| {
 						debug!("Sent command on channel");
-						and_then_ch.basic_ack(then_delivery_tag, false)
-							.map(|_| ())
-							.map_err(|_| ConsumeError::from(ConsumeErrorKind::AckFailure))
 					})
 					.or_else(move |e| {
 						let map_to_empty = |_| ();
@@ -227,7 +224,22 @@ pub fn start(
 								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
 									.map(map_to_empty)
 									.map_err(map_to_consume_err)
+							},
+
+							ConsumeErrorKind::RetryFailure => {
+								error!("Error retrying message handling")
+
+							},
+							ConsumeErrorKind::UnknownStreamError => {
+								error!("Unknown stream error")
+							},
+							ConsumeErrorKind::AckFailure => {
+								error!("Error sending ack")
+							},
+							ConsumeErrorKind::NackFailure => {
+								error!("Error sending nack")
 							}
+
 							_ => {
 								error!("Other error");
 								or_else_ch.basic_nack(or_else_delivery_tag, false, true)
