@@ -121,10 +121,20 @@ pub fn start(
 			).map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |_| {
 				debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
 
-				let ack_stream = ack_receiver.map_err(|e| ()).for_each(move |message_response| {
+				let ack_stream = ack_receiver.map_err(|e| {
+					error!("Error receiving message response from stream: {}", e)
+				}).for_each(move |message_response| {
 					match message_response {
-						MessageResponse::Ack { delivery_tag } => futures::future::Either::A(ack_ch.basic_ack(delivery_tag, false).map_err(|e| ())),
-						MessageResponse::Nack { delivery_tag } => futures::future::Either::B(ack_ch.basic_nack(delivery_tag, false, false).map_err(|e| ()))
+						MessageResponse::Ack { delivery_tag } => {
+							futures::future::Either::A(ack_ch.basic_ack(delivery_tag, false).map_err(|e| {
+								error!("Error sending Ack on AMQP channel: {}", e)
+							}))
+						},
+						MessageResponse::Nack { delivery_tag } => {
+							futures::future::Either::B(ack_ch.basic_nack(delivery_tag, false, false).map_err(|e| {
+								error!("Error sending Nack on AMQP channel: {}", e)
+							}))
+						}
 					}
 				});
 
