@@ -18,6 +18,7 @@ use crate::event::FileEvent;
 use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
+use crate::base_types::MessageResponse;
 
 use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
 use cortex_core::SftpDownload;
@@ -51,7 +52,8 @@ where
 {
     pub fn start(
         stop: Arc<AtomicBool>,
-        receiver: Receiver<SftpDownload>,
+        receiver: Receiver<(u64, SftpDownload)>,
+        mut ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
         config: settings::SftpSource,
         mut sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         data_dir: PathBuf,
@@ -87,7 +89,7 @@ where
                 let receive_result = receiver.recv_timeout(timeout);
 
                 match receive_result {
-                    Ok(command) => {
+                    Ok((delivery_tag, command)) => {
                         let download_result = retry(Fixed::from_millis(1000), || {
                             match sftp_downloader.handle(sftp_connection.clone(), &command) {
                                 Ok(file_event) => OperationResult::Ok(file_event),
@@ -116,6 +118,18 @@ where
 
                         match download_result {
                             Ok(file_event) => {
+                                let send_result = ack_sender.try_send(MessageResponse::Ack{delivery_tag});
+
+                                match send_result {
+                                    Ok(_) => {
+                                        debug!("Sent message ack to channel");
+                                    },
+                                    Err(e) => {
+                                        error!("Error sending message ack to channel: {}", e);
+                                    }
+
+                                }
+
                                 // Notify about new data from this SFTP source
                                 let send_result = sender.try_send(file_event);
 
@@ -129,6 +143,18 @@ where
                                 }
                             }
                             Err(e) => {
+                                let send_result = ack_sender.try_send(MessageResponse::Nack{delivery_tag});
+
+                                match send_result {
+                                    Ok(_) => {
+                                        debug!("Sent message nack to channel");
+                                    },
+                                    Err(e) => {
+                                        error!("Error sending message nack to channel: {}", e);
+                                    }
+
+                                }
+
                                 let msg = match e {
                                     retry::Error::<Error>::Operation { error, total_delay: _, tries: _ } => {
                                         let msg_list: Vec<String> = error.iter().map(|sub_err| sub_err.to_string()).collect();
@@ -203,8 +229,12 @@ where
                     let path_str = remote_path.to_string_lossy();
                     error!("Error opening file '{}': {}", &path_str, e);
                     match e.code() {
-                        0 => return Err(ErrorKind::DisconnectedError.into()),
-                        2 => return Err(ErrorKind::NoSuchFileError.into()),
+                        0 => {
+                            return Err(ErrorKind::DisconnectedError.into())
+                        },
+                        2 => {
+                            return Err(ErrorKind::NoSuchFileError.into())
+                        },
                         _ => return Err(Error::with_chain(e, "Error opening remote file"))
                     }
                 }

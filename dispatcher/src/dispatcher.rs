@@ -43,6 +43,7 @@ use crate::persistence::PostgresPersistence;
 use crate::settings;
 use crate::sftp_downloader;
 use crate::sftp_command_consumer;
+use crate::base_types::MessageResponse;
 
 fn stream_consuming_future(
     stream: Box<dyn futures::Stream<Item = FileEvent, Error = ()> + Send>,
@@ -186,15 +187,15 @@ pub fn run(settings: settings::Settings) {
 
     struct SftpSourceChannels {
         pub sftp_source: settings::SftpSource,
-        pub cmd_sender: Sender<SftpDownload>,
-        pub cmd_receiver: Receiver<SftpDownload>,
+        pub cmd_sender: Sender<(u64, SftpDownload)>,
+        pub cmd_receiver: Receiver<(u64, SftpDownload)>,
         pub file_event_sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         pub file_event_receiver: tokio::sync::mpsc::UnboundedReceiver<FileEvent>,
         pub stop_receiver: oneshot::Receiver<()>
     }
 
     let sftp_source_channels: Vec<SftpSourceChannels> = settings.sftp_sources.iter().map(|sftp_source| {
-        let (cmd_sender, cmd_receiver) = bounded::<SftpDownload>(1000);
+        let (cmd_sender, cmd_receiver) = bounded::<(u64, SftpDownload)>(1000);
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
@@ -229,10 +230,13 @@ pub fn run(settings: settings::Settings) {
     .map_err(failure::Error::from)
     .and_then(move |client| {
         sftp_source_channels.into_iter().for_each(|channels| {
+            let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(10);
+
             for n in 0..channels.sftp_source.thread_count {
                 let join_handle = sftp_downloader::SftpDownloader::start(
                     stop_flag.clone(),
                     channels.cmd_receiver.clone(),
+                    ack_sender.clone(),
                     channels.sftp_source.clone(),
                     channels.file_event_sender.clone(),
                     storage_directory.clone(),
@@ -253,7 +257,7 @@ pub fn run(settings: settings::Settings) {
 
             let name = channels.sftp_source.name.clone();
 
-            let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), channels.cmd_sender.clone())
+            let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), ack_receiver, channels.cmd_sender.clone())
                 //.select2(channels.stop_receiver.into_future())
                 .map(|_| debug!("End SFTP command stream"))
                 .map_err(move |_| error!("[E02007] Error in AMQP stream '{}'", &name));

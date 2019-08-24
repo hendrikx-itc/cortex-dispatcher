@@ -110,3 +110,9 @@ pub struct CortexConfig {
     pub directory_targets: std::sync::Arc<Mutex<Vec<settings::DirectoryTarget>>>,
     pub connections: std::sync::Arc<Mutex<Vec<settings::Connection>>>,
 }
+
+#[derive(Debug, Clone)]
+pub enum MessageResponse {
+    Ack { delivery_tag: u64 },
+    Nack { delivery_tag: u64 }
+}

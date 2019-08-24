@@ -15,6 +15,7 @@ use tokio_retry::strategy::{ExponentialBackoff, jitter};
 use crossbeam_channel::{Sender, TrySendError};
 
 use crate::metrics;
+use crate::base_types::MessageResponse;
 
 use cortex_core::SftpDownload;
 
@@ -85,7 +86,8 @@ impl Display for ConsumeErrorKind {
 pub fn start(
     amqp_client: lapin_futures::Client,
     sftp_source_name: String,
-    command_sender: Sender<SftpDownload>
+	ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
+    command_sender: Sender<(u64, SftpDownload)>
 ) -> Box<dyn Future<Item=(), Error=()> + Send> {
     let sftp_source_name_2 = sftp_source_name.clone();
 
@@ -94,6 +96,7 @@ pub fn start(
 
 	let future = channel_future.and_then(move |channel| {
 		let ch = channel.clone();
+		let ack_ch = channel.clone();
 		let id = channel.id();
 		info!("Created channel with id {}", id);
 
@@ -117,6 +120,17 @@ pub fn start(
 				FieldTable::default(),
 			).map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).and_then(move |_| {
 				debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
+
+				let ack_stream = ack_receiver.map_err(|e| ()).for_each(move |message_response| {
+					match message_response {
+						MessageResponse::Ack { delivery_tag } => futures::future::Either::A(ack_ch.basic_ack(delivery_tag, false).map_err(|e| ())),
+						MessageResponse::Nack { delivery_tag } => futures::future::Either::B(ack_ch.basic_nack(delivery_tag, false, false).map_err(|e| ()))
+					}
+				});
+
+				tokio::spawn(ack_stream);
+
+				// Setup command consuming stream
 				channel
 					.basic_consume(&queue, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default())
 					.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError))
@@ -140,7 +154,7 @@ pub fn start(
 
 					match deserialize_result {
 						Ok(sftp_download) => {
-							let send_result = action_command_sender.try_send(sftp_download.clone());
+							let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download.clone()));
 							
 							match send_result {
 								Ok(_) => Ok(message.delivery_tag),
