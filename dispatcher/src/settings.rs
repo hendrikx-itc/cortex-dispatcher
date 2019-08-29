@@ -53,6 +53,7 @@ pub struct Connection {
 pub struct DirectorySource {
     pub name: String,
     pub directory: PathBuf,
+    pub recursive: bool
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -173,6 +174,7 @@ impl Default for Settings {
             directory_sources: vec![DirectorySource {
                 name: "mixed-directory".to_string(),
                 directory: PathBuf::from("/cortex/incoming"),
+                recursive: true
             }],
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),

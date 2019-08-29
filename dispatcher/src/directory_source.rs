@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
+use std::io;
+use std::fs::{self, DirEntry};
 
 extern crate inotify;
 
@@ -22,6 +24,27 @@ use crate::settings;
 use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
+
+
+fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Result<()> {
+    if dir.is_dir() {
+        cb(dir);
+
+        if recurse {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                if path.is_dir() {
+                    cb(&path);
+                    visit_dirs(&path, cb, recurse)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
 
 
 pub fn start_directory_sources(
@@ -48,27 +71,31 @@ pub fn start_directory_sources(
 
         result_sources.push((directory_source.name.clone(), receiver));
 
-        let watch_result = inotify.add_watch(
-            Path::new(&directory_source.directory),
-            WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
-        );
+        let mut register_watch = |path: &Path| {
+            let watch_result = inotify.add_watch(
+                path,
+                WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+            );
 
-        match watch_result {
-            Ok(w) => {
-                info!(
-                    "Added watch on {}",
-                    &directory_source.directory.to_str().unwrap()
-                );
-                watch_mapping.insert(w, (directory_source.clone(), sender));
-            }
-            Err(e) => {
-                error!(
-                    "[E02003] Failed to add inotify watch on '{}': {}",
-                    &directory_source.directory.to_str().unwrap(),
-                    e
-                );
-            }
+            match watch_result {
+                Ok(w) => {
+                    info!(
+                        "Added watch on {}",
+                        &directory_source.directory.to_str().unwrap()
+                    );
+                    watch_mapping.insert(w, (directory_source.clone(), sender.clone()));
+                }
+                Err(e) => {
+                    error!(
+                        "[E02003] Failed to add inotify watch on '{}': {}",
+                        &directory_source.directory.to_str().unwrap(),
+                        e
+                    );
+                }
+            };
         };
+
+        visit_dirs(Path::new(&directory_source.directory), &mut register_watch, directory_source.recursive);
     });
 
     let (join_handle, stop_cmd) = start_inotify_event_thread(inotify, watch_mapping);

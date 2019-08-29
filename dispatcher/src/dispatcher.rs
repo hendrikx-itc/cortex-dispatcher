@@ -230,7 +230,7 @@ pub fn run(settings: settings::Settings) {
     .map_err(failure::Error::from)
     .and_then(move |client| {
         sftp_source_channels.into_iter().for_each(|channels| {
-            let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(10);
+            let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
 
             for n in 0..channels.sftp_source.thread_count {
                 let join_handle = sftp_downloader::SftpDownloader::start(

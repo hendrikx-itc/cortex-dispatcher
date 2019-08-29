@@ -152,7 +152,6 @@ pub fn start(
 			stream.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).for_each(move |message| {
 				let action_source_name = sftp_source_name_2.clone();
 				let action_command_sender = command_sender.clone();
-				let then_delivery_tag = message.delivery_tag;
 				let or_else_delivery_tag = message.delivery_tag;
 
 				let action = move || {
@@ -196,7 +195,6 @@ pub fn start(
 					.take(3);
 
 				let or_else_ch = ch.clone();
-				let and_then_ch = ch.clone();
 
 				RetryIf::spawn(retry_strategy, action, condition)
 					.and_then(|_| futures::future::ok(()) )

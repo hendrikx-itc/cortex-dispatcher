@@ -7,6 +7,7 @@ command_queue:
 directory_sources:
   - name: mixed-directory
     directory: /cortex/incoming
+    recursive: True
 
 directory_targets:
   - name: v5
