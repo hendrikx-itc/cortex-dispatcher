@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::io;
 use std::fs;
@@ -61,7 +61,7 @@ pub fn start_directory_sources(
 
     let mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
-        (settings::DirectorySource, UnboundedSender<FileEvent>),
+        (String, PathBuf, UnboundedSender<FileEvent>),
     > = HashMap::new();
     let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
 
@@ -83,7 +83,7 @@ pub fn start_directory_sources(
                         "Added watch on {}",
                         path.to_str().unwrap()
                     );
-                    watch_mapping.insert(w, (directory_source.clone(), sender.clone()));
+                    watch_mapping.insert(w, (directory_source.name.clone(), PathBuf::from(path), sender.clone()));
                 }
                 Err(e) => {
                     error!(
@@ -95,7 +95,12 @@ pub fn start_directory_sources(
             };
         };
 
-        visit_dirs(Path::new(&directory_source.directory), &mut register_watch, directory_source.recursive);
+        let visit_result = visit_dirs(Path::new(&directory_source.directory), &mut register_watch, directory_source.recursive);
+
+        match visit_result {
+            Ok(_) => (),
+            Err(e) => error!("Error recursing directories: {}", e)
+        };
     });
 
     let (join_handle, stop_cmd) = start_inotify_event_thread(inotify, watch_mapping);
@@ -115,7 +120,7 @@ pub fn start_directory_sources(
 
 fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
-        (settings::DirectorySource, UnboundedSender<FileEvent>)
+        (String, PathBuf, UnboundedSender<FileEvent>)
     >) -> (thread::JoinHandle<()>, StopCmd) {
     let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
@@ -143,14 +148,14 @@ fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
             .for_each(move |event: inotify::Event<std::ffi::OsString>| {
                 let name = event.name.expect("Could not decode name");
 
-                let (directory_source, sender) = watch_mapping.get_mut(&event.wd).unwrap();
+                let (source_name, directory, sender) = watch_mapping.get_mut(&event.wd).unwrap();
 
                 let file_name = name.to_str().unwrap().to_string();
 
-                let source_path = directory_source.directory.join(&file_name);
+                let source_path = directory.join(&file_name);
 
                 let file_event = FileEvent {
-                    source_name: directory_source.name.clone(),
+                    source_name: source_name.clone(),
                     path: source_path.clone(),
                 };
 
