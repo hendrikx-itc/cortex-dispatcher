@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
 use std::io;
-use std::fs::{self, DirEntry};
+use std::fs;
 
 extern crate inotify;
 
@@ -81,7 +81,7 @@ pub fn start_directory_sources(
                 Ok(w) => {
                     info!(
                         "Added watch on {}",
-                        &directory_source.directory.to_str().unwrap()
+                        path.to_str().unwrap()
                     );
                     watch_mapping.insert(w, (directory_source.clone(), sender.clone()));
                 }
