@@ -46,7 +46,7 @@ impl Filter {
 pub struct Connection {
     pub source: String,
     pub target: String,
-    pub filter: Filter,
+    pub filter: Option<Filter>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

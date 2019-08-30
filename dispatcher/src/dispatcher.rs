@@ -289,7 +289,12 @@ pub fn run(settings: settings::Settings) {
                 source_connections
                     .deref()
                     .iter()
-                    .filter(|c| c.filter.event_matches(&file_event))
+                    .filter(|c| {
+                        match &c.filter {
+                            Some(f) => f.event_matches(&file_event),
+                            None => true
+                        }
+                    })
                     .for_each(|c| {
                         let mut s = c.target.sender.clone();
                         s.try_send(file_event.clone()).unwrap();

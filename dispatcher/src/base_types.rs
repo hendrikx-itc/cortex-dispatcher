@@ -101,7 +101,7 @@ pub struct Target {
 pub struct Connection {
     pub source_name: String,
     pub target: Arc<Target>,
-    pub filter: settings::Filter,
+    pub filter: Option<settings::Filter>,
 }
 
 #[derive(Debug, Clone)]
