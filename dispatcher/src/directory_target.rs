@@ -1,5 +1,6 @@
 use std::os::unix::fs::symlink;
 use std::fs::{hard_link, copy};
+use std::path::PathBuf;
 
 use futures::stream::Stream;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -17,7 +18,7 @@ pub fn to_stream(
 
     receiver.map_err(|e| {
         error!("[E01006] Error receiving: {}", e);
-    }).map(move |file_event: FileEvent| {
+    }).map(move |file_event: FileEvent| -> FileEvent {
         let source_path_str = file_event.path.to_str().unwrap();
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);
@@ -73,6 +74,9 @@ pub fn to_stream(
             }
         }
 
-        file_event
+        FileEvent {
+            source_name: target_name.clone(),
+            path: PathBuf::from(target_path)
+        }
     })
 }

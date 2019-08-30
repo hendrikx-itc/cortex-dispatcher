@@ -71,9 +71,7 @@ enum ConsumeErrorKind {
     ChannelFull,
     ChannelDisconnected,
     DeserializeError,
-	RetryFailure,
     UnknownStreamError,
-	AckFailure,
 	NackFailure,
 	SetupError
 }
@@ -82,6 +80,25 @@ impl Display for ConsumeErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		f.write_str("ConsumeErrorKind")
     }
+}
+
+fn setup_message_responder(channel: lapin_futures::Channel, ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>) -> impl Future<Item=(), Error=()> {
+	ack_receiver.map_err(|e| {
+		error!("Error receiving message response from stream: {}", e)
+	}).for_each(move |message_response| {
+		match message_response {
+			MessageResponse::Ack { delivery_tag } => {
+				futures::future::Either::A(channel.basic_ack(delivery_tag, false).map_err(|e| {
+					error!("Error sending Ack on AMQP channel: {}", e)
+				}))
+			},
+			MessageResponse::Nack { delivery_tag } => {
+				futures::future::Either::B(channel.basic_nack(delivery_tag, false, false).map_err(|e| {
+					error!("Error sending Nack on AMQP channel: {}", e)
+				}))
+			}
+		}
+	})
 }
 
 pub fn start(
@@ -97,9 +114,10 @@ pub fn start(
 
 	let future = channel_future.and_then(move |channel| {
 		let ch = channel.clone();
-		let ack_ch = channel.clone();
 		let id = channel.id();
 		info!("Created channel with id {}", id);
+
+		tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
 
 		let consumer_tag = "cortex-dispatcher";
 		let queue_name = format!("source.{}", &sftp_source_name);
@@ -121,25 +139,6 @@ pub fn start(
 				FieldTable::default(),
 			).map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError)).and_then(move |_| {
 				debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
-
-				let ack_stream = ack_receiver.map_err(|e| {
-					error!("Error receiving message response from stream: {}", e)
-				}).for_each(move |message_response| {
-					match message_response {
-						MessageResponse::Ack { delivery_tag } => {
-							futures::future::Either::A(ack_ch.basic_ack(delivery_tag, false).map_err(|e| {
-								error!("Error sending Ack on AMQP channel: {}", e)
-							}))
-						},
-						MessageResponse::Nack { delivery_tag } => {
-							futures::future::Either::B(ack_ch.basic_nack(delivery_tag, false, false).map_err(|e| {
-								error!("Error sending Nack on AMQP channel: {}", e)
-							}))
-						}
-					}
-				});
-
-				tokio::spawn(ack_stream);
 
 				// Setup command consuming stream
 				channel
@@ -218,16 +217,8 @@ pub fn start(
 										error!("Channel disconnected");
 										true
 									},
-									ConsumeErrorKind::RetryFailure => {
-										error!("Error retrying message handling");
-										true
-									},
 									ConsumeErrorKind::UnknownStreamError => {
 										error!("Unknown stream error");
-										true
-									},
-									ConsumeErrorKind::AckFailure => {
-										error!("Error sending ack");
 										true
 									},
 									ConsumeErrorKind::NackFailure => {
