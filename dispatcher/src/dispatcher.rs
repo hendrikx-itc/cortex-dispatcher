@@ -291,7 +291,7 @@ pub fn run(settings: settings::Settings) {
                     .iter()
                     .filter(|c| {
                         match &c.filter {
-                            Some(f) => f.event_matches(&file_event),
+                            Some(f) => f.file_matches(&file_event.path),
                             None => true
                         }
                     })

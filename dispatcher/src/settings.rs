@@ -1,28 +1,27 @@
 use std::path::PathBuf;
 
-use crate::event::FileEvent;
 use regex::Regex;
 
 extern crate regex;
 extern crate serde_regex;
 
-trait EventFilter {
-    fn event_matches(&self, file_event: &FileEvent) -> bool;
+trait FileFilter {
+    fn file_matches(&self, path: &PathBuf) -> bool;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RegexFilter {
     #[serde(with = "serde_regex")]
-    regex: Regex,
+    pattern: Regex,
 }
 
-impl EventFilter for RegexFilter {
-    fn event_matches(&self, file_event: &FileEvent) -> bool {
-        let file_name_result = file_event.path.file_name();
+impl FileFilter for RegexFilter {
+    fn file_matches(&self, path: &PathBuf) -> bool {
+        let file_name_result = path.file_name();
 
         file_name_result.map_or_else(
             || false,
-            |file_name| self.regex.is_match(file_name.to_str().unwrap()),
+            |file_name| self.pattern.is_match(file_name.to_str().unwrap()),
         )
     }
 }
@@ -34,9 +33,9 @@ pub enum Filter {
 }
 
 impl Filter {
-    pub fn event_matches(&self, file_event: &FileEvent) -> bool {
+    pub fn file_matches(&self, path: &PathBuf) -> bool {
         match self {
-            Filter::Regex(r) => r.event_matches(file_event),
+            Filter::Regex(r) => r.file_matches(path),
             Filter::All => true,
         }
     }
@@ -53,7 +52,8 @@ pub struct Connection {
 pub struct DirectorySource {
     pub name: String,
     pub directory: PathBuf,
-    pub recursive: bool
+    pub recursive: bool,
+    pub filter: Option<Filter>
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -174,6 +174,7 @@ impl Default for Settings {
             directory_sources: vec![DirectorySource {
                 name: "mixed-directory".to_string(),
                 directory: PathBuf::from("/cortex/incoming"),
+                filter: None,
                 recursive: true
             }],
             directory_targets: vec![DirectoryTarget {

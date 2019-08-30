@@ -61,7 +61,7 @@ pub fn start_directory_sources(
 
     let mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
-        (String, PathBuf, UnboundedSender<FileEvent>),
+        (String, PathBuf, Option<settings::Filter>, UnboundedSender<FileEvent>),
     > = HashMap::new();
     let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
 
@@ -83,7 +83,7 @@ pub fn start_directory_sources(
                         "Added watch on {}",
                         path.to_str().unwrap()
                     );
-                    watch_mapping.insert(w, (directory_source.name.clone(), PathBuf::from(path), sender.clone()));
+                    watch_mapping.insert(w, (directory_source.name.clone(), PathBuf::from(path), directory_source.filter.clone(), sender.clone()));
                 }
                 Err(e) => {
                     error!(
@@ -120,7 +120,7 @@ pub fn start_directory_sources(
 
 fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
-        (String, PathBuf, UnboundedSender<FileEvent>)
+        (String, PathBuf, Option<settings::Filter>, UnboundedSender<FileEvent>)
     >) -> (thread::JoinHandle<()>, StopCmd) {
     let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
@@ -148,30 +148,40 @@ fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
             .for_each(move |event: inotify::Event<std::ffi::OsString>| {
                 let name = event.name.expect("Could not decode name");
 
-                let (source_name, directory, sender) = watch_mapping.get_mut(&event.wd).unwrap();
+                let (source_name, directory, filter, sender) = watch_mapping.get_mut(&event.wd).unwrap();
 
                 let file_name = name.to_str().unwrap().to_string();
 
                 let source_path = directory.join(&file_name);
+                let source_path_str = source_path.to_str().unwrap();
 
-                let file_event = FileEvent {
-                    source_name: source_name.clone(),
-                    path: source_path.clone(),
+                let file_matches = match filter {
+                    Some(f) => f.file_matches(&source_path),
+                    None => true
                 };
 
-                info!("New file for <{}>: '{}'", &source_name, &source_path.to_str().unwrap());
+                if file_matches {
+                    let file_event = FileEvent {
+                        source_name: source_name.clone(),
+                        path: source_path.clone(),
+                    };
 
-                let send_result = sender.try_send(file_event);
+                    info!("New file for <{}>: '{}'", &source_name, &source_path_str);
 
-                match send_result {
-                    Ok(_) => {
-                        debug!("File event from inotify sent on local channel");
-                        futures::future::ok(())
-                    },
-                    Err(e) => {
-                        error!("[E02001] Error sending file event on local channel: {}", e);
-                        futures::future::err(())
+                    let send_result = sender.try_send(file_event);
+
+                    match send_result {
+                        Ok(_) => {
+                            debug!("File event from inotify sent on local channel");
+                            futures::future::ok(())
+                        },
+                        Err(e) => {
+                            error!("[E02001] Error sending file event on local channel: {}", e);
+                            futures::future::err(())
+                        }
                     }
+                } else {
+                    futures::future::ok(())
                 }
             })
             .map_err(|e| {
