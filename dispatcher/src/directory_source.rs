@@ -99,7 +99,7 @@ pub fn start_directory_sources(
 
         match visit_result {
             Ok(_) => (),
-            Err(e) => error!("Error recursing directories: {}", e)
+            Err(e) => error!("[E02011] Error recursing directories: {}", e)
         };
     });
 
@@ -159,7 +159,7 @@ fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
                     path: source_path.clone(),
                 };
 
-                debug!("Sending FileEvent: {:?}", &file_event);
+                info!("New file for <{}>: '{}'", &source_name, &source_path.to_str().unwrap());
 
                 let send_result = sender.try_send(file_event);
 
