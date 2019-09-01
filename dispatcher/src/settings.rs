@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use regex::Regex;
 
+use inotify::WatchMask;
+
 extern crate regex;
 extern crate serde_regex;
 
@@ -49,10 +51,26 @@ pub struct Connection {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum FileSystemEvent {
+    MovedTo,
+    CloseWrite
+}
+
+impl FileSystemEvent {
+    pub fn watch_mask(&self) -> WatchMask {
+        match self {
+            FileSystemEvent::MovedTo => WatchMask::MOVED_TO,
+            FileSystemEvent::CloseWrite => WatchMask::CLOSE_WRITE
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DirectorySource {
     pub name: String,
     pub directory: PathBuf,
     pub recursive: bool,
+    pub events: Vec<FileSystemEvent>,
     pub filter: Option<Filter>
 }
 
@@ -174,6 +192,7 @@ impl Default for Settings {
             directory_sources: vec![DirectorySource {
                 name: "mixed-directory".to_string(),
                 directory: PathBuf::from("/cortex/incoming"),
+                events: vec![FileSystemEvent::MovedTo, FileSystemEvent::CloseWrite],
                 filter: None,
                 recursive: true
             }],

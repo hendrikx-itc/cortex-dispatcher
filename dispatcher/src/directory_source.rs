@@ -67,6 +67,14 @@ pub fn start_directory_sources(
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
+        let mut watch_mask: WatchMask = WatchMask::empty();
+
+        let events = directory_source.events.clone();
+
+        for event in events {
+            watch_mask = watch_mask | event.watch_mask();
+        }
+
         let (sender, receiver) = unbounded_channel();
 
         result_sources.push((directory_source.name.clone(), receiver));
@@ -74,7 +82,7 @@ pub fn start_directory_sources(
         let mut register_watch = |path: &Path| {
             let watch_result = inotify.add_watch(
                 path,
-                WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+                watch_mask,
             );
 
             match watch_result {
