@@ -1,5 +1,6 @@
 use std::os::unix::fs::symlink;
-use std::fs::{hard_link, copy};
+use std::fs::{hard_link, copy, Permissions, set_permissions};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use futures::stream::Stream;
@@ -15,6 +16,7 @@ pub fn to_stream(
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
     let method = settings.method.clone();
+    let target_permissions = Permissions::from_mode(settings.permissions);
 
     receiver.map_err(|e| {
         error!("[E01006] Error receiving: {}", e);
@@ -23,6 +25,7 @@ pub fn to_stream(
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);
         let target_path_str = target_path.to_str().unwrap();
+        let target_perms = target_permissions.clone();
 
         debug!("FileEvent for {}: '{}'", &target_name, &source_path_str);
 
@@ -73,6 +76,8 @@ pub fn to_stream(
                 }
             }
         }
+
+        set_permissions(&target_path, target_perms);
 
         FileEvent {
             source_name: target_name.clone(),

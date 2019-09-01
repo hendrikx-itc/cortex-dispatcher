@@ -102,6 +102,7 @@ pub struct DirectoryTarget {
     #[serde(default = "default_local_target_method")]
     pub method: LocalTargetMethod,
     pub notify: Option<Notify>,
+    pub permissions: u32
 }
 
 fn default_local_target_method() -> LocalTargetMethod {
@@ -206,6 +207,7 @@ impl Default for Settings {
                     exchange: "".to_string(),
                     routing_key: "red-consumer".to_string(),
                 })),
+                permissions: 100
             }],
             sftp_sources: vec![
                 SftpSource {
