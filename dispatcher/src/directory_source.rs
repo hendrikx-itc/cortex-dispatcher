@@ -47,6 +47,17 @@ fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Resul
 }
 
 
+fn construct_watch_mask(events: Vec<settings::FileSystemEvent>) -> WatchMask {
+    let mut watch_mask: WatchMask = WatchMask::empty();
+
+    for event in events {
+        watch_mask = watch_mask | event.watch_mask();
+    }
+
+    watch_mask
+}
+
+
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
 ) -> (thread::JoinHandle<()>, StopCmd, Vec<Source>) {
@@ -67,13 +78,8 @@ pub fn start_directory_sources(
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
-        let mut watch_mask: WatchMask = WatchMask::empty();
 
-        let events = directory_source.events.clone();
-
-        for event in events {
-            watch_mask = watch_mask | event.watch_mask();
-        }
+        let watch_mask = construct_watch_mask(directory_source.events.clone());
 
         let (sender, receiver) = unbounded_channel();
 
@@ -169,6 +175,8 @@ fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
                 };
 
                 if file_matches {
+                    debug!("Event for {} matches filter", &source_path_str);
+
                     let file_event = FileEvent {
                         source_name: source_name.clone(),
                         path: source_path.clone(),
