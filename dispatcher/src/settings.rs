@@ -52,15 +52,37 @@ pub struct Connection {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FileSystemEvent {
+    Access,
+    Attrib,
+    CloseWrite,
+    CloseNoWrite,
+    Create,
+    Delete,
+    DeleteSelf,
+    Modify,
+    MoveSelf,
+    MovedFrom,
     MovedTo,
-    CloseWrite
+    Open,
+    AllEvents
 }
 
 impl FileSystemEvent {
     pub fn watch_mask(&self) -> WatchMask {
         match self {
-            FileSystemEvent::MovedTo => WatchMask::MOVED_TO,
-            FileSystemEvent::CloseWrite => WatchMask::CLOSE_WRITE
+            Self::Access => WatchMask::ACCESS,
+            Self::Attrib => WatchMask::ATTRIB,
+            Self::CloseWrite => WatchMask::CLOSE_WRITE,
+            Self::CloseNoWrite => WatchMask::CLOSE_NOWRITE,
+            Self::Create => WatchMask::CREATE,
+            Self::Delete => WatchMask::DELETE,
+            Self::DeleteSelf => WatchMask::DELETE_SELF,
+            Self::Modify => WatchMask::MODIFY,
+            Self::MoveSelf => WatchMask::MOVE_SELF,
+            Self::MovedFrom => WatchMask::MOVED_FROM,
+            Self::MovedTo => WatchMask::MOVED_TO,
+            Self::Open => WatchMask::OPEN,
+            Self::AllEvents => WatchMask::ALL_EVENTS
         }
     }
 }
