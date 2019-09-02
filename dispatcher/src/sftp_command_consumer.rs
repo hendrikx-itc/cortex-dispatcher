@@ -1,4 +1,5 @@
 use std::{fmt, fmt::Display};
+use std::time::Duration;
 
 extern crate lapin_futures;
 
@@ -190,8 +191,9 @@ pub fn start(
 				};
 
 				let retry_strategy = ExponentialBackoff::from_millis(10)
+					.max_delay(Duration::from_millis(10000))
 					.map(jitter)
-					.take(3);
+					.take(7);
 
 				let or_else_ch = ch.clone();
 
