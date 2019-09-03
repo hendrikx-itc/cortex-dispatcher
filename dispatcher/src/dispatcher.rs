@@ -147,7 +147,7 @@ pub fn run(settings: settings::Settings) {
 
     #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, inotify_stop_cmd, mut directory_sources) =
-        start_directory_sources(settings.directory_sources.clone(), local_storage);
+        start_directory_sources(settings.directory_sources.clone(), local_storage.clone());
 
     #[cfg(target_os = "linux")]
     {
@@ -242,7 +242,7 @@ pub fn run(settings: settings::Settings) {
                     ack_sender.clone(),
                     channels.sftp_source.clone(),
                     channels.file_event_sender.clone(),
-                    storage_directory.clone(),
+                    local_storage.clone(),
                     persistence.clone(),
                 );
 

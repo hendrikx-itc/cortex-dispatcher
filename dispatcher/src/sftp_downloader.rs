@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::fs::File;
 use std::io;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{thread, time};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +19,7 @@ use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
 use crate::base_types::MessageResponse;
+use crate::local_storage::LocalStorage;
 
 use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
 use cortex_core::SftpDownload;
@@ -40,7 +41,7 @@ where
 {
     pub sftp_source: settings::SftpSource,
     pub persistence: T,
-    pub local_storage_path: PathBuf,
+    pub local_storage: LocalStorage,
 }
 
 impl<T> SftpDownloader<T>
@@ -56,7 +57,7 @@ where
         mut ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
         config: settings::SftpSource,
         mut sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
-        data_dir: PathBuf,
+        local_storage: LocalStorage,
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
         thread::spawn(move || {
@@ -80,7 +81,7 @@ where
             let mut sftp_downloader = SftpDownloader {
                 sftp_source: config.clone(),
                 persistence: persistence,
-                local_storage_path: data_dir.clone(),
+                local_storage: local_storage.clone(),
             };
 
             let timeout = time::Duration::from_millis(500);
@@ -193,12 +194,7 @@ where
     pub fn handle(&mut self, sftp_connection: Arc<RefCell<SftpConnection>>, msg: &SftpDownload) -> Result<FileEvent> {
         let remote_path = Path::new(&msg.path);
 
-        let local_path = if remote_path.is_absolute() {
-            self.local_storage_path
-                .join(remote_path.strip_prefix("/").unwrap())
-        } else {
-            self.local_storage_path.join(remote_path)
-        };
+        let local_path = self.local_storage.local_path(&self.sftp_source.name, &remote_path, &Path::new("/")).unwrap();
 
         match msg.size {
             Some(size) => {

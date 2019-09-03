@@ -1,6 +1,7 @@
 use std::fs::hard_link;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone)]
 pub struct LocalStorage {
     directory: PathBuf,
 }
