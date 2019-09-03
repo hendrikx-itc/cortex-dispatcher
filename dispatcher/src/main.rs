@@ -20,6 +20,7 @@ mod persistence;
 mod settings;
 mod sftp_downloader;
 mod sftp_command_consumer;
+mod local_storage;
 
 use settings::Settings;
 

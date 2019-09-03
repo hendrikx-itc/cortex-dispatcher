@@ -44,6 +44,7 @@ use crate::settings;
 use crate::sftp_downloader;
 use crate::sftp_command_consumer;
 use crate::base_types::MessageResponse;
+use crate::local_storage::LocalStorage;
 
 fn stream_consuming_future(
     stream: Box<dyn futures::Stream<Item = FileEvent, Error = ()> + Send>,
@@ -142,9 +143,11 @@ pub fn run(settings: settings::Settings) {
         info!("Prometheus metrics push collector configured");
     };
 
+    let local_storage = LocalStorage::new(&settings.storage.directory);
+
     #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, inotify_stop_cmd, mut directory_sources) =
-        start_directory_sources(settings.directory_sources.clone());
+        start_directory_sources(settings.directory_sources.clone(), local_storage);
 
     #[cfg(target_os = "linux")]
     {
