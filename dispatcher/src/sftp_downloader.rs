@@ -74,7 +74,10 @@ where
             let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
             let sftp_connection = match connect_result {
-                Ok(c) => Arc::new(RefCell::new(c)),
+                Ok(c) => {
+                    debug!("SFTP connection to {} established", sftp_config.address);
+                    Arc::new(RefCell::new(c))
+                },
                 Err(e) => return Err(Error::with_chain(e, "SFTP connect failed"))
             };
 

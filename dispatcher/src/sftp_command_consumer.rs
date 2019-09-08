@@ -122,6 +122,7 @@ pub fn start(
 
 		let consumer_tag = "cortex-dispatcher";
 		let queue_name = format!("source.{}", &sftp_source_name);
+		let stream_handler_queue_name = queue_name.clone();
 
 		let queue_declare_future = channel
 			.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default())
@@ -154,8 +155,10 @@ pub fn start(
 				let action_command_sender = command_sender.clone();
 				let or_else_delivery_tag = message.delivery_tag;
 
+				let queue_name = stream_handler_queue_name.clone();
+
 				let action = move || {
-					debug!("Received message from AMQP queue");
+					debug!("Received message from AMQP queue '{}'", &queue_name);
 					metrics::MESSAGES_RECEIVED_COUNTER
 						.with_label_values(&[&action_source_name])
 						.inc();
