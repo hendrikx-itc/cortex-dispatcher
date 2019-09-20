@@ -89,6 +89,8 @@ where
 
             let timeout = time::Duration::from_millis(500);
 
+            // Take SFTP download commands from the queue until the stop flag is set and
+            // the command channel is empty.
             while !(stop.load(Ordering::Relaxed) && receiver.is_empty()) {
                 let receive_result = receiver.recv_timeout(timeout);
 
