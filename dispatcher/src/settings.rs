@@ -123,6 +123,7 @@ pub struct DirectoryTarget {
     pub directory: PathBuf,
     #[serde(default = "default_local_target_method")]
     pub method: LocalTargetMethod,
+    pub overwrite: bool,
     pub notify: Option<Notify>,
     pub permissions: u32
 }
@@ -223,6 +224,7 @@ impl Default for Settings {
                 name: "red".to_string(),
                 directory: PathBuf::from("/cortex/storage/red-consumer"),
                 method: LocalTargetMethod::Hardlink,
+                overwrite: true,
                 notify: Some(Notify::RabbitMQ(RabbitMQNotify {
                     message_template: "".to_string(),
                     address: "127.0.0.1:5672".parse().unwrap(),
