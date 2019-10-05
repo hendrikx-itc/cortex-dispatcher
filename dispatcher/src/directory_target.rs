@@ -22,10 +22,10 @@ pub fn to_stream(
     receiver.map_err(|e| {
         error!("[E01006] Error receiving: {}", e);
     }).map(move |file_event: FileEvent| -> FileEvent {
-        let source_path_str = file_event.path.to_str().unwrap();
+        let source_path_str = file_event.path.to_string_lossy();
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);
-        let target_path_str = target_path.to_str().unwrap();
+        let target_path_str = target_path.to_string_lossy();
         let target_perms = target_permissions.clone();
 
         debug!("FileEvent for {}: '{}'", &target_name, &source_path_str);

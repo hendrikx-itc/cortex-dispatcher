@@ -207,7 +207,7 @@ where
                     "Downloading <{}> '{}' -> '{}' {} bytes",
                     self.sftp_source.name,
                     msg.path,
-                    local_path.to_str().unwrap(),
+                    local_path.to_string_lossy(),
                     size
                 );
             }
@@ -245,13 +245,13 @@ where
 
             if !local_path_parent.exists() {
                 std::fs::create_dir_all(local_path_parent)
-                    .chain_err(||format!("Error creating containing directory '{}'", local_path_parent.to_str().unwrap()))?;
+                    .chain_err(||format!("Error creating containing directory '{}'", local_path_parent.to_string_lossy()))?;
 
-                info!("Created containing directory '{}'", local_path_parent.to_str().unwrap());
+                info!("Created containing directory '{}'", local_path_parent.to_string_lossy());
             }
 
             let mut local_file = File::create(&local_path)
-                .chain_err(|| format!("Error creating local file '{}'", local_path.to_str().unwrap()))?;
+                .chain_err(|| format!("Error creating local file '{}'", local_path.to_string_lossy()))?;
 
             let mut sha256 = Sha256::new();
 

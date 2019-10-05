@@ -286,7 +286,7 @@ pub fn run(settings: settings::Settings) {
                 debug!(
                     "FileEvent from {}: {}",
                     &source_name,
-                    file_event.path.to_str().unwrap()
+                    file_event.path.to_string_lossy()
                 );
 
                 source_connections

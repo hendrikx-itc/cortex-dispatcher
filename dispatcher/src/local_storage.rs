@@ -36,8 +36,8 @@ impl LocalStorage {
     where
         P: AsRef<Path>,
     {
-        debug!("Hard link prefix: {}", prefix.as_ref().to_str().unwrap());
-        let source_path_str = file_path.as_ref().to_str().unwrap();
+        debug!("Hard link prefix: {}", prefix.as_ref().to_string_lossy());
+        let source_path_str = file_path.as_ref().to_string_lossy();
         let local_path = match self.local_path(source_name, &file_path, &prefix) {
             Ok(path) => path,
             Err(e) => return Err(e)
@@ -46,7 +46,7 @@ impl LocalStorage {
         let local_path_parent = local_path.parent().unwrap();
 
         if !local_path_parent.exists() {
-            let local_path_parent_str = local_path_parent.to_str().unwrap();
+            let local_path_parent_str = local_path_parent.to_string_lossy();
             let create_dir_result = std::fs::create_dir_all(local_path_parent);
 
             match create_dir_result {
@@ -57,7 +57,7 @@ impl LocalStorage {
             }
         }
 
-        let target_path_str = local_path.to_str().unwrap();
+        let target_path_str = local_path.to_string_lossy();
 
         let link_result = hard_link(&file_path, &local_path);
 

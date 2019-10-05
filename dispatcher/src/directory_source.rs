@@ -73,7 +73,7 @@ impl InotifyEventHandler {
         let file_name = name.to_str().unwrap();
 
         let source_path = self.directory.join(&file_name);
-        let source_path_str = source_path.to_str().unwrap();
+        let source_path_str = source_path.to_string_lossy();
 
         let file_matches = match &self.filter {
             Some(f) => f.file_matches(&source_path),
@@ -87,7 +87,7 @@ impl InotifyEventHandler {
 
             match store_result {
                 Ok(target_path) => {
-                    let target_path_str = target_path.to_str().unwrap();
+                    let target_path_str = target_path.to_string_lossy();
                     debug!("Stored '{}' to '{}'", &source_path_str, &target_path_str);
 
                     let file_event = FileEvent {
@@ -159,7 +159,7 @@ pub fn start_directory_sources(
                 Ok(w) => {
                     info!(
                         "Added watch on {}",
-                        path.to_str().unwrap()
+                        path.to_string_lossy()
                     );
                     watch_mapping.insert(
                         w,
@@ -175,7 +175,7 @@ pub fn start_directory_sources(
                 Err(e) => {
                     error!(
                         "[E02003] Failed to add inotify watch on '{}': {}",
-                        &directory_source.directory.to_str().unwrap(),
+                        &directory_source.directory.to_string_lossy(),
                         e
                     );
                 }
