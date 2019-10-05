@@ -13,6 +13,7 @@ pub fn to_stream(
     settings: &settings::DirectoryTarget,
     receiver: UnboundedReceiver<FileEvent>,
 ) -> impl futures::Stream<Item = FileEvent, Error = ()> {
+    let overwrite = settings.overwrite;
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
     let method = settings.method.clone();
@@ -29,13 +30,13 @@ pub fn to_stream(
 
         debug!("FileEvent for {}: '{}'", &target_name, &source_path_str);
 
-        if settings.overwrite {
+        if overwrite {
             // If overwrite is enabled, we just always try to remove the target and
             // expect that a NotFound error might be returned.
-            let remove_result = std::fs::remove_file(target_path);
+            let remove_result = std::fs::remove_file(&target_path);
 
             match remove_result {
-                Ok(_) => debug!("Removed existing target '{}'", target_path_str),
+                Ok(_) => debug!("Removed existing target '{}'", &target_path_str),
                 Err(e) => {
                     match e.kind() {
                         std::io::ErrorKind::NotFound => {
@@ -43,7 +44,7 @@ pub fn to_stream(
                         },
                         _ => {
                             // Unexpected error, so log it
-                            error!("Error removing file '{}': {}", target_path_str, e);
+                            error!("Error removing file '{}': {}", &target_path_str, e);
                         }
                     }
                 }
