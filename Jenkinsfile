@@ -24,19 +24,27 @@ pipeline {
                 dir('dispatcher') {
                     sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
-                
-                sshagent (credentials: ['615de4ee-505f-40d9-8994-1c53d4796725']) {
-                    publishPackages 'target/debian', 'common/stable', 'xenial'
-                    publishPackages 'target/debian', 'common/bionic', 'bionic'
-                }
 
+                switch (GIT_BRANCH) {
+                    case "origin/master":
+                        publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                        break
+                    case "origin/develop":
+                        publishPackages 'target/debian', 'kpn/bionic/unstable', 'bionic'
+                        break
+                }
+                
                 dir('sftp-scanner') {
                     sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
                 
-                sshagent (credentials: ['615de4ee-505f-40d9-8994-1c53d4796725']) {
-                    publishPackages 'target/debian', 'common/stable', 'xenial'
-                    publishPackages 'target/debian', 'common/bionic', 'bionic'
+                switch (GIT_BRANCH) {
+                    case "origin/master":
+                        publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                        break
+                    case "origin/develop":
+                        publishPackages 'target/debian', 'kpn/bionic/unstable', 'bionic'
+                        break
                 }
             }
         }
