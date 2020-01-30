@@ -35,14 +35,13 @@ services:
       - ./dev-stack/grafana/provisioning/:/etc/grafana/provisioning/
 
   pg_prometheus:
-    image: timescale/pg_prometheus:latest
+    image: timescale/pg_prometheus:latest-pg11
     command: ["postgres", "-csynchronous_commit=off"]
     ports:
       - 127.0.0.1:5432:5432
     volumes:
       - ./dev-stack/pg_prometheus/docker-entrypoint-initdb.d/004-init-cortex-db.sh:/docker-entrypoint-initdb.d/004-init-cortex-db.sh
-      - ./dispatcher/schema.sql:/dispatcher.sql
-      - ./sftp-scanner/schema.sql:/sftp-scanner.sql
+      - ./db/schema.sql:/schema.sql
     environment:
       POSTGRES_PASSWORD: "password"
 

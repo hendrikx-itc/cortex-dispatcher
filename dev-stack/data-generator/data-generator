@@ -3,6 +3,7 @@ import os
 import datetime
 import time
 import logging
+import random
 
 import pysftp
 
@@ -30,7 +31,7 @@ def main():
 
                 next_run += interval
 
-                logging.info("Done, waiting for next run at {}".format(next_run))
+                logging.info(f"Done, waiting for next run at {next_run}")
 
             time.sleep(100)
 
@@ -45,24 +46,44 @@ def send_file(sftp, storage_path, file_name, generate_lines):
     os.remove(file_path)
 
 
+def mkdir_all(sftp, path):
+    head, tail = os.path.split(path)
+
+    if not sftp.isdir(head):
+        mkdir_all(sftp, head)
+    else:
+        sftp.mkdir(path)
+
+
+def check_path(sftp, path):
+    if not sftp.isdir(path):
+        mkdir_all(sftp, path)
+
+
 def generate_data(sftp, storage_path, timestamp):
+    check_path(sftp, 'upload/blue/1')
+
     with sftp.cd('upload/blue/1'):
         for i in range(100):
-            file_name = 'test_blue_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+            file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(1000, 30))
 
+    check_path(sftp, 'upload/blue/2')
+
     with sftp.cd('upload/blue/2'):
         for i in range(1000):
-            file_name = 'test_blue_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+            file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))
+
+    check_path(sftp, 'upload/red')
 
     with sftp.cd('upload/red'):
         generated_files = []
 
         for i in range(1000):
-            file_name = 'test_red_{0}_{1:%Y%m%d:%H:%M:%S}.xml'.format(i, timestamp)
+            file_name = f'test_red_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))
             generated_files.append(file_name)
@@ -79,13 +100,15 @@ def generate_file(file_path, generate_lines):
     with open(file_path, 'w') as out_file:
         out_file.writelines(generate_lines())
 
-    logging.info("Written {}".format(file_path))
+    logging.info(f"Written {file_path}")
 
 
 def line_generator(num_lines, num_columns):
     def generate_lines():
+        yield ','.join(f'col_{i}' for i in range(num_columns)) + '\n'
+
         for i in range(num_lines):
-            yield ','.join(str(i) for i in range(num_columns))
+            yield ','.join(str(random.random() * i) for i in range(num_columns)) + '\n'
 
     return generate_lines
 

@@ -199,7 +199,14 @@ where
     pub fn handle(&mut self, sftp_connection: Arc<RefCell<SftpConnection>>, msg: &SftpDownload) -> Result<FileEvent> {
         let remote_path = Path::new(&msg.path);
 
-        let local_path = self.local_storage.local_path(&self.sftp_source.name, &remote_path, &Path::new("/")).unwrap();
+        let localize_result = self.local_storage.local_path(&self.sftp_source.name, &remote_path, &Path::new("/"));
+
+        let local_path = match localize_result {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(Error::with_chain(e, "Could not localize path"))
+            }
+        };
 
         match msg.size {
             Some(size) => {
@@ -234,6 +241,8 @@ where
                             return Err(ErrorKind::DisconnectedError.into())
                         },
                         2 => {
+                            self.persistence.delete_sftp_download_file(msg.id);
+
                             return Err(ErrorKind::NoSuchFileError.into())
                         },
                         _ => return Err(Error::with_chain(e, "Error opening remote file"))
@@ -270,12 +279,11 @@ where
                     self.sftp_source.name, msg.path, bytes_copied
                 );
 
-                self.persistence.store(
-                    &self.sftp_source.name,
-                    &msg.path,
-                    i64::try_from(bytes_copied).unwrap(),
-                    &hash,
-                );
+                let file_size = i64::try_from(bytes_copied).unwrap();
+
+                let file_id = self.persistence.insert_file(&self.sftp_source.name, &local_path.to_string_lossy(), file_size, Some(hash)).unwrap();
+
+                self.persistence.set_sftp_download_file(msg.id, file_id);
 
                 metrics::FILE_DOWNLOAD_COUNTER_VEC
                     .with_label_values(&[&self.sftp_source.name])

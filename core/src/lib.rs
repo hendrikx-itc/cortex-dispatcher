@@ -22,6 +22,7 @@ pub use self::sftp_connection::SftpConnection;
 /// The set of commands that can be sent over the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct SftpDownload {
+    pub id: i64,
     pub created: DateTime<Utc>,
     pub size: Option<u64>,
     pub sftp_source: String,

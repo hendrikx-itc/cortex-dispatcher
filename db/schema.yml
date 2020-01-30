@@ -1,0 +1,124 @@
+objects:
+- schema:
+    name: dispatcher
+
+- composite_type:
+    name: version_tuple
+    schema: dispatcher
+    columns:
+    - name: major
+      data_type: smallint
+      nullable: false
+    - name: minor
+      data_type: smallint
+      nullable: false
+    - name: patch
+      data_type: smallint
+      nullable: false
+
+- function:
+    name: version
+    schema: dispatcher 
+    return_type: system.version_tuple
+    language: sql
+    volatility: immutable
+    arguments: []
+    source: |-
+      SELECT (1,0,0)::system.version_tuple;
+
+- table:
+    name: file
+    schema: dispatcher
+    description: |-
+      All files in the internal storage area of Cortex are registered here.
+    columns:
+    - name: id
+      data_type: bigint
+      generated_identity: by_default
+      nullable: false
+    - name: created
+      data_type: timestamptz
+      nullable: false
+      default: now()
+    - name: source
+      data_type: text
+      nullable: false
+    - name: path
+      data_type: text
+      nullable: false
+    - name: size
+      data_type: bigint
+      nullable: false
+    - name: hash
+      data_type: text
+      nullable: true
+    indexes:
+    - name: sftp_download_file_index
+      unique: false
+      definition: btree (source, path)
+
+- table:
+    name: sftp_download
+    schema: dispatcher
+    columns:
+    - name: id
+      data_type: bigint
+      generated_identity: by_default
+      nullable: false
+    - name: created
+      data_type: timestamptz
+      nullable: false
+      default: now()
+    - name: source
+      data_type: text
+      nullable: false
+    - name: path
+      data_type: text
+      nullable: false
+    - name: size
+      data_type: bigint
+      nullable: true
+    - name: file_id
+      data_type: bigint
+      nullable: true
+    foreign_keys:
+    - name: sftp_download_file_id_fkey
+      columns:
+      - file_id
+      references:
+        table:
+          name: file
+          schema: dispatcher
+        columns:
+        - id
+      on_delete: cascade
+    indexes:
+    - name: sftp_download_file_index
+      unique: false
+      definition: btree (source, path)
+
+- table:
+    name: dispatched
+    schema: dispatcher
+    columns:
+    - name: file_id
+      data_type: bigint
+      nullable: false
+    - name: target
+      data_type: text
+      nullable: false
+    - name: timestamp
+      data_type: timestamptz
+      nullable: false
+      default: now()
+    foreign_keys:
+    - name: dispatched_file_id_fkey
+      columns:
+      - file_id
+      references:
+        table:
+          name: file
+          schema: dispatcher
+        columns:
+        - id
+      on_delete: cascade

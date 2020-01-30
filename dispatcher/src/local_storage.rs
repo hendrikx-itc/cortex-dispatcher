@@ -1,9 +1,28 @@
+use std::error;
+use std::fmt;
 use std::fs::hard_link;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct LocalStorage {
     directory: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalStorageError {
+    message: String
+}
+
+impl fmt::Display for LocalStorageError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", &self.message)
+    }
+}
+
+impl error::Error for LocalStorageError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        None
+    }
 }
 
 impl LocalStorage {
@@ -18,21 +37,25 @@ impl LocalStorage {
         source_name: &str,
         file_path: P,
         prefix: P,
-    ) -> Result<PathBuf, String> {
-        let strip_result = file_path.as_ref().strip_prefix(prefix);
+    ) -> Result<PathBuf, LocalStorageError> {
+        if file_path.as_ref().starts_with(&prefix) {
+            let strip_result = file_path.as_ref().strip_prefix(&prefix);
 
-        let relative_file_path = match strip_result {
-            Ok(path) => path,
-            Err(e) => return Err(format!("Error stripping file path: {}", e)),
-        };
-
-        Ok(self.directory.join(source_name).join(relative_file_path))
+            let relative_file_path = match strip_result {
+                Ok(path) => path,
+                Err(e) => return Err(LocalStorageError { message: format!("Error stripping file path: {}", e) }),
+            };
+    
+            Ok(self.directory.join(source_name).join(relative_file_path))
+        } else {
+            Ok(self.directory.join(source_name).join(file_path))
+        }
     }
 
     /// Store file in local storage. The file will be hardlinked from the
     /// specified file_path and will be stored in a directory with the name of
     /// the source. The prefix will be stripped from the file path.
-    pub fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<PathBuf, String>
+    pub fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<PathBuf, LocalStorageError>
     where
         P: AsRef<Path>,
     {
@@ -52,7 +75,7 @@ impl LocalStorage {
             match create_dir_result {
                 Ok(_) => info!("Created containing directory '{}'", local_path_parent_str),
                 Err(e) => {
-                    return Err(format!("Error creating containing directory '{}': {}", local_path_parent_str, e))
+                    return Err(LocalStorageError { message: format!("Error creating containing directory '{}': {}", local_path_parent_str, e) })
                 }
             }
         }
@@ -63,10 +86,10 @@ impl LocalStorage {
 
         match link_result {
             Ok(()) => Ok(local_path),
-            Err(e) => Err(format!(
+            Err(e) => Err(LocalStorageError{ message: format!(
                 "[E?????] Error hardlinking '{}' to '{}': {}",
                 &source_path_str, &target_path_str, &e
-            )),
+            )}),
         }
     }
 }

@@ -252,43 +252,41 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                 scan_result.matching_files += 1;
                 debug!("'{}' - matches", path_str);
 
-                let file_requires_download =
-                    if sftp_source.deduplicate {
-                        let query_result = conn.query(
-                            "select 1 from sftp_scanner.scan where remote = $1 and path = $2 and size = $3",
-                            &[&sftp_source.name, &path_str, &file_size_db]
-                        );
+                let file_requires_download = if sftp_source.deduplicate {
+                    let query_result = conn.query_one(
+                        "select id from dispatcher.sftp_download where source = $1 and path = $2 and size = $3",
+                        &[&sftp_source.name, &path_str, &file_size_db]
+                    );
 
-                        match query_result {
-                            Ok(rows) => {
-                                if rows.is_empty() {
-                                                        
-                                    let execute_result = conn.execute(
-                                        "insert into sftp_scanner.scan (remote, path, size) values ($1, $2, $3)",
-                                        &[&sftp_source.name, &path_str, &file_size_db]
-                                    );
-
-                                    match execute_result {
-                                        Ok(_) => {}
-                                        Err(e) => {
-                                            error!("Error inserting record: {}", e);
-                                        }
-                                    };
-                                }
-
-                                rows.is_empty()
-                            },
-                            Err(e) => {
-                                error!("Error querying database: {}", e);
-                                false
-                            }
+                    match query_result {
+                        Ok(row) => {
+                            false
+                        },
+                        Err(e) => {
+                            return Err(Error::with_chain(e, "Error querying database"));
                         }
-                    } else {
-                        true
-                    };
+                    }
+                } else {
+                    true
+                };
 
                 if file_requires_download {
+                    let insert_result = conn.query_one(
+                        "insert into dispatcher.sftp_download (source, path, size) values ($1, $2, $3) returning id",
+                        &[&sftp_source.name, &path_str, &file_size_db]
+                    );
+    
+                    let sftp_download_id = match insert_result {
+                        Ok(row) => {
+                            row.get(0)
+                        }
+                        Err(e) => {
+                            return Err(Error::with_chain(e, "Error inserting record"));
+                        }
+                    };
+    
                     let command = SftpDownload {
+                        id: sftp_download_id,
                         created: Utc::now(),
                         size: stat.size,
                         sftp_source: sftp_source.name.clone(),

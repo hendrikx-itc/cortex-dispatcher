@@ -19,7 +19,7 @@ assets = [
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.8"
+inotify = "0.7"
 
 [dependencies]
 log = "0.4"
@@ -61,4 +61,3 @@ retry = "1.0"
 proctitle = "0.1"
 error-chain = "0.12"
 tokio-retry = "0.2"
-async-std = "1.4"

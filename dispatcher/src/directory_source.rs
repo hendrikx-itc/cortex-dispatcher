@@ -1,15 +1,16 @@
 #![cfg(target_os = "linux")]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::io;
 use std::fs;
-
-use async_std::task;
-use async_std::stream::StreamExt;
 
 extern crate inotify;
 
 use inotify::{Inotify, WatchMask};
+
+use futures::future::Future;
+use futures::stream::Stream;
 
 extern crate failure;
 extern crate lapin;
@@ -21,6 +22,7 @@ use crate::event::FileEvent;
 use crate::settings;
 use crate::local_storage::LocalStorage;
 
+use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -124,7 +126,7 @@ impl InotifyEventHandler {
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
     local_storage: LocalStorage
-) -> (async_std::task::JoinHandle<Result<(), String>>, StopCmd, Vec<Source>) {
+) -> (thread::JoinHandle<()>, StopCmd, Vec<Source>) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -206,41 +208,57 @@ pub fn start_directory_sources(
 fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
         inotify::WatchDescriptor,
         InotifyEventHandler
-    >, local_storage: LocalStorage) -> (async_std::task::JoinHandle<Result<(), String>>, StopCmd) {
+    >, local_storage: LocalStorage) -> (thread::JoinHandle<()>, StopCmd) {
     let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
     let stop_cmd = Box::new(move || {
         stop_sender.send(()).unwrap();
     });
 
-    let join_handle = task::spawn(async move {
+    let join_handle = thread::spawn(move || {
+        let runtime_result = Runtime::new();
+
+        let mut runtime = match runtime_result {
+            Ok(r) => r,
+            Err(e) => {
+                error!("[E01002] Error starting Tokio runtime for inotify thread: {}", e);
+                return
+            }
+        };
+
+        debug!("Tokio runtime created");
+
         let buffer: Vec<u8> = vec![0; 1024];
 
-        let mut stream = inotify.event_stream(buffer).unwrap();
+        let stream = inotify
+            .event_stream(buffer).map_err(|e| error!("[E02004] Error in inotify stream: {}", e))
+            .for_each(move |event: inotify::Event<std::ffi::OsString>| {
+                let inotify_event_handler = watch_mapping.get_mut(&event.wd).unwrap();
 
-        while let Some(event_or_error) = stream.next().await {
-            match event_or_error {
-                Ok(event) => {
-                    let inotify_event_handler = watch_mapping.get_mut(&event.wd).unwrap();
+                let result = inotify_event_handler.handle_event(&local_storage, event);
 
-                    let result = inotify_event_handler.handle_event(&local_storage, event);
-        
-                    match result {
-                        Ok(_) => (),
-                        Err(e) => {
-                            error!("{}", e);
-                        }
+                match result {
+                    Ok(_) => futures::future::ok(()),
+                    Err(e) => {
+                        error!("{}", e);
+                        futures::future::ok(())
                     }
-                },
-                Err(e) => {
-                    error!("{}", e);
                 }
-            }
-        }
+            })
+            .map_err(|e| {
+                error!("[E02002] {:?}", e);
+            });
 
-        debug!("Inotify source stream ended");
+        let stoppable_stream = stream
+            //.select2(stop_receiver.into_future())
+            .map(|_| debug!("End inotify stream"))
+            .map_err(|_| error!("[E01001] Error in inotify stream"));
 
-        Ok(())
+        runtime.spawn(stoppable_stream);
+
+        runtime.run().unwrap();
+
+        debug!("Inotify source stream ended")
     });
 
     (join_handle, stop_cmd)

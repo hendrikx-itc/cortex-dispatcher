@@ -1,0 +1,53 @@
+# vim: filetype=sh
+#
+# Initialize the DEV_STACK_ROOT variable, so that all resources of this
+# stack can be found.
+#
+
+function absolute_dir {
+    local old_pwd="$(pwd)"
+    cd "$1"
+    pwd
+    cd "$old_pwd"
+}
+
+SHELL_NAME="${SHELL##*/}"
+
+if [ $SHELL_NAME = "bash" ]; then
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+elif [ $SHELL_NAME = "zsh" ]; then
+    SCRIPT_PATH="${(%):-%x}"
+fi
+
+RELATIVE_SCRIPT_DIR=${SCRIPT_PATH%/*}
+
+SCRIPT_DIR=$(absolute_dir $RELATIVE_SCRIPT_DIR)
+
+export DEV_STACK_ROOT=${SCRIPT_DIR}
+
+echo "Cortex dev-stack root: $DEV_STACK_ROOT"
+
+if [ -z "$VIRTUAL_ENV" ]
+then
+    VENV_DIR="$DEV_STACK_ROOT/venv"
+
+    if [ ! -d $VENV_DIR ]
+    then
+        echo "Creating virtualenv at $VENV_DIR"
+
+        virtualenv -p python3 $VENV_DIR
+
+        source $VENV_DIR/bin/activate
+
+        pip3 install -r $DEV_STACK_ROOT/requirements.txt
+    else
+        source $VENV_DIR/bin/activate
+    fi
+fi
+
+export PATH=$DEV_STACK_ROOT/bin:$PATH
+
+export PGHOST=127.0.0.1
+export PGDATABASE=cortex
+export PGUSER=postgres
+export PGPASSWORD=password

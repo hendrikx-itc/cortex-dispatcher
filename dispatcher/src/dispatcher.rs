@@ -219,8 +219,6 @@ pub fn run(settings: settings::Settings) {
         }
     }).collect();
 
-    let storage_directory = settings.storage.directory.clone();
-
     let jhs = sftp_join_handles.clone();
     let th_sources = Arc::clone(&sources);
 
@@ -362,8 +360,8 @@ pub fn run(settings: settings::Settings) {
 
     info!("Tokio runtime shutdown");
 
-    //#[cfg(target_os = "linux")]
-    //wait_for(directory_sources_join_handle, "directory sources");
+    #[cfg(target_os = "linux")]
+    wait_for(directory_sources_join_handle, "directory sources");
 
     wait_for(web_server_join_handle, "http server");
 
