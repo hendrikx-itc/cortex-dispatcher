@@ -47,9 +47,9 @@ pub fn start_scanner(
     thread::spawn(move || {
         proctitle::set_title(format!("sftp-scanner {}", &sftp_source.name));
 
-        let conn_result = postgres::Connection::connect(db_url, postgres::TlsMode::None);
+        let conn_result = postgres::Client::connect(&db_url, postgres::NoTls);
 
-        let conn = match conn_result {
+        let mut conn = match conn_result {
             Ok(c) => {
                 info!("Connected to database");
                 c
@@ -91,7 +91,7 @@ pub fn start_scanner(
                 info!("Started scanning {}", &sftp_source.name);
 
                 let scan_result = retry(Fixed::from_millis(1000), || {
-                    match scan_source(&stop, &sftp_source, sftp_connection.clone(), &conn, &mut sender) {
+                    match scan_source(&stop, &sftp_source, sftp_connection.clone(), &mut conn, &mut sender) {
                         Ok(v) => OperationResult::Ok(v),
                         Err(e) => {
                             match e {
@@ -185,11 +185,11 @@ impl fmt::Display for ScanResult {
     }
 }
 
-fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
+fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &mut postgres::Client, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
     scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender)
 }
 
-fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &postgres::Connection, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
+fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &mut postgres::Client, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
     debug!("Directory scan started for {}", &directory.to_str().unwrap());
     let mut scan_result = ScanResult::new();
 
