@@ -237,6 +237,7 @@ fn start_inotify_event_thread(
             let events = inotify.read_events_blocking(&mut buffer).unwrap();
 
             for event in events {
+
                 let event_context = watch_mapping.get(&event.wd).unwrap();
 
                 let name = event.name.expect("Could not decode name");
@@ -255,7 +256,7 @@ fn start_inotify_event_thread(
                             watch_mask: event_context.watch_mask,
                             source_name: event_context.source_name.clone(),
                             directory: source_path.clone(),
-                            prefix: source_path.clone(),
+                            prefix: event_context.prefix.clone(),
                             filter: event_context.filter.clone(),
                         };
 
