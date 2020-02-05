@@ -1,31 +1,35 @@
 #![cfg(target_os = "linux")]
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::thread;
-use std::io;
 use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+use std::sync::mpsc::{Sender, Receiver};
 
 extern crate inotify;
 
 use inotify::{Inotify, WatchMask};
 
-use futures::future::Future;
-use futures::stream::Stream;
-
 extern crate failure;
 extern crate lapin;
 
-use cortex_core::{StopCmd};
+use cortex_core::StopCmd;
 
-use crate::base_types::Source;
-use crate::event::FileEvent;
-use crate::settings;
+use crate::event::{FileEvent, EventDispatcher};
 use crate::local_storage::LocalStorage;
+use crate::persistence::Persistence;
+use crate::settings;
 
-use tokio::runtime::current_thread::Runtime;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
 
+#[derive(Debug, Clone)]
+pub struct LocalFileEvent {
+    pub source_name: String,
+    pub path: PathBuf,
+    pub prefix: PathBuf
+}
 
 fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Result<()> {
     if dir.is_dir() {
@@ -37,7 +41,6 @@ fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Resul
                 let path = entry.path();
 
                 if path.is_dir() {
-                    cb(&path);
                     visit_dirs(&path, cb, recurse)?;
                 }
             }
@@ -47,6 +50,24 @@ fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Resul
     Ok(())
 }
 
+fn visit_files(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Result<()> {
+    if dir.is_dir() {
+        if recurse {
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                if path.is_dir() {
+                    visit_files(&path, cb, recurse)?;
+                } else {
+                    cb(&path);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
 
 fn construct_watch_mask(events: Vec<settings::FileSystemEvent>) -> WatchMask {
     let mut watch_mask: WatchMask = WatchMask::empty();
@@ -58,75 +79,81 @@ fn construct_watch_mask(events: Vec<settings::FileSystemEvent>) -> WatchMask {
     watch_mask
 }
 
-struct InotifyEventHandler {
+#[derive(Debug, Clone)]
+struct InotifyEventContext {
+    recursive: bool,
+    watch_mask: WatchMask,
     source_name: String,
     directory: PathBuf,
     prefix: PathBuf,
     filter: Option<settings::Filter>,
-    sender: UnboundedSender<FileEvent>
 }
 
-impl InotifyEventHandler {
-    pub fn handle_event(&mut self, local_storage: &LocalStorage, event: inotify::Event<std::ffi::OsString>) -> Result<(), String> {
-        let name = event.name.expect("Could not decode name");
+pub fn start_directory_sweep(
+    directory_sources: Vec<settings::DirectorySource>,
+    local_intake_sender: Sender<LocalFileEvent>,
+) -> (thread::JoinHandle<()>, StopCmd)
+{
+    let timeout = std::time::Duration::from_millis(15_000);
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop_flag.clone();
 
-        let file_name = name.to_str().unwrap();
+    let stop_cmd = Box::new(move || {
+        stop_clone.swap(true, Ordering::Relaxed);
+    });
 
-        let source_path = self.directory.join(&file_name);
-        let source_path_str = source_path.to_string_lossy();
+    let join_handle = thread::spawn(move || {
+        while !stop_flag.load(Ordering::Relaxed) {
+            directory_sources.iter().for_each(|directory_source| {
+                info!("Sweeping directory source: {}", directory_source.name);
 
-        let file_matches = match &self.filter {
-            Some(f) => f.file_matches(&source_path),
-            None => true
-        };
-
-        if file_matches {
-            debug!("Event for {} matches filter", &source_path_str);
-
-            let store_result = local_storage.hard_link(&self.source_name, &source_path, &self.prefix);
-
-            match store_result {
-                Ok(target_path) => {
-                    let target_path_str = target_path.to_string_lossy();
-                    debug!("Stored '{}' to '{}'", &source_path_str, &target_path_str);
-
-                    let file_event = FileEvent {
-                        source_name: self.source_name.clone(),
-                        path: target_path.clone(),
+                let mut handle_file = |path: &Path| {
+                    let file_matches = match &directory_source.filter {
+                        Some(f) => f.file_matches(path),
+                        None => true,
                     };
 
-                    info!("New file for <{}>: '{}'", &self.source_name, &source_path_str);
+                    if file_matches {
+                        let local_file_event = LocalFileEvent {
+                            source_name: directory_source.name.clone(),
+                            path: PathBuf::from(path),
+                            prefix: directory_source.directory.clone()
+                        };
 
-                    let send_result = self.sender.try_send(file_event);
-
-                    match send_result {
-                        Ok(_) => {
-                            debug!("File event from inotify sent on local channel");
-                            Ok(())
-                        },
-                        Err(e) => {
-                            Err(format!("[E02001] Error sending file event on local channel: {}", e))
-                        }
+                        local_intake_sender.send(local_file_event);
                     }
-                }
-                Err(e) => {
-                    Err(format!(
-                        "Error storing file '{}': {}",
-                        &source_path_str, &e
-                    ))
-                }
-            }
-        } else {
-            Ok(())
-        }
-    }
-}
+                };
 
+                let visit_result = visit_files(
+                    Path::new(&directory_source.directory),
+                    &mut handle_file,
+                    directory_source.recursive,
+                );
+
+                match visit_result {
+                    Ok(()) => (),
+                    Err(e) => error!(
+                        "Error sweeping directory '{}': {}",
+                        &directory_source.directory.to_string_lossy(),
+                        e
+                    ),
+                }
+            });
+
+            std::thread::sleep(timeout);
+        }
+
+        debug!("Directory sweep thread ended")
+    });
+
+    (join_handle, stop_cmd)
+}
 
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
-    local_storage: LocalStorage
-) -> (thread::JoinHandle<()>, StopCmd, Vec<Source>) {
+    local_intake_sender: Sender<LocalFileEvent>,
+) -> (thread::JoinHandle<()>, StopCmd)
+{
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -136,40 +163,33 @@ pub fn start_directory_sources(
 
     info!("Inotify initialized");
 
-    let mut watch_mapping: HashMap<inotify::WatchDescriptor, InotifyEventHandler> = HashMap::new();
-
-    let mut result_sources: Vec<(String, UnboundedReceiver<FileEvent>)> = Vec::new();
+    let mut watch_mapping: HashMap<inotify::WatchDescriptor, InotifyEventContext> = HashMap::new();
 
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
 
-        let watch_mask = construct_watch_mask(directory_source.events.clone());
+        let mut watch_mask = construct_watch_mask(directory_source.events.clone());
 
-        let (sender, receiver) = unbounded_channel();
-
-        result_sources.push((directory_source.name.clone(), receiver));
+        if directory_source.recursive {
+            watch_mask = watch_mask | WatchMask::CREATE
+        }
 
         let mut register_watch = |path: &Path| {
-            let watch_result = inotify.add_watch(
-                path,
-                watch_mask,
-            );
+            let watch_result = inotify.add_watch(path, watch_mask);
 
             match watch_result {
                 Ok(w) => {
-                    info!(
-                        "Added watch on {}",
-                        path.to_string_lossy()
-                    );
+                    info!("Added watch on {}", path.to_string_lossy());
                     watch_mapping.insert(
                         w,
-                        InotifyEventHandler {
+                        InotifyEventContext {
+                            recursive: directory_source.recursive,
+                            watch_mask: watch_mask,
                             source_name: directory_source.name.clone(),
                             directory: PathBuf::from(path),
                             prefix: directory_source.directory.clone(),
                             filter: directory_source.filter.clone(),
-                            sender: sender.clone()
-                        }
+                        },
                     );
                 }
                 Err(e) => {
@@ -182,83 +202,171 @@ pub fn start_directory_sources(
             };
         };
 
-        let visit_result = visit_dirs(Path::new(&directory_source.directory), &mut register_watch, directory_source.recursive);
+        let visit_result = visit_dirs(
+            Path::new(&directory_source.directory),
+            &mut register_watch,
+            directory_source.recursive,
+        );
 
         match visit_result {
             Ok(_) => (),
-            Err(e) => error!("[E02011] Error recursing directories: {}", e)
+            Err(e) => error!("[E02011] Error recursing directories: {}", e),
         };
     });
 
-    let (join_handle, stop_cmd) = start_inotify_event_thread(inotify, watch_mapping, local_storage);
-
-    (
-        join_handle,
-        stop_cmd,
-        result_sources
-            .into_iter()
-            .map(move |(name, receiver)| Source {
-                name: name,
-                receiver: receiver,
-            })
-            .collect(),
-    )
+    start_inotify_event_thread(inotify, watch_mapping, local_intake_sender)
 }
 
-fn start_inotify_event_thread(mut inotify: Inotify, mut watch_mapping: HashMap<
-        inotify::WatchDescriptor,
-        InotifyEventHandler
-    >, local_storage: LocalStorage) -> (thread::JoinHandle<()>, StopCmd) {
-    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+fn start_inotify_event_thread(
+    mut inotify: Inotify,
+    mut watch_mapping: HashMap<inotify::WatchDescriptor, InotifyEventContext>,
+    local_intake_sender: Sender<LocalFileEvent>,
+) -> (thread::JoinHandle<()>, StopCmd)
+{
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop_flag.clone();
 
     let stop_cmd = Box::new(move || {
-        stop_sender.send(()).unwrap();
+        stop_clone.swap(true, Ordering::Relaxed);
     });
 
     let join_handle = thread::spawn(move || {
-        let runtime_result = Runtime::new();
+        let mut buffer: Vec<u8> = vec![0; 1024];
 
-        let mut runtime = match runtime_result {
-            Ok(r) => r,
-            Err(e) => {
-                error!("[E01002] Error starting Tokio runtime for inotify thread: {}", e);
-                return
-            }
-        };
+        while !stop_flag.load(Ordering::Relaxed) {
+            let events = inotify.read_events_blocking(&mut buffer).unwrap();
 
-        debug!("Tokio runtime created");
+            for event in events {
+                let event_context = watch_mapping.get(&event.wd).unwrap();
 
-        let buffer: Vec<u8> = vec![0; 1024];
+                let name = event.name.expect("Could not decode name");
+        
+                let file_name = name.to_str().unwrap();
+        
+                let source_path = event_context.directory.join(&file_name);
+                let source_path_str = source_path.to_string_lossy();
+        
+                if source_path.is_dir() {
+                    if event_context.recursive {
+                        let wd = inotify.add_watch(&source_path, event_context.watch_mask).unwrap();
 
-        let stream = inotify
-            .event_stream(buffer).map_err(|e| error!("[E02004] Error in inotify stream: {}", e))
-            .for_each(move |event: inotify::Event<std::ffi::OsString>| {
-                let inotify_event_handler = watch_mapping.get_mut(&event.wd).unwrap();
+                        let sub_event_context = InotifyEventContext {
+                            recursive: event_context.recursive,
+                            watch_mask: event_context.watch_mask,
+                            source_name: event_context.source_name.clone(),
+                            directory: source_path.clone(),
+                            prefix: source_path.clone(),
+                            filter: event_context.filter.clone(),
+                        };
 
-                let result = inotify_event_handler.handle_event(&local_storage, event);
+                        watch_mapping.insert(wd, sub_event_context);
 
-                match result {
-                    Ok(_) => futures::future::ok(()),
-                    Err(e) => {
-                        error!("{}", e);
-                        futures::future::ok(())
+                        info!("Registered extra watch on {}", &source_path_str);
+                    }
+                } else {
+                    let file_matches = match &event_context.filter {
+                        Some(f) => f.file_matches(&source_path),
+                        None => true,
+                    };
+            
+                    if file_matches {
+                        debug!("Event for {} matches filter", &source_path_str);
+            
+                        let file_event = LocalFileEvent {
+                            source_name: event_context.source_name.clone(),
+                            path: source_path,
+                            prefix: event_context.prefix.clone()
+                        };
+            
+                        let send_result = local_intake_sender.send(file_event);
+            
+                        match send_result {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("Could not send file event: {}", e)
+                            }
+                        }
                     }
                 }
-            })
-            .map_err(|e| {
-                error!("[E02002] {:?}", e);
-            });
+            }
+        }
 
-        let stoppable_stream = stream
-            //.select2(stop_receiver.into_future())
-            .map(|_| debug!("End inotify stream"))
-            .map_err(|_| error!("[E01001] Error in inotify stream"));
+        debug!("Inotify thread ended")
+    });
 
-        runtime.spawn(stoppable_stream);
+    (join_handle, stop_cmd)
+}
 
-        runtime.run().unwrap();
+pub fn start_local_intake_thread<T>(
+    receiver: Receiver<LocalFileEvent>,
+    mut event_dispatcher: EventDispatcher,
+    local_storage: LocalStorage<T>
+) -> (thread::JoinHandle<()>, StopCmd)
+where
+    T: Persistence,
+    T: Send,
+    T: Clone,
+    T: 'static,
+{
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop_flag.clone();
 
-        debug!("Inotify source stream ended")
+    let stop_cmd = Box::new(move || {
+        stop_clone.swap(true, Ordering::Relaxed);
+    });
+
+    let join_handle = thread::spawn(move || {
+        let timeout = Duration::from_millis(500);
+
+        while !stop_flag.load(Ordering::Relaxed) {
+            let receive_result = receiver.recv_timeout(timeout);
+
+            match receive_result {
+                Ok(file_event) => {
+                    let in_storage: bool = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix).unwrap();
+
+                    if !in_storage {
+                        debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
+                        let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
+        
+                        let source_path_str = file_event.path.to_string_lossy();
+            
+                        match store_result {
+                            Ok(target_path) => {
+                                let source_file_event = FileEvent {
+                                    source_name: file_event.source_name.clone(),
+                                    path: target_path.clone(),
+                                };
+            
+                                info!(
+                                    "New file for <{}>: '{}'",
+                                    &file_event.source_name, &source_path_str
+                                );
+            
+                                let send_result = event_dispatcher.dispatch_event(&source_file_event);
+            
+                                match send_result {
+                                    Ok(_) => {
+                                        debug!("File event from inotify sent on local channel");
+                                    },
+                                    Err(e) => error!(
+                                        "[E02001] Error sending file event on local channel: {}",
+                                        e
+                                    )
+                                }
+                            }
+                            Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
+                        }
+                    }
+       
+                }
+                Err(_) => {
+                    // Nothing to do, just allow the stop flag to be checked in the next iteration
+                }
+            }
+        }
+
+        debug!("Local intake thread ended")
     });
 
     (join_handle, stop_cmd)

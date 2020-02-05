@@ -27,6 +27,8 @@ use cortex_core::SftpDownload;
 use sha2::{Digest, Sha256};
 use tee::TeeReader;
 
+use chrono::{Utc, DateTime, NaiveDateTime};
+
 error_chain! {
     errors {
         DisconnectedError
@@ -41,7 +43,7 @@ where
 {
     pub sftp_source: settings::SftpSource,
     pub persistence: T,
-    pub local_storage: LocalStorage,
+    pub local_storage: LocalStorage<T>,
 }
 
 impl<T> SftpDownloader<T>
@@ -57,7 +59,7 @@ where
         mut ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
         config: settings::SftpSource,
         mut sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
-        local_storage: LocalStorage,
+        local_storage: LocalStorage<T>,
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
         thread::spawn(move || {
@@ -226,16 +228,23 @@ where
             }
         }
 
-        let (copy_result, hash) = {
+        let (copy_result, hash, stat) = {
             let borrow = sftp_connection.borrow();
+
+            let stat_result = borrow.sftp.stat(&remote_path);
+
+            let stat = match stat_result {
+                Ok(s) => s,
+                Err(e) => {
+                    return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
+                }
+            };
             
             let open_result = borrow.sftp.open(&remote_path);
 
             let mut remote_file = match open_result {
                 Ok(remote_file) => remote_file,
                 Err(e) => {
-                    let path_str = remote_path.to_string_lossy();
-                    error!("Error opening file '{}': {}", &path_str, e);
                     match e.code() {
                         0 => {
                             return Err(ErrorKind::DisconnectedError.into())
@@ -268,7 +277,8 @@ where
 
             (
                 io::copy(&mut tee_reader, &mut local_file),
-                format!("{:x}", sha256.result())
+                format!("{:x}", sha256.result()),
+                stat
             )
         };
 
@@ -281,7 +291,14 @@ where
 
                 let file_size = i64::try_from(bytes_copied).unwrap();
 
-                let file_id = self.persistence.insert_file(&self.sftp_source.name, &local_path.to_string_lossy(), file_size, Some(hash)).unwrap();
+				let sec = i64::try_from(stat.mtime.unwrap()).unwrap();
+				let nsec = 0;
+
+                let modified = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc);
+
+                let file_id = self.persistence.insert_file(
+                    &self.sftp_source.name, &local_path.to_string_lossy(), &modified, file_size, Some(hash)
+                ).unwrap();
 
                 self.persistence.set_sftp_download_file(msg.id, file_id);
 

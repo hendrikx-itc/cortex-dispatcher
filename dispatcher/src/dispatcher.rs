@@ -14,7 +14,7 @@ use lapin_futures::{ConnectionProperties};
 
 extern crate tokio_executor;
 use tokio::prelude::Stream;
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_executor::enter;
 use tokio::sync::oneshot;
 
@@ -33,10 +33,10 @@ use cortex_core::{wait_for, SftpDownload, StopCmd};
 use crate::base_types::{Connection, RabbitMQNotify, Target, CortexConfig, Notify, Source};
 
 #[cfg(target_os = "linux")]
-use crate::directory_source::start_directory_sources;
+use crate::directory_source::{start_directory_sources, start_directory_sweep, start_local_intake_thread};
 
 use crate::directory_target::to_stream;
-use crate::event::FileEvent;
+use crate::event::{FileEvent, EventDispatcher};
 use crate::http_server::start_http_server;
 use crate::metrics_collector::metrics_collector;
 use crate::persistence::PostgresPersistence;
@@ -92,7 +92,7 @@ impl Stop {
 
     fn make_stoppable_stream<S>(&mut self, stream: S, name: String) -> impl Future<Item=(), Error=()>
         where S: Future<Item=(), Error=()> {
-        let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+        let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
 
         self.stop_commands.push(Box::new(move || {
             match stop_sender.send(()) {
@@ -102,7 +102,7 @@ impl Stop {
         }));
 
         stream
-            //.select2(stop_receiver.into_future())
+            // select2(stop_receiver.into_future())
             .map(|_| debug!("End stream"))
             .map_err(move |_| error!("[E02010] Error in stoppable stream {}", &name))
     }
@@ -143,20 +143,48 @@ pub fn run(settings: settings::Settings) {
         info!("Prometheus metrics push collector configured");
     };
 
-    let local_storage = LocalStorage::new(&settings.storage.directory);
+    let connection_manager =
+        PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
+
+    let persistence = PostgresPersistence::new(connection_manager);
+
+    let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
+
+    let (local_intake_sender, local_intake_receiver) = std::sync::mpsc::channel();
+
+    let mut senders: HashMap<String, UnboundedSender<FileEvent>> = HashMap::new();
+
+    settings.directory_sources.iter().for_each(|directory_source| { 
+        let (sender, receiver) = unbounded_channel();
+
+        let guard = sources.lock();
+        
+        guard.unwrap().push(
+            Source {
+                name: directory_source.name.clone(),
+                receiver: receiver
+            }
+        );
+
+        senders.insert(directory_source.name.clone(), sender);
+    });
+
+    let event_dispatcher = EventDispatcher {
+        senders: senders
+    };
+
+    start_local_intake_thread(local_intake_receiver, event_dispatcher, local_storage.clone());
 
     #[cfg(target_os = "linux")]
-    let (directory_sources_join_handle, inotify_stop_cmd, mut directory_sources) =
-        start_directory_sources(settings.directory_sources.clone(), local_storage.clone());
+    let (directory_sources_join_handle, inotify_stop_cmd) =
+        start_directory_sources(settings.directory_sources.clone(), local_intake_sender.clone());
 
     #[cfg(target_os = "linux")]
     {
         stop.lock().unwrap().add_command(inotify_stop_cmd);
-
-        let guard = sources.lock();
-        
-        guard.unwrap().append(&mut directory_sources);
     }
+
+    let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(settings.directory_sources.clone(), local_intake_sender.clone());
 
     settings
         .connections
@@ -172,12 +200,6 @@ pub fn run(settings: settings::Settings) {
                 }
             );
         });
-
-
-    let connection_manager =
-        PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
-
-    let persistence = PostgresPersistence::new(connection_manager);
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();

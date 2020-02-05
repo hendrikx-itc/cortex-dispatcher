@@ -1437,18 +1437,16 @@ dependencies = [
 
 [[package]]
 name = "inotify"
-version = "0.7.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24e40d6fd5d64e2082e0c796495c8ef5ad667a96d03e5aaa0becfd9d47bcbfb8"
+checksum = "bc39ee997811267bf8aa0b10e1674c5bea6caacc1957eede5ea45251fe33c6d5"
 dependencies = [
  "bitflags 1.2.1",
- "futures 0.1.29",
+ "futures-core",
  "inotify-sys",
  "libc",
  "mio",
- "tokio 0.1.22",
- "tokio-io",
- "tokio-reactor",
+ "tokio 0.2.11",
 ]
 
 [[package]]
@@ -2071,6 +2069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eab1dd99401779ab03bc3872f196fb02c420e76f416c850be494a6f2d67287ad"
 dependencies = [
  "bytes 0.5.4",
+ "chrono",
  "fallible-iterator",
  "postgres-protocol",
 ]

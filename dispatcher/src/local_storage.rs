@@ -2,10 +2,20 @@ use std::error;
 use std::fmt;
 use std::fs::hard_link;
 use std::path::{Path, PathBuf};
+use std::convert::TryFrom;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use chrono::{Utc, DateTime, NaiveDateTime};
+
+use crate::persistence::{Persistence, PersistenceError};
 
 #[derive(Debug, Clone)]
-pub struct LocalStorage {
+pub struct LocalStorage<T> 
+where
+    T: Persistence,
+{
     directory: PathBuf,
+    persistence: T
 }
 
 #[derive(Debug, Clone)]
@@ -25,10 +35,20 @@ impl error::Error for LocalStorageError {
     }
 }
 
-impl LocalStorage {
-    pub fn new<P: AsRef<Path>>(directory: P) -> LocalStorage {
+impl From<PersistenceError> for LocalStorageError {
+    fn from(e: PersistenceError) -> Self {
+        return LocalStorageError { message: String::from(format!("{}", e)) }
+    }
+}
+
+impl<T> LocalStorage<T>
+where
+    T: Persistence,
+{
+    pub fn new<P: AsRef<Path>>(directory: P, persistence: T) -> LocalStorage<T> {
         LocalStorage {
             directory: directory.as_ref().to_path_buf(),
+            persistence: persistence
         }
     }
 
@@ -52,6 +72,25 @@ impl LocalStorage {
         }
     }
 
+    pub fn in_storage<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<bool, LocalStorageError>
+    where
+        P: AsRef<Path>,
+    {
+        let local_path = match self.local_path(source_name, &file_path, &prefix) {
+            Ok(path) => path,
+            Err(e) => return Err(e)
+        };
+
+        let local_path_str = local_path.to_string_lossy();
+
+        let file_result = &self.persistence.get_file(source_name, &local_path_str)?;
+
+        match file_result {
+            None => Ok(false),
+            Some(_f) => Ok(true)
+        }
+    }
+
     /// Store file in local storage. The file will be hardlinked from the
     /// specified file_path and will be stored in a directory with the name of
     /// the source. The prefix will be stripped from the file path.
@@ -65,6 +104,7 @@ impl LocalStorage {
             Ok(path) => path,
             Err(e) => return Err(e)
         };
+        let local_path_str = local_path.to_string_lossy();
 
         let local_path_parent = local_path.parent().unwrap();
 
@@ -78,18 +118,52 @@ impl LocalStorage {
                     return Err(LocalStorageError { message: format!("Error creating containing directory '{}': {}", local_path_parent_str, e) })
                 }
             }
+        } else {
+            if local_path.is_file() {
+                &self.persistence.remove_file(source_name, &local_path_str);
+
+                // Remove existing file before creating new hardlink
+                std::fs::remove_file(&local_path).unwrap();
+            }
         }
 
-        let target_path_str = local_path.to_string_lossy();
 
         let link_result = hard_link(&file_path, &local_path);
 
         match link_result {
-            Ok(()) => Ok(local_path),
+            Ok(()) => {
+                let metadata = std::fs::metadata(&local_path).unwrap();
+                let modified = system_time_to_date_time(metadata.modified().unwrap());
+                let size = i64::try_from(metadata.len()).unwrap();
+
+                &self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
+
+                debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
+
+                Ok(local_path)
+            }
             Err(e) => Err(LocalStorageError{ message: format!(
                 "[E?????] Error hardlinking '{}' to '{}': {}",
-                &source_path_str, &target_path_str, &e
+                &source_path_str, &local_path_str, &e
             )}),
         }
     }
 }
+
+fn system_time_to_date_time(t: SystemTime) -> DateTime<Utc> {
+    let (sec, nsec) = match t.duration_since(UNIX_EPOCH) {
+        Ok(dur) => (dur.as_secs() as i64, dur.subsec_nanos()),
+        Err(e) => {
+            let dur = e.duration();
+            let (sec, nsec) = (dur.as_secs() as i64, dur.subsec_nanos());
+            if nsec == 0 {
+                (-sec, 0)
+            } else {
+                (-sec - 1, 1_000_000_000 - nsec)
+            }
+        },
+    };
+
+	DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc)
+}
+

@@ -19,7 +19,7 @@ assets = [
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.7"
+inotify = "0.8"
 
 [dependencies]
 log = "0.4"
@@ -45,7 +45,7 @@ sha2 = "0.8"
 tee = "0.1"
 prometheus = { version = "0.7", features = ["push"] }
 lazy_static = "1.4"
-postgres = "0.17"
+postgres = { version = "0.17", features = ["with-chrono-0_4"] }
 tokio-postgres = "0.5"
 cortex-core = { path = "../core" }
 crossbeam-channel = "0.4"

@@ -11,6 +11,7 @@ directory_sources:
     events:
       - CloseWrite
       - MovedTo
+    scan_interval: 15000
 
 directory_targets:
   - name: v5

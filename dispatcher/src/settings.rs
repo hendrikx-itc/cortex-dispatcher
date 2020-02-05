@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
@@ -8,7 +8,7 @@ extern crate regex;
 extern crate serde_regex;
 
 trait FileFilter {
-    fn file_matches(&self, path: &PathBuf) -> bool;
+    fn file_matches<P: AsRef<Path>>(&self, path: P) -> bool;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -18,8 +18,8 @@ pub struct RegexFilter {
 }
 
 impl FileFilter for RegexFilter {
-    fn file_matches(&self, path: &PathBuf) -> bool {
-        let file_name_result = path.file_name();
+    fn file_matches<P: AsRef<Path>>(&self, path: P) -> bool {
+        let file_name_result = path.as_ref().file_name();
 
         file_name_result.map_or_else(
             || false,
@@ -35,7 +35,7 @@ pub enum Filter {
 }
 
 impl Filter {
-    pub fn file_matches(&self, path: &PathBuf) -> bool {
+    pub fn file_matches<P: AsRef<Path>>(&self, path: P) -> bool {
         match self {
             Filter::Regex(r) => r.file_matches(path),
             Filter::All => true,
@@ -93,7 +93,14 @@ pub struct DirectorySource {
     pub directory: PathBuf,
     pub recursive: bool,
     pub events: Vec<FileSystemEvent>,
-    pub filter: Option<Filter>
+    pub filter: Option<Filter>,
+    #[serde(default = "default_scan_interval")]
+    pub scan_interval: u64
+}
+
+/// Default directory scan (sweep) interval
+fn default_scan_interval() -> u64 {
+    60_000
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -218,7 +225,8 @@ impl Default for Settings {
                 directory: PathBuf::from("/cortex/incoming"),
                 events: vec![FileSystemEvent::MovedTo, FileSystemEvent::CloseWrite],
                 filter: None,
-                recursive: true
+                recursive: true,
+                scan_interval: 60_000
             }],
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),

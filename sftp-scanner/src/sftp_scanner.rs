@@ -110,6 +110,7 @@ pub fn start_scanner(
                                 },
                                 _ => {
                                     let msg = format!("Unexpected error: {}", &e);
+                                    error!("{}", &msg);
                                     OperationResult::Err(Error::with_chain(e, msg))
                                 }
                             }
@@ -259,7 +260,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                     );
 
                     match query_result {
-                        Ok(row) => {
+                        Ok(_) => {
                             false
                         },
                         Err(e) => {

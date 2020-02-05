@@ -36,7 +36,7 @@ objects:
       data_type: bigint
       generated_identity: by_default
       nullable: false
-    - name: created
+    - name: timestamp
       data_type: timestamptz
       nullable: false
       default: now()
@@ -45,6 +45,9 @@ objects:
       nullable: false
     - name: path
       data_type: text
+      nullable: false
+    - name: modified
+      data_type: timestamptz
       nullable: false
     - name: size
       data_type: bigint
@@ -60,12 +63,14 @@ objects:
 - table:
     name: sftp_download
     schema: dispatcher
+    description: |-
+      Contains records of files that need to be downloaded from a remote SFTP location.
     columns:
     - name: id
       data_type: bigint
       generated_identity: by_default
       nullable: false
-    - name: created
+    - name: timestamp
       data_type: timestamptz
       nullable: false
       default: now()
@@ -83,6 +88,54 @@ objects:
       nullable: true
     foreign_keys:
     - name: sftp_download_file_id_fkey
+      columns:
+      - file_id
+      references:
+        table:
+          name: file
+          schema: dispatcher
+        columns:
+        - id
+      on_delete: cascade
+    indexes:
+    - name: sftp_download_file_index
+      unique: false
+      definition: btree (source, path)
+
+- table:
+    name: directory_source
+    schema: dispatcher
+    description: |-
+      Contains records of files delivered on a local filesystem that can be
+      monitored with mechanisms like inotify. All files recorded here must be
+      present on the filesystem, and when the file is copied/hardlinked to the
+      internal Cortex storage, a reference to the file table is added.
+    columns:
+    - name: id
+      data_type: bigint
+      generated_identity: by_default
+      nullable: false
+    - name: timestamp 
+      data_type: timestamptz
+      nullable: false
+      default: now()
+    - name: source
+      data_type: text
+      nullable: false
+    - name: path
+      data_type: text
+      nullable: false
+    - name: modified
+      data_type: timestamptz
+      nullable: false
+    - name: size
+      data_type: bigint
+      nullable: false
+    - name: file_id
+      data_type: bigint
+      nullable: true
+    foreign_keys:
+    - name: directory_source_file_id_fkey
       columns:
       - file_id
       references:

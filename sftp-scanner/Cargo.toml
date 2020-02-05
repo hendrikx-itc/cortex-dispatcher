@@ -31,7 +31,7 @@ tokio-executor = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 prometheus = { version = "0.7", features = ["push"] }
 lazy_static = "1.4"
-postgres = "0.17"
+postgres = { version = "0.17", features = ["with-chrono-0_4"] }
 cortex-core = { path = "../core" }
 actix-web = "1.0"
 actix-rt = "0.2"
