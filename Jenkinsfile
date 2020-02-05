@@ -25,26 +25,30 @@ pipeline {
                     sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
 
-                switch (GIT_BRANCH) {
-                    case "origin/master":
-                        publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
-                        break
-                    case "origin/develop":
-                        publishPackages 'target/debian', 'kpn/bionic/unstable', 'bionic'
-                        break
+                script {
+                    switch (GIT_BRANCH) {
+                        case "origin/master":
+                            publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                            break
+                        case "origin/develop":
+                            publishPackages 'target/debian', 'kpn/bionic/unstable', 'bionic'
+                            break
+                    }
                 }
                 
                 dir('sftp-scanner') {
                     sh "CARGO_HOME=${WORKSPACE} cargo deb"
                 }
                 
-                switch (GIT_BRANCH) {
-                    case "origin/master":
-                        publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
-                        break
-                    case "origin/develop":
-                        publishPackages 'target/debian', 'kpn/bionic/unstable', 'bionic'
-                        break
+                script {
+                    switch (GIT_BRANCH) {
+                        case "origin/master":
+                            publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                            break
+                        case "origin/develop":
+                            publishPackages 'target/debian', 'kpn/bionic/unstable', 'bionic'
+                            break
+                    }
                 }
             }
         }
