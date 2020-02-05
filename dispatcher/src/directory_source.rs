@@ -237,56 +237,69 @@ fn start_inotify_event_thread(
             let events = inotify.read_events_blocking(&mut buffer).unwrap();
 
             for event in events {
-
-                let event_context = watch_mapping.get(&event.wd).unwrap();
-
-                let name = event.name.expect("Could not decode name");
-        
-                let file_name = name.to_str().unwrap();
-        
-                let source_path = event_context.directory.join(&file_name);
-                let source_path_str = source_path.to_string_lossy();
-        
-                if source_path.is_dir() {
-                    if event_context.recursive {
-                        let wd = inotify.add_watch(&source_path, event_context.watch_mask).unwrap();
-
-                        let sub_event_context = InotifyEventContext {
-                            recursive: event_context.recursive,
-                            watch_mask: event_context.watch_mask,
-                            source_name: event_context.source_name.clone(),
-                            directory: source_path.clone(),
-                            prefix: event_context.prefix.clone(),
-                            filter: event_context.filter.clone(),
-                        };
-
-                        watch_mapping.insert(wd, sub_event_context);
-
-                        info!("Registered extra watch on {}", &source_path_str);
+                let name = match event.name {
+                    Some(name) => name,
+                    None => {
+                        // No name in event
+                        continue;
                     }
-                } else {
-                    let file_matches = match &event_context.filter {
-                        Some(f) => f.file_matches(&source_path),
-                        None => true,
-                    };
-            
-                    if file_matches {
-                        debug!("Event for {} matches filter", &source_path_str);
-            
-                        let file_event = LocalFileEvent {
-                            source_name: event_context.source_name.clone(),
-                            path: source_path,
-                            prefix: event_context.prefix.clone()
-                        };
-            
-                        let send_result = local_intake_sender.send(file_event);
-            
-                        match send_result {
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("Could not send file event: {}", e)
+                };
+
+                let file_name = name.to_str().unwrap();
+
+                let get_result = watch_mapping.get(&event.wd);
+
+                match get_result {
+                    Some(event_context) => {
+                        let source_path = event_context.directory.join(&file_name);
+                        let source_path_str = source_path.to_string_lossy();
+                
+                        if source_path.is_dir() {
+                            if event_context.recursive {
+                                let wd = inotify.add_watch(&source_path, event_context.watch_mask).unwrap();
+        
+                                let sub_event_context = InotifyEventContext {
+                                    recursive: event_context.recursive,
+                                    watch_mask: event_context.watch_mask,
+                                    source_name: event_context.source_name.clone(),
+                                    directory: source_path.clone(),
+                                    prefix: event_context.prefix.clone(),
+                                    filter: event_context.filter.clone(),
+                                };
+        
+                                watch_mapping.insert(wd, sub_event_context);
+        
+                                info!("Registered extra watch on {}", &source_path_str);
+                            }
+                        } else {
+                            let file_matches = match &event_context.filter {
+                                Some(f) => f.file_matches(&source_path),
+                                None => true,
+                            };
+                    
+                            if file_matches {
+                                debug!("Event for {} matches filter", &source_path_str);
+                    
+                                let file_event = LocalFileEvent {
+                                    source_name: event_context.source_name.clone(),
+                                    path: source_path,
+                                    prefix: event_context.prefix.clone()
+                                };
+                    
+                                let send_result = local_intake_sender.send(file_event);
+                    
+                                match send_result {
+                                    Ok(_) => (),
+                                    Err(e) => {
+                                        error!("Could not send file event: {}", e)
+                                    }
+                                }
                             }
                         }
+        
+                    },
+                    None => {
+                        error!("Could not find matching event context for {}", file_name);
                     }
                 }
             }
@@ -324,42 +337,48 @@ where
 
             match receive_result {
                 Ok(file_event) => {
-                    let in_storage: bool = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix).unwrap();
+                    let request_result = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix);
 
-                    if !in_storage {
-                        debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
-                        let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
-        
-                        let source_path_str = file_event.path.to_string_lossy();
-            
-                        match store_result {
-                            Ok(target_path) => {
-                                let source_file_event = FileEvent {
-                                    source_name: file_event.source_name.clone(),
-                                    path: target_path.clone(),
-                                };
-            
-                                info!(
-                                    "New file for <{}>: '{}'",
-                                    &file_event.source_name, &source_path_str
-                                );
-            
-                                let send_result = event_dispatcher.dispatch_event(&source_file_event);
-            
-                                match send_result {
-                                    Ok(_) => {
-                                        debug!("File event from inotify sent on local channel");
-                                    },
-                                    Err(e) => error!(
-                                        "[E02001] Error sending file event on local channel: {}",
-                                        e
-                                    )
+                    match request_result {
+                        Ok(in_storage) => {
+                            if !in_storage {
+                                debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
+                                let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
+                
+                                let source_path_str = file_event.path.to_string_lossy();
+                    
+                                match store_result {
+                                    Ok(target_path) => {
+                                        let source_file_event = FileEvent {
+                                            source_name: file_event.source_name.clone(),
+                                            path: target_path.clone(),
+                                        };
+                    
+                                        info!(
+                                            "New file for <{}>: '{}'",
+                                            &file_event.source_name, &source_path_str
+                                        );
+                    
+                                        let send_result = event_dispatcher.dispatch_event(&source_file_event);
+                    
+                                        match send_result {
+                                            Ok(_) => {
+                                                debug!("File event from inotify sent on local channel");
+                                            },
+                                            Err(e) => error!(
+                                                "[E02001] Error sending file event on local channel: {}",
+                                                e
+                                            )
+                                        }
+                                    }
+                                    Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
                                 }
                             }
-                            Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
+                        },
+                        Err(e) => {
+                            error!("Error querying ")
                         }
                     }
-       
                 }
                 Err(_) => {
                     // Nothing to do, just allow the stop flag to be checked in the next iteration
