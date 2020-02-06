@@ -92,9 +92,11 @@ struct InotifyEventContext {
 pub fn start_directory_sweep(
     directory_sources: Vec<settings::DirectorySource>,
     local_intake_sender: Sender<LocalFileEvent>,
+    scan_interval: u64
 ) -> (thread::JoinHandle<()>, StopCmd)
 {
-    let timeout = std::time::Duration::from_millis(15_000);
+    let timeout = std::time::Duration::from_millis(scan_interval);
+
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();
 

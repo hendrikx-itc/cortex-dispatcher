@@ -184,7 +184,11 @@ pub fn run(settings: settings::Settings) {
         stop.lock().unwrap().add_command(inotify_stop_cmd);
     }
 
-    let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(settings.directory_sources.clone(), local_intake_sender.clone());
+    let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(
+        settings.directory_sources.clone(),
+        local_intake_sender.clone(),
+        settings.scan_interval
+    );
 
     settings
         .connections

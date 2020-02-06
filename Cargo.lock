@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-dispatcher"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "actix-files",
  "actix-http",

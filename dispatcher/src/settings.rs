@@ -94,13 +94,6 @@ pub struct DirectorySource {
     pub recursive: bool,
     pub events: Vec<FileSystemEvent>,
     pub filter: Option<Filter>,
-    #[serde(default = "default_scan_interval")]
-    pub scan_interval: u64
-}
-
-/// Default directory scan (sweep) interval
-fn default_scan_interval() -> u64 {
-    60_000
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -201,6 +194,13 @@ pub struct Settings {
     pub prometheus_push: Option<PrometheusPush>,
     pub postgresql: Postgresql,
     pub http_server: HttpServer,
+    #[serde(default = "default_scan_interval")]
+    pub scan_interval: u64
+}
+
+/// Default directory scan (sweep) interval
+fn default_scan_interval() -> u64 {
+    60_000
 }
 
 fn default_directory_sources() -> Vec<DirectorySource> {
@@ -225,8 +225,7 @@ impl Default for Settings {
                 directory: PathBuf::from("/cortex/incoming"),
                 events: vec![FileSystemEvent::MovedTo, FileSystemEvent::CloseWrite],
                 filter: None,
-                recursive: true,
-                scan_interval: 60_000
+                recursive: true
             }],
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),
@@ -270,6 +269,7 @@ impl Default for Settings {
                 address: "0.0.0.0:56008".parse().unwrap(),
                 static_content_path: PathBuf::from("static-web"),
             },
+            scan_interval: 60_000
         }
     }
 }
