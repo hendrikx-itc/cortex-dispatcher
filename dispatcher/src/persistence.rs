@@ -179,7 +179,7 @@ where
 
         match query_result {
             Ok(rows) => {
-                if rows.len() == 0 {
+                if rows.is_empty() {
                     Ok(None)
                 } else if rows.len() == 1 {
                     let row = &rows[0];

@@ -40,7 +40,7 @@ impl From<Context<ConsumeErrorKind>> for ConsumeError {
 }
 
 impl From<lapin_futures::Error> for ConsumeError {
-    fn from(err: lapin_futures::Error) -> ConsumeError {
+    fn from(_err: lapin_futures::Error) -> ConsumeError {
 		ConsumeError::from(ConsumeErrorKind::UnknownStreamError)
 	}
 }
@@ -149,7 +149,7 @@ pub fn start(
 			})
 		});
 
-		let handled_stream = consume_future.and_then(|stream| {
+		consume_future.and_then(|stream| {
 			stream.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).for_each(move |message| {
 				let action_source_name = sftp_source_name_2.clone();
 				let action_command_sender = command_sender.clone();
@@ -167,7 +167,7 @@ pub fn start(
 
 					match deserialize_result {
 						Ok(sftp_download) => {
-							let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download.clone()));
+							let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download));
 							
 							match send_result {
 								Ok(_) => Ok(()),
@@ -247,9 +247,7 @@ pub fn start(
 							.map_err(map_to_consume_err)
 					})
 			})
-		});
-
-		handled_stream
+		})
 	}).map_err(|_| ());
 
 	Box::new(future)

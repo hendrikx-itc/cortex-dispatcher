@@ -73,7 +73,7 @@ fn construct_watch_mask(events: Vec<settings::FileSystemEvent>) -> WatchMask {
     let mut watch_mask: WatchMask = WatchMask::empty();
 
     for event in events {
-        watch_mask = watch_mask | event.watch_mask();
+        watch_mask |= event.watch_mask();
     }
 
     watch_mask
@@ -122,7 +122,12 @@ pub fn start_directory_sweep(
                             prefix: directory_source.directory.clone()
                         };
 
-                        local_intake_sender.send(local_file_event);
+                        let send_result = local_intake_sender.send(local_file_event);
+
+                        match send_result {
+                            Ok(_) => {},
+                            Err(e) => error!("Could not send local file event on intake channel: {}", e)
+                        }
                     }
                 };
 
@@ -173,7 +178,7 @@ pub fn start_directory_sources(
         let mut watch_mask = construct_watch_mask(directory_source.events.clone());
 
         if directory_source.recursive {
-            watch_mask = watch_mask | WatchMask::CREATE
+            watch_mask |= WatchMask::CREATE
         }
 
         let mut register_watch = |path: &Path| {
@@ -233,10 +238,20 @@ fn start_inotify_event_thread(
     });
 
     let join_handle = thread::spawn(move || {
+        let timeout = Duration::from_millis(500);
         let mut buffer: Vec<u8> = vec![0; 1024];
 
         while !stop_flag.load(Ordering::Relaxed) {
-            let events = inotify.read_events_blocking(&mut buffer).unwrap();
+            let read_result = inotify.read_events_blocking(&mut buffer);
+
+            let events = match read_result {
+                Ok(events) => events,
+                Err(e) => {
+                    error!("Could not read inotify events: {}", e);
+                    std::thread::sleep(timeout);
+                    continue
+                }
+            };
 
             for event in events {
                 let name = match event.name {
@@ -247,7 +262,15 @@ fn start_inotify_event_thread(
                     }
                 };
 
-                let file_name = name.to_str().unwrap();
+                let to_str_result = name.to_str();
+
+                let file_name = match to_str_result {
+                    Some(name_str) => name_str,
+                    None => {
+                        debug!("Could not decode string from inotify event name");
+                        continue
+                    }
+                };
 
                 let get_result = watch_mapping.get(&event.wd);
 
@@ -258,7 +281,15 @@ fn start_inotify_event_thread(
                 
                         if source_path.is_dir() {
                             if event_context.recursive {
-                                let wd = inotify.add_watch(&source_path, event_context.watch_mask).unwrap();
+                                let watch_result = inotify.add_watch(&source_path, event_context.watch_mask);
+
+                                let wd = match watch_result {
+                                    Ok(w) => w,
+                                    Err(e) => {
+                                        error!("Could not add inotify watch for new directory '{}': {}", source_path_str, e);
+                                        continue
+                                    }
+                                };
         
                                 let sub_event_context = InotifyEventContext {
                                     recursive: event_context.recursive,
@@ -337,53 +368,48 @@ where
         while !stop_flag.load(Ordering::Relaxed) {
             let receive_result = receiver.recv_timeout(timeout);
 
-            match receive_result {
-                Ok(file_event) => {
-                    let request_result = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix);
+            if let Ok(file_event) = receive_result {
+                let request_result = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix);
 
-                    match request_result {
-                        Ok(in_storage) => {
-                            if !in_storage {
-                                debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
-                                let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
+                match request_result {
+                    Ok(in_storage) => {
+                        if !in_storage {
+                            debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
+                            let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
+            
+                            let source_path_str = file_event.path.to_string_lossy();
                 
-                                let source_path_str = file_event.path.to_string_lossy();
-                    
-                                match store_result {
-                                    Ok(target_path) => {
-                                        let source_file_event = FileEvent {
-                                            source_name: file_event.source_name.clone(),
-                                            path: target_path.clone(),
-                                        };
-                    
-                                        info!(
-                                            "New file for <{}>: '{}'",
-                                            &file_event.source_name, &source_path_str
-                                        );
-                    
-                                        let send_result = event_dispatcher.dispatch_event(&source_file_event);
-                    
-                                        match send_result {
-                                            Ok(_) => {
-                                                debug!("File event from inotify sent on local channel");
-                                            },
-                                            Err(e) => error!(
-                                                "[E02001] Error sending file event on local channel: {}",
-                                                e
-                                            )
-                                        }
+                            match store_result {
+                                Ok(target_path) => {
+                                    let source_file_event = FileEvent {
+                                        source_name: file_event.source_name.clone(),
+                                        path: target_path.clone(),
+                                    };
+                
+                                    info!(
+                                        "New file for <{}>: '{}'",
+                                        &file_event.source_name, &source_path_str
+                                    );
+                
+                                    let send_result = event_dispatcher.dispatch_event(&source_file_event);
+                
+                                    match send_result {
+                                        Ok(_) => {
+                                            debug!("File event from inotify sent on local channel");
+                                        },
+                                        Err(e) => error!(
+                                            "[E02001] Error sending file event on local channel: {}",
+                                            e
+                                        )
                                     }
-                                    Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
                                 }
+                                Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
                             }
-                        },
-                        Err(e) => {
-                            error!("Error querying ")
                         }
+                    },
+                    Err(e) => {
+                        error!("Error querying storage: {}", e)
                     }
-                }
-                Err(_) => {
-                    // Nothing to do, just allow the stop flag to be checked in the next iteration
                 }
             }
         }

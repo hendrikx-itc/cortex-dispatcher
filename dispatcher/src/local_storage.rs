@@ -37,7 +37,7 @@ impl error::Error for LocalStorageError {
 
 impl From<PersistenceError> for LocalStorageError {
     fn from(e: PersistenceError) -> Self {
-        return LocalStorageError { message: String::from(format!("{}", e)) }
+        LocalStorageError { message: format!("{}", e) }
     }
 }
 
@@ -120,7 +120,7 @@ where
             }
         } else {
             if local_path.is_file() {
-                &self.persistence.remove_file(source_name, &local_path_str);
+                self.persistence.remove_file(source_name, &local_path_str)?;
 
                 // Remove existing file before creating new hardlink
                 std::fs::remove_file(&local_path).unwrap();
@@ -136,7 +136,7 @@ where
                 let modified = system_time_to_date_time(metadata.modified().unwrap());
                 let size = i64::try_from(metadata.len()).unwrap();
 
-                &self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
+                self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
 
                 debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
 

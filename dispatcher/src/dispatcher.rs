@@ -173,22 +173,24 @@ pub fn run(settings: settings::Settings) {
         senders: senders
     };
 
-    start_local_intake_thread(local_intake_receiver, event_dispatcher, local_storage.clone());
+    let (local_intake_handle, local_intake_stop_cmd) = start_local_intake_thread(local_intake_receiver, event_dispatcher, local_storage.clone());
+
+    stop.lock().unwrap().add_command(local_intake_stop_cmd);
 
     #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, inotify_stop_cmd) =
         start_directory_sources(settings.directory_sources.clone(), local_intake_sender.clone());
 
     #[cfg(target_os = "linux")]
-    {
-        stop.lock().unwrap().add_command(inotify_stop_cmd);
-    }
+    stop.lock().unwrap().add_command(inotify_stop_cmd);
 
     let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(
         settings.directory_sources.clone(),
-        local_intake_sender.clone(),
+        local_intake_sender,
         settings.scan_interval
     );
+
+    stop.lock().unwrap().add_command(sweep_stop_cmd);
 
     settings
         .connections
@@ -391,6 +393,10 @@ pub fn run(settings: settings::Settings) {
 
     wait_for(web_server_join_handle, "http server");
 
+    wait_for(local_intake_handle, "local intake");
+
+    wait_for(directory_sweep_join_handle, "directory sweep");
+
     Arc::try_unwrap(sftp_join_handles).expect("still users of handles").into_inner().unwrap().into_iter().for_each(|jh| {
         wait_for(jh, "sftp download");
     });
@@ -456,12 +462,12 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
         None => stream_consuming_future(Box::new(target_stream)),
     };
 
-    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+    let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
 
     let name = target_conf.name.clone();
 
     let stoppable_stream = target_stream
-        //.select2(stop_receiver.into_future())
+        //.select2(stop_receiver)
         .map(|_result| debug!("End directory target stream"))
         .map_err(move |_| error!("[E02006] Error in directory target stream '{}'", &name));
 

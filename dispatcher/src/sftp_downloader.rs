@@ -34,6 +34,7 @@ error_chain! {
         DisconnectedError
         NoSuchFileError
         ConnectInterrupted
+        PersistenceError
     }
 }
 
@@ -166,7 +167,7 @@ where
                                 let msg = match e {
                                     retry::Error::<Error>::Operation { error, total_delay: _, tries: _ } => {
                                         let msg_list: Vec<String> = error.iter().map(|sub_err| sub_err.to_string()).collect();
-                                        format!("{}", msg_list.join(": "))
+                                        msg_list.join(": ").to_string()
                                     },
                                     retry::Error::Internal(int) => {
                                         int
@@ -250,9 +251,12 @@ where
                             return Err(ErrorKind::DisconnectedError.into())
                         },
                         2 => {
-                            self.persistence.delete_sftp_download_file(msg.id);
+                            let delete_result = self.persistence.delete_sftp_download_file(msg.id);
 
-                            return Err(ErrorKind::NoSuchFileError.into())
+                            match delete_result {
+                                Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
+                                Err(e) => return Err(Error::with_chain(e, "Error removing record of non-existent remote file"))
+                            }
                         },
                         _ => return Err(Error::with_chain(e, "Error opening remote file"))
                     }
@@ -300,7 +304,12 @@ where
                     &self.sftp_source.name, &local_path.to_string_lossy(), &modified, file_size, Some(hash)
                 ).unwrap();
 
-                self.persistence.set_sftp_download_file(msg.id, file_id);
+                let set_result = self.persistence.set_sftp_download_file(msg.id, file_id);
+
+                match set_result {
+                    Ok(_) => {},
+                    Err(_) => return Err(ErrorKind::PersistenceError.into()),
+                }
 
                 metrics::FILE_DOWNLOAD_COUNTER_VEC
                     .with_label_values(&[&self.sftp_source.name])

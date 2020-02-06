@@ -1,7 +1,6 @@
 use std::os::unix::fs::symlink;
 use std::fs::{hard_link, copy, Permissions, set_permissions};
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
 
 use futures::stream::Stream;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -99,11 +98,15 @@ pub fn to_stream(
             }
         }
 
-        set_permissions(&target_path, target_perms);
+        let set_result = set_permissions(&target_path, target_perms);
+
+        if let Err(e) = set_result {
+            error!("Could not set file permissions on '{}': {}", &target_path_str, e)
+        }
 
         FileEvent {
             source_name: target_name.clone(),
-            path: PathBuf::from(target_path)
+            path: target_path
         }
     })
 }
