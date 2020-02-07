@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-dispatcher"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "actix-files",
  "actix-http",
@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-sftp-scanner"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "actix-rt",
  "actix-web",

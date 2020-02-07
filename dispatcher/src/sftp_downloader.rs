@@ -237,7 +237,13 @@ where
             let stat = match stat_result {
                 Ok(s) => s,
                 Err(e) => {
-                    return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
+                    match e.code() {
+                        0 => {
+                            // unknown error, probably a fault in the SFTP connection
+                            return Err(ErrorKind::DisconnectedError.into())
+                        },
+                        _ => return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
+                    }
                 }
             };
             
@@ -248,6 +254,7 @@ where
                 Err(e) => {
                     match e.code() {
                         0 => {
+                            // unknown error, probably a fault in the SFTP connection
                             return Err(ErrorKind::DisconnectedError.into())
                         },
                         2 => {

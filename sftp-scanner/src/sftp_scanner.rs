@@ -255,16 +255,18 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
 
                 let file_requires_download = if sftp_source.deduplicate {
                     let query_result = conn.query_one(
-                        "select id from dispatcher.sftp_download where source = $1 and path = $2 and size = $3",
+                        "select count(*) from dispatcher.sftp_download where source = $1 and path = $2 and size = $3",
                         &[&sftp_source.name, &path_str, &file_size_db]
                     );
 
                     match query_result {
-                        Ok(_) => {
-                            false
+                        Ok(row) => {
+                            let count: i64 = row.get(0);
+                            count == 0
                         },
                         Err(e) => {
-                            return Err(Error::with_chain(e, "Error querying database"));
+                            let msg = format!("Error querying database: {}", &e);
+                            return Err(Error::with_chain(e, msg));
                         }
                     }
                 } else {
