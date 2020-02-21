@@ -326,7 +326,16 @@ pub fn run(settings: settings::Settings) {
                     })
                     .for_each(|c| {
                         let mut s = c.target.sender.clone();
-                        s.try_send(file_event.clone()).unwrap();
+                        let send_result = s.try_send(file_event.clone());
+
+                        match send_result {
+                            Ok(_) => (),
+                            Err(e) => {
+                                // Could not send file event to target
+                                // TODO: Implement retry mechanism
+                                error!("Could not send event to target handler: {}", e);
+                            }
+                        }
                     });
 
                 futures::future::ok(())

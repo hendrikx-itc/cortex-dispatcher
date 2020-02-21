@@ -55,6 +55,10 @@ objects:
     - name: hash
       data_type: text
       nullable: true
+    primary_key:
+      name: file_pkey
+      columns:
+      - id
     indexes:
     - name: sftp_download_file_index
       unique: false
@@ -97,6 +101,10 @@ objects:
         columns:
         - id
       on_delete: cascade
+    primary_key:
+      name: sftp_download_pkey
+      columns:
+      - id
     indexes:
     - name: sftp_download_file_index
       unique: false
