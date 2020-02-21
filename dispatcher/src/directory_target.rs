@@ -59,10 +59,13 @@ pub fn to_stream(
                         debug!("'{}' copied {} bytes to '{}'", &source_path_str, size, &target_path_str);
                     }
                     Err(e) => {
-                        error!(
-                            "[E01005] Error copying '{}' to '{}': {}",
-                            &source_path_str, &target_path_str, &e
-                        );
+                        if overwrite {
+                            // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                            error!(
+                                "[E01005] Error copying '{}' to '{}': {}",
+                                &source_path_str, &target_path_str, &e
+                            );
+                        }
                     }
                 }
             },
@@ -74,10 +77,13 @@ pub fn to_stream(
                         debug!("Hardlinked '{}' to '{}'", &source_path_str, &target_path_str);
                     }
                     Err(e) => {
-                        error!(
-                            "[E01004] Error hardlinking '{}' to '{}': {}",
-                            &source_path_str, &target_path_str, &e
-                        );
+                        if overwrite {
+                            // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                            error!(
+                                "[E01004] Error hardlinking '{}' to '{}': {}",
+                                &source_path_str, &target_path_str, &e
+                            );
+                        }
                     }
                 }
             },
@@ -89,10 +95,13 @@ pub fn to_stream(
                         debug!("Symlinked '{}' to '{}'", &source_path_str, &target_path_str);
                     }
                     Err(e) => {
-                        error!(
-                            "[E01007] Error symlinking '{}' to '{}': {}",
-                            &source_path_str, &target_path_str, &e
-                        );
+                        if overwrite {
+                            // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                            error!(
+                                "[E01007] Error symlinking '{}' to '{}': {}",
+                                &source_path_str, &target_path_str, &e
+                            );
+                        }
                     }
                 }
             }
