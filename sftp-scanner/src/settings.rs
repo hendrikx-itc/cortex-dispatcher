@@ -25,6 +25,8 @@ pub struct SftpSource {
     #[serde(default = "default_false")]
     pub remove: bool,
     pub scan_interval: u64,
+    #[serde(default = "default_false")]
+    pub recurse: bool
 }
 
 fn default_false() -> bool {
@@ -75,8 +77,9 @@ impl Default for Settings {
                     regex: Regex::new("^.*\\.xml$").unwrap(),
                     directory: "upload/red".to_string(),
                     deduplicate: false,
-            remove: true,
+                    remove: true,
                     scan_interval: 3000
+                    recurse: false
                 },
                 SftpSource {
                     name: "blue".to_string(),
@@ -87,8 +90,9 @@ impl Default for Settings {
                     regex: Regex::new("^.*\\.xml$").unwrap(),
                     directory: "upload/blue".to_string(),
                     deduplicate: false,
-            remove: true,
-                    scan_interval: 2000
+                    remove: true,
+                    scan_interval: 2000,
+                    recurse: true
                 },
             ],
             prometheus_push: None,

@@ -216,7 +216,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
 
         let file_name = path.file_name().unwrap().to_str().unwrap();
 
-        if stat.is_dir() {
+        if stat.is_dir() && sftp_source.recurse {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
             let result = scan_directory(stop, sftp_source, &dir, sftp_connection.clone(), conn, sender);
