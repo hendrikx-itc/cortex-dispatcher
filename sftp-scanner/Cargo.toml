@@ -1,6 +1,6 @@
 [package]
 name = "cortex-sftp-scanner"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
 description = "A service to scan for files on SFTP servers and enqueue jobs for the Cortex dispatcher."
