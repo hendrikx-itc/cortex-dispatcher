@@ -78,8 +78,8 @@ impl Default for Settings {
                     directory: "upload/red".to_string(),
                     deduplicate: false,
                     remove: true,
-                    scan_interval: 3000
-                    recurse: false
+                    scan_interval: 3000,
+                    recurse: false,
                 },
                 SftpSource {
                     name: "blue".to_string(),
@@ -92,7 +92,7 @@ impl Default for Settings {
                     deduplicate: false,
                     remove: true,
                     scan_interval: 2000,
-                    recurse: true
+                    recurse: true,
                 },
             ],
             prometheus_push: None,
