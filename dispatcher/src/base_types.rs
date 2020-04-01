@@ -54,7 +54,6 @@ impl Notify for RabbitMQNotify {
 
                 match render_result {
                     Ok(message_str) => {
-                        let message_str_log = message_str.clone();
                         Either::Left(
                             channel
                                 .basic_publish(

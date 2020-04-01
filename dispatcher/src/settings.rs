@@ -180,7 +180,6 @@ pub struct Postgresql {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpServer {
     pub address: std::net::SocketAddr,
-    pub static_content_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -269,7 +268,6 @@ impl Default for Settings {
             },
             http_server: HttpServer {
                 address: "0.0.0.0:56008".parse().unwrap(),
-                static_content_path: PathBuf::from("static-web"),
             },
             scan_interval: 60_000
         }

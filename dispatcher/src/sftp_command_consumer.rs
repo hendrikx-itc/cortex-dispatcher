@@ -14,107 +14,42 @@ use crate::metrics;
 
 use cortex_core::SftpDownload;
 
-use failure::{Fail, Context, Backtrace};
-
-#[derive(Debug)]
-struct ConsumeError {
-    inner: Context<ConsumeErrorKind>
-}
-
-impl From<ConsumeErrorKind> for ConsumeError {
-    fn from(kind: ConsumeErrorKind) -> ConsumeError {
-        ConsumeError { inner: Context::new(kind) }
-    }
-}
-
-impl From<Context<ConsumeErrorKind>> for ConsumeError {
-    fn from(inner: Context<ConsumeErrorKind>) -> ConsumeError {
-        ConsumeError { inner: inner }
-    }
+#[derive(Clone, Debug)]
+pub enum ConsumeError {
+    ChannelFull,
+    ChannelDisconnected,
+    DeserializeError,
+	RabbitMQError(lapin::Error)
 }
 
 impl From<lapin::Error> for ConsumeError {
-    fn from(_err: lapin::Error) -> ConsumeError {
-		ConsumeError::from(ConsumeErrorKind::UnknownStreamError)
+    fn from(err: lapin::Error) -> ConsumeError {
+		ConsumeError::RabbitMQError(err)
 	}
-}
-
-impl ConsumeError {
-    pub fn kind(&self) -> ConsumeErrorKind {
-        *self.inner.get_context()
-    }
-}
-
-impl Fail for ConsumeError {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.inner.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.inner.backtrace()
-    }
 }
 
 impl Display for ConsumeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.inner, f)
+		match *self {
+			ConsumeError::RabbitMQError(ref e) => e.fmt(f),
+			_ => f.write_str("ConsumeError"),
+		}
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Fail)]
-enum ConsumeErrorKind {
-    ChannelFull,
-    ChannelDisconnected,
-    DeserializeError,
-    UnknownStreamError,
-	NackFailure,
-	SetupError
-}
-
-impl Display for ConsumeErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		f.write_str("ConsumeErrorKind")
-    }
-}
-
-async fn setup_message_responder(channel: lapin::Channel, mut ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>) {
+async fn setup_message_responder(channel: lapin::Channel, mut ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>) -> Result<(), ConsumeError> {
 	while let Some(message_response) = ack_receiver.next().await {
 		match message_response {
 			MessageResponse::Ack { delivery_tag } => {
-				channel.basic_ack(delivery_tag, BasicAckOptions { multiple: false }).await;
+				channel.basic_ack(delivery_tag, BasicAckOptions { multiple: false }).await?;
 			},
 			MessageResponse::Nack { delivery_tag } => {
-				channel.basic_nack(delivery_tag, BasicNackOptions { multiple: false, requeue: false }).await;
+				channel.basic_nack(delivery_tag, BasicNackOptions { multiple: false, requeue: false }).await?;
 			}
 		}
 	}
-}
 
-#[derive(Debug)]
-pub enum SftpCommandConsumeError {
-	RabbitMQError(lapin::Error)
-}
-
-impl fmt::Display for SftpCommandConsumeError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match *self {
-			SftpCommandConsumeError::RabbitMQError(ref e) => e.fmt(f),
-		}
-	}
-}
-
-impl std::error::Error for SftpCommandConsumeError {
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-		match *self {
-			SftpCommandConsumeError::RabbitMQError(ref e) => Some(e),
-		}
-	}
-}
-
-impl From<lapin::Error> for SftpCommandConsumeError {
-	fn from(err: lapin::Error) -> SftpCommandConsumeError {
-		SftpCommandConsumeError::RabbitMQError(err)
-	}
+	Ok(())
 }
 
 pub async fn start(
@@ -122,7 +57,7 @@ pub async fn start(
     sftp_source_name: String,
 	ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
     command_sender: Sender<(u64, SftpDownload)>
-) -> Result<(), SftpCommandConsumeError> {
+) -> Result<(), ConsumeError> {
     let sftp_source_name_2 = sftp_source_name.clone();
 
 	let channel_resp = amqp_client.create_channel().await;
@@ -132,7 +67,7 @@ pub async fn start(
 	let id = channel.id();
 	info!("Created channel with id {}", id);
 
-	//tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
+	tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
 
 	let consumer_tag = "cortex-dispatcher";
 	let queue_name = format!("source.{}", &sftp_source_name);
@@ -140,7 +75,7 @@ pub async fn start(
 	let queue_declare_result = channel
 		.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default()).await;
 
-	let queue = queue_declare_result.unwrap();
+	let _queue = queue_declare_result.unwrap();
 
 	info!("channel {} declared queue '{}'", id, &queue_name);
 	let routing_key = format!("source.{}", &sftp_source_name);
@@ -182,47 +117,39 @@ pub async fn start(
 					Ok(_) => Ok(()),
 					Err(e) => {
 						match e {
-							TrySendError::Disconnected(_) => Err(ConsumeErrorKind::ChannelDisconnected),
-							TrySendError::Full(_) => Err(ConsumeErrorKind::ChannelFull)
+							TrySendError::Disconnected(_) => Err(ConsumeError::ChannelDisconnected),
+							TrySendError::Full(_) => Err(ConsumeError::ChannelFull)
 						}
 					}
 				}
 			},
-			Err(e) => {
-				Err(ConsumeErrorKind::DeserializeError)
+			Err(_e) => {
+				Err(ConsumeError::DeserializeError)
 			}
 		};
 
 		if let Err(e) = result {
 			let requeue_message = match e {
-				ConsumeErrorKind::DeserializeError => {
+				ConsumeError::DeserializeError => {
 					error!("Error deserializing message: {}", e);
 					false
 				}
-				ConsumeErrorKind::ChannelFull => {
+				ConsumeError::ChannelFull => {
 					error!("Error sending command on channel: channel full");
 					// Put the message back on the queue, because we could temporarily not process it
 					true
 				},
-				ConsumeErrorKind::ChannelDisconnected => {
+				ConsumeError::ChannelDisconnected => {
 					error!("Channel disconnected");
 					true
 				},
-				ConsumeErrorKind::UnknownStreamError => {
-					error!("Unknown stream error");
-					true
-				},
-				ConsumeErrorKind::NackFailure => {
-					error!("Error sending nack");
-					true
-				},
-				ConsumeErrorKind::SetupError => {
-					error!("Setup error should not occur here");
+				ConsumeError::RabbitMQError(e) => {
+					error!("{}", e);
 					true
 				}
 			};
 
-			channel.basic_nack(message.delivery_tag, BasicNackOptions{ multiple: false, requeue: requeue_message}).await;
+			channel.basic_nack(message.delivery_tag, BasicNackOptions{ multiple: false, requeue: requeue_message}).await?;
 		}
 	}
 

@@ -1332,9 +1332,9 @@ checksum = "a91d884b6667cd606bb5a69aa0c99ba811a115fc68915e7056ec08a46e93199a"
 
 [[package]]
 name = "lapin"
-version = "0.34.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d54f9cbd21fa2244844664466050072a014e89fe98dcf9c948882d7a0d95ba32"
+checksum = "b8aad87dc5c1910b9134daf5d8dece8c1ea960fb68579fa29863015b0d897943"
 dependencies = [
  "amq-protocol",
  "amq-protocol-codegen",
@@ -1879,11 +1879,12 @@ checksum = "5894c618ce612a3fa23881b152b608bafb8c56cfc22f434a3ba3120b40f7b587"
 
 [[package]]
 name = "pinky-swear"
-version = "1.1.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4cdbc3f8b8e6c8adbca01bfff1bef045e727c99fe1c2de0d42027dec4dad752"
+checksum = "5172a1a2c2c999707858d5a403b51424da86f30bf19ac31039ebafc97fd1fd0f"
 dependencies = [
  "doc-comment",
+ "log",
  "parking_lot 0.10.0",
 ]
 

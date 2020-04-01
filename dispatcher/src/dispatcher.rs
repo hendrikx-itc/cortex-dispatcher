@@ -102,7 +102,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
 
     // List of sources with their file event channels
-    let sources: Arc<Mutex<Vec<Source>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut sources: Vec<Source> = Vec::new();
 
     let connections: Arc<Mutex<Vec<Connection>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -136,10 +136,8 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     settings.directory_sources.iter().for_each(|directory_source| { 
         let (sender, receiver) = unbounded_channel();
-
-        let guard = sources.lock();
         
-        guard.unwrap().push(
+        sources.push(
             Source {
                 name: directory_source.name.clone(),
                 receiver: receiver
@@ -196,16 +194,17 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let sftp_join_handles: Arc<Mutex<Vec<thread::JoinHandle<std::result::Result<(), sftp_downloader::Error>>>>> = Arc::new(Mutex::new(Vec::new()));
 
-    struct SftpSourceChannels {
+    struct SftpSourceSend {
         pub sftp_source: settings::SftpSource,
         pub cmd_sender: Sender<(u64, SftpDownload)>,
         pub cmd_receiver: Receiver<(u64, SftpDownload)>,
         pub file_event_sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
-        pub file_event_receiver: tokio::sync::mpsc::UnboundedReceiver<FileEvent>,
         pub stop_receiver: oneshot::Receiver<()>
     }
 
-    let sftp_source_channels: Vec<SftpSourceChannels> = settings.sftp_sources.iter().map(|sftp_source| {
+    let mut sftp_source_senders: Vec<SftpSourceSend> = Vec::new();    
+    
+    settings.sftp_sources.iter().for_each(|sftp_source| {
         let (cmd_sender, cmd_receiver) = bounded::<(u64, SftpDownload)>(1000);
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
@@ -217,20 +216,23 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             }
         }));
 
-        SftpSourceChannels {
-            sftp_source: sftp_source.clone(),
-            cmd_sender: cmd_sender,
-            cmd_receiver: cmd_receiver,
-            file_event_sender: file_event_sender,
-            file_event_receiver: file_event_receiver,
-            stop_receiver: stop_receiver
-        }
-    }).collect();
+        sftp_source_senders.push(
+            SftpSourceSend {
+                sftp_source: sftp_source.clone(),
+                cmd_sender: cmd_sender,
+                cmd_receiver: cmd_receiver,
+                file_event_sender: file_event_sender,
+                stop_receiver: stop_receiver,
+            }
+        );
+
+        sources.push(Source {
+            name: sftp_source.name.clone(),
+            receiver: file_event_receiver
+        });    
+    });
 
     let jhs = sftp_join_handles.clone();
-    let th_sources = Arc::clone(&sources);
-
-    let stop_clone = Arc::clone(&stop);
 
     let l_settings = settings.clone();
 
@@ -242,7 +244,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
         let client = conn_result.unwrap();
 
-        sftp_source_channels.into_iter().for_each(|channels| {
+        sftp_source_senders.into_iter().for_each(|channels| {
             let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
 
             for n in 0..channels.sftp_source.thread_count {
@@ -263,13 +265,6 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                 info!("Started {} download thread {}", &channels.sftp_source.name, n + 1);
             }
 
-            th_sources.lock().unwrap().push(Source {
-                name: channels.sftp_source.name.clone(),
-                receiver: channels.file_event_receiver
-            });
-
-            let name = channels.sftp_source.name.clone();
-
             let stream = sftp_command_consumer::start(
                 client.clone(),
                 channels.sftp_source.name.clone(),
@@ -280,7 +275,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             tokio::spawn(stream);
         });
 
-        Arc::try_unwrap(sources).expect("still users of sources").into_inner().unwrap().into_iter().for_each(|mut source| {
+        sources.into_iter().for_each(|mut source| {
             // Filter connections belonging to this source
             let source_connections: Vec<Connection> = connections.lock().unwrap()
                 .iter()
@@ -329,18 +324,8 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         });
     });
 
-    let cortex_config = CortexConfig {
-        sftp_sources: Arc::new(Mutex::new(settings.sftp_sources)),
-        directory_targets: Arc::new(Mutex::new(settings.directory_targets)),
-        connections: Arc::new(Mutex::new(settings.connections)),
-    };
-
-    let static_content_path = settings.http_server.static_content_path.clone();
-
     let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(
         settings.http_server.address,
-        static_content_path,
-        cortex_config,
     );
 
     stop.lock().unwrap().add_command(Box::new(move || {

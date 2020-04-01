@@ -100,5 +100,8 @@ fn main() {
 
     info!("Configuration loaded");
 
-    dispatcher::run(settings);
+    match dispatcher::run(settings) {
+        Ok(_) => (),
+        Err(e) => error!("{}", e)
+    }
 }

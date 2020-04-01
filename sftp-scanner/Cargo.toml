@@ -16,7 +16,7 @@ env_logger = "0.7"
 failure = "0.1"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
-lapin = "0.34"
+lapin = "0.35"
 log = "0.4"
 owning_ref = "0.4"
 regex = "1.3"
