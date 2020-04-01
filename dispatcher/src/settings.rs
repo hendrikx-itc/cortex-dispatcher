@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
+#[cfg(target_os = "linux")]
 use inotify::WatchMask;
 
 extern crate regex;
@@ -67,6 +68,7 @@ pub enum FileSystemEvent {
     AllEvents
 }
 
+#[cfg(target_os = "linux")]
 impl FileSystemEvent {
     pub fn watch_mask(&self) -> WatchMask {
         match self {

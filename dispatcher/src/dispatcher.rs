@@ -9,16 +9,15 @@ extern crate inotify;
 
 use failure::{Error, err_msg};
 
-extern crate lapin_futures;
-use lapin_futures::{ConnectionProperties};
+extern crate lapin;
+use lapin::{ConnectionProperties};
 
-extern crate tokio_executor;
-use tokio::prelude::Stream;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio_executor::enter;
 use tokio::sync::oneshot;
+use tokio::stream::StreamExt;
 
-use futures::future::{Future, ok};
+use futures::task::Context;
+use futures_util::compat::Compat01As03;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
@@ -32,13 +31,13 @@ use cortex_core::{wait_for, SftpDownload, StopCmd};
 
 use crate::base_types::{Connection, RabbitMQNotify, Target, CortexConfig, Notify, Source};
 
+use crate::directory_source::{start_directory_sweep, start_local_intake_thread};
 #[cfg(target_os = "linux")]
-use crate::directory_source::{start_directory_sources, start_directory_sweep, start_local_intake_thread};
+use crate::directory_source::start_directory_sources;
 
 use crate::directory_target::to_stream;
 use crate::event::{FileEvent, EventDispatcher};
 use crate::http_server::start_http_server;
-use crate::metrics_collector::metrics_collector;
 use crate::persistence::PostgresPersistence;
 use crate::settings;
 use crate::sftp_downloader;
@@ -47,20 +46,25 @@ use crate::base_types::MessageResponse;
 use crate::local_storage::LocalStorage;
 
 fn stream_consuming_future(
-    stream: Box<dyn futures::Stream<Item = FileEvent, Error = ()> + Send>,
-) -> Box<dyn futures::Future<Item = (), Error = ()> + Send> {
-    Box::new(stream.for_each(|_| futures::future::ok(())))
+    mut stream: impl futures::Stream<Item = FileEvent> + Send + std::marker::Unpin,
+) -> impl futures::Future<Output=()> + Send {
+    async move {
+        while let Some(_) = tokio::stream::StreamExt::next(&mut stream).await {
+        }
+    }
 }
 
-fn connect_channel(
+async fn connect_channel(
     addr: &str,
-) -> impl Future<Item = lapin_futures::Channel, Error = Error> + Send + 'static {
-    lapin_futures::Client::connect(
+) -> Result<lapin::Channel, lapin::Error> {
+    let connect_result = lapin::Connection::connect(
         addr,
         lapin::ConnectionProperties::default(),
-    )
-    .map_err(Error::from)
-    .and_then(|client| client.create_channel().map_err(Error::from))
+    ).await;
+
+    let connection = connect_result.unwrap();
+
+    connection.create_channel().await
 }
 
 struct Stop {
@@ -89,28 +93,10 @@ impl Stop {
     fn add_command(&mut self, cmd: StopCmd) {
         self.stop_commands.push(cmd);
     }
-
-    fn make_stoppable_stream<S>(&mut self, stream: S, name: String) -> impl Future<Item=(), Error=()>
-        where S: Future<Item=(), Error=()> {
-        let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
-
-        self.stop_commands.push(Box::new(move || {
-            match stop_sender.send(()) {
-                Ok(_) => (),
-                Err(e) => error!("[E02009] Error sending stop signal: {:?}", e)
-            }
-        }));
-
-        stream
-            // select2(stop_receiver.into_future())
-            .map(|_| debug!("End stream"))
-            .map_err(move |_| error!("[E02010] Error in stoppable stream {}", &name))
-    }
 }
 
-pub fn run(settings: settings::Settings) {
-    let mut entered = enter().expect("Failed to claim thread");
-    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+pub fn run(settings: settings::Settings) -> Result<(), Error> {
+    let mut runtime = tokio::runtime::Runtime::new()?;
 
     // List of targets with their file event channels
     let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
@@ -124,24 +110,18 @@ pub fn run(settings: settings::Settings) {
     let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
 
     settings.directory_targets.iter().for_each(|target_conf| {
-        let (stoppable_stream, stop_cmd, target) = setup_directory_target(target_conf);
+        let (mut stream, stop_cmd, target) = setup_directory_target(target_conf);
 
         stop.lock().unwrap().add_command(stop_cmd);
 
-        runtime.spawn(stoppable_stream);
+        runtime.spawn(async move {
+            while let Some(file_event) = stream.next().await {
+
+            }
+        });
 
         targets.insert(target_conf.name.clone(), target);
     });
-
-    let prometheus_push_conf = settings.prometheus_push.clone();
-
-    if let Some(conf) = prometheus_push_conf {
-        let metrics_coll = metrics_collector(conf.gateway.clone(), conf.interval);
-
-        runtime.spawn(stop.lock().unwrap().make_stoppable_stream(metrics_coll, String::from("metrics collector")));
-
-        info!("Prometheus metrics push collector configured");
-    };
 
     let connection_manager =
         PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
@@ -252,12 +232,16 @@ pub fn run(settings: settings::Settings) {
 
     let stop_clone = Arc::clone(&stop);
 
-    let connect_future = lapin_futures::Client::connect(
-        &settings.command_queue.address,
-        ConnectionProperties::default(),
-    )
-    .map_err(failure::Error::from)
-    .and_then(move |client| {
+    let l_settings = settings.clone();
+
+    let sftp_sources_join_handle = runtime.spawn(async move {
+        let conn_result = lapin::Connection::connect(
+            &l_settings.command_queue.address,
+            ConnectionProperties::default(),
+        ).await;
+
+        let client = conn_result.unwrap();
+
         sftp_source_channels.into_iter().for_each(|channels| {
             let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
 
@@ -286,19 +270,17 @@ pub fn run(settings: settings::Settings) {
 
             let name = channels.sftp_source.name.clone();
 
-            let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), ack_receiver, channels.cmd_sender.clone())
-                //.select2(channels.stop_receiver.into_future())
-                .map(|_| debug!("End SFTP command stream"))
-                .map_err(move |_| error!("[E02007] Error in AMQP stream '{}'", &name));
+            let stream = sftp_command_consumer::start(
+                client.clone(),
+                channels.sftp_source.name.clone(),
+                ack_receiver, channels.cmd_sender.clone()
+            );
 
             debug!("Spawning AMQP stream");
             tokio::spawn(stream);
         });
 
-        ok(())
-    })
-    .and_then(move |_| {
-        Arc::try_unwrap(sources).expect("still users of sources").into_inner().unwrap().into_iter().for_each(|source| {
+        Arc::try_unwrap(sources).expect("still users of sources").into_inner().unwrap().into_iter().for_each(|mut source| {
             // Filter connections belonging to this source
             let source_connections: Vec<Connection> = connections.lock().unwrap()
                 .iter()
@@ -308,49 +290,44 @@ pub fn run(settings: settings::Settings) {
 
             let source_name = source.name.clone();
 
-            let stream_future = source.receiver.map_err(Error::from).for_each(move |file_event| {
-                debug!(
-                    "FileEvent from {}: {}",
-                    &source_name,
-                    file_event.path.to_string_lossy()
-                );
-
-                source_connections
-                    .deref()
-                    .iter()
-                    .filter(|c| {
-                        match &c.filter {
-                            Some(f) => f.file_matches(&file_event.path),
-                            None => true
-                        }
-                    })
-                    .for_each(|c| {
-                        let mut s = c.target.sender.clone();
-                        let send_result = s.try_send(file_event.clone());
-
-                        match send_result {
-                            Ok(_) => (),
-                            Err(e) => {
-                                // Could not send file event to target
-                                // TODO: Implement retry mechanism
-                                error!("Could not send event to target handler: {}", e);
+            let stream_future = async move {
+                while let Some(file_event) = tokio::stream::StreamExt::next(&mut source.receiver).await {
+                    debug!(
+                        "FileEvent from {}: {}",
+                        &source.name,
+                        file_event.path.to_string_lossy()
+                    );
+    
+                    source_connections
+                        .deref()
+                        .iter()
+                        .filter(|c| {
+                            match &c.filter {
+                                Some(f) => f.file_matches(&file_event.path),
+                                None => true
                             }
-                        }
-                    });
+                        })
+                        .for_each(|c| {
+                            let s = c.target.sender.clone();
+                            let send_result = s.send(file_event.clone());
+    
+                            match send_result {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    // Could not send file event to target
+                                    // TODO: Implement retry mechanism
+                                    error!("Could not send event to target handler: {}", e);
+                                }
+                            }
+                        });    
+                }
+            };
 
-                futures::future::ok(())
-            }).map_err(|_| ());
+            debug!("Spawing local event dispatcher for {}", &source_name);
 
-            debug!("Spawing local event dispatcher for {}", &source.name);
-
-            tokio::spawn(stop_clone.lock().unwrap().make_stoppable_stream(stream_future, String::from("local event connection")));
+            tokio::spawn(stream_future);
         });
-
-        ok(())
-    })
-    .map_err(|_| ());
-
-    runtime.spawn(connect_future);
+    });
 
     let cortex_config = CortexConfig {
         sftp_sources: Arc::new(Mutex::new(settings.sftp_sources)),
@@ -374,7 +351,7 @@ pub fn run(settings: settings::Settings) {
         actix_system.stop();
     }));
 
-    let spawn_signal_handler = futures::future::poll_fn(move || -> futures::Poll<(), Error> {
+    let spawn_signal_handler = futures::future::poll_fn(move |_cx: &mut Context<'_>| -> futures::task::Poll<Result<(), Error>> {
         let s_stop = Arc::clone(&stop);
 
         let unwrap_result = Arc::try_unwrap(s_stop);
@@ -382,17 +359,19 @@ pub fn run(settings: settings::Settings) {
         match unwrap_result {
             Ok(unwrapped) => {
                 tokio::spawn(setup_signal_handler(unwrapped.into_inner().unwrap()));
-                Ok(futures::Async::Ready(()))
+                futures::task::Poll::Ready(Ok(()))
             },
-            Err(_) => Err(err_msg("Could not unwrap Arc"))
+            Err(_) => {
+                futures::task::Poll::Ready(Err(err_msg("Could not unwrap Arc")))
+            }
         }
-    }).map_err(|_| ());
+    });
 
     runtime.spawn(spawn_signal_handler);
 
     // Wait until all tasks have finished
-    entered
-        .block_on(runtime.shutdown_on_idle())
+    runtime
+        .block_on(sftp_sources_join_handle)
         .expect("Shutdown cannot error");
 
     info!("Tokio runtime shutdown");
@@ -409,9 +388,11 @@ pub fn run(settings: settings::Settings) {
     Arc::try_unwrap(sftp_join_handles).expect("still users of handles").into_inner().unwrap().into_iter().for_each(|jh| {
         wait_for(jh, "sftp download");
     });
+
+    Ok(())
 }
 
-fn setup_signal_handler(stop: Stop) -> impl Future<Item = (), Error = ()> + Send + 'static {
+fn setup_signal_handler(stop: Stop) -> impl futures::future::Future<Output=()> + Send + 'static {
     let signals = Signals::new(&[
         signal_hook::SIGHUP,
         signal_hook::SIGTERM,
@@ -419,66 +400,55 @@ fn setup_signal_handler(stop: Stop) -> impl Future<Item = (), Error = ()> + Send
         signal_hook::SIGQUIT,
     ]).unwrap();
 
-    let signal_stream = signals.into_async().unwrap().into_future();
+    async {
+        let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
 
-    signal_stream
-        .map(move |sig| {
-            info!("signal: {}", sig.0.unwrap());
-
-            stop.stop();
-        })
-        .map_err(|e| panic!("{}", e.0))
+        while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
+            if let Some(s) = signal {
+                info!("signal: {}", s);
+                //local_stop.stop();  
+            }
+        }
+    }
 }
 
-fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Future<Item=(), Error=()>, StopCmd, Arc<Target>) {
+fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl tokio::stream::Stream<Item=FileEvent>, StopCmd, Arc<Target>) {
     let (sender, receiver) = unbounded_channel();
 
     let target_stream = to_stream(target_conf, receiver);
 
-    let target_stream = match &target_conf.notify {
-        Some(conf) => match conf {
-            settings::Notify::RabbitMQ(notify_conf) => {
-                debug!("Connecting notifier to directory target stream");
+    // let target_stream = match &target_conf.notify {
+    //     Some(conf) => match conf {
+    //         settings::Notify::RabbitMQ(notify_conf) => async {
+    //             debug!("Connecting notifier to directory target stream");
 
-                let amqp_channel = connect_channel(&notify_conf.address);
+    //             let amqp_channel_result = connect_channel(&notify_conf.address).await;
+    //             let amqp_channel = amqp_channel_result.unwrap();
 
-                let message_template = notify_conf.message_template.clone();
-                let exchange = notify_conf.exchange.clone();
-                let routing_key = notify_conf.routing_key.clone();
+    //             let message_template = notify_conf.message_template.clone();
+    //             let exchange = notify_conf.exchange.clone();
+    //             let routing_key = notify_conf.routing_key.clone();
 
-                let address = notify_conf.address.clone();
+    //             let address = notify_conf.address.clone();
 
-                Box::new(
-                    amqp_channel
-                        .map_err(move |e| {
-                            error!("[E01008] Error connecting to AMQP channel {}: {}", address, e);
-                        })
-                        .and_then(|channel| {
-                            debug!("Notifying on AMQP queue");
+    //             debug!("Notifying on AMQP queue");
 
-                            let notify = RabbitMQNotify {
-                                message_template: message_template,
-                                channel: channel,
-                                exchange: exchange,
-                                routing_key: routing_key,
-                            };
+    //             let notify = RabbitMQNotify {
+    //                 message_template: message_template,
+    //                 channel: amqp_channel,
+    //                 exchange: exchange,
+    //                 routing_key: routing_key,
+    //             };
 
-                            stream_consuming_future(notify.and_then_notify(target_stream))
-                        }),
-                )
-            }
-        },
-        None => stream_consuming_future(Box::new(target_stream)),
-    };
+    //             stream_consuming_future(notify.and_then_notify(target_stream))
+    //         }
+    //     },
+    //     None => stream_consuming_future(target_stream),
+    // };
 
     let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
 
     let name = target_conf.name.clone();
-
-    let stoppable_stream = target_stream
-        //.select2(stop_receiver)
-        .map(|_result| debug!("End directory target stream"))
-        .map_err(move |_| error!("[E02006] Error in directory target stream '{}'", &name));
 
     let stop_cmd = Box::new(move || {
         stop_sender.send(()).unwrap();
@@ -489,6 +459,6 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl Futu
         sender: sender,
     });
 
-    (stoppable_stream, stop_cmd, target)
+    (target_stream, stop_cmd, target)
 }
 

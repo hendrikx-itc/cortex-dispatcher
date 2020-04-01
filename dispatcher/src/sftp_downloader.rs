@@ -59,7 +59,7 @@ where
         receiver: Receiver<(u64, SftpDownload)>,
         mut ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
         config: settings::SftpSource,
-        mut sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
+        sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         local_storage: LocalStorage<T>,
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
@@ -140,7 +140,7 @@ where
                                 }
 
                                 // Notify about new data from this SFTP source
-                                let send_result = sender.try_send(file_event);
+                                let send_result = sender.send(file_event);
 
                                 match send_result {
                                     Ok(_) => {

@@ -1,22 +1,16 @@
 use std::{fmt, fmt::Display};
-use std::time::Duration;
 
-extern crate lapin_futures;
+extern crate lapin;
 
-use futures::future::Future;
+use futures::StreamExt;
 
-use lapin_futures::options::{BasicConsumeOptions, QueueBindOptions, QueueDeclareOptions};
-use lapin_futures::types::FieldTable;
-
-use tokio::prelude::*;
-
-use tokio_retry::RetryIf;
-use tokio_retry::strategy::{ExponentialBackoff, jitter};
+use lapin::options::{BasicConsumeOptions, QueueBindOptions, QueueDeclareOptions, BasicNackOptions, BasicAckOptions};
+use lapin::types::FieldTable;
 
 use crossbeam_channel::{Sender, TrySendError};
 
-use crate::metrics;
 use crate::base_types::MessageResponse;
+use crate::metrics;
 
 use cortex_core::SftpDownload;
 
@@ -39,8 +33,8 @@ impl From<Context<ConsumeErrorKind>> for ConsumeError {
     }
 }
 
-impl From<lapin_futures::Error> for ConsumeError {
-    fn from(_err: lapin_futures::Error) -> ConsumeError {
+impl From<lapin::Error> for ConsumeError {
+    fn from(_err: lapin::Error) -> ConsumeError {
 		ConsumeError::from(ConsumeErrorKind::UnknownStreamError)
 	}
 }
@@ -83,172 +77,154 @@ impl Display for ConsumeErrorKind {
     }
 }
 
-fn setup_message_responder(channel: lapin_futures::Channel, ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>) -> impl Future<Item=(), Error=()> {
-	ack_receiver.map_err(|e| {
-		error!("Error receiving message response from stream: {}", e)
-	}).for_each(move |message_response| {
+async fn setup_message_responder(channel: lapin::Channel, mut ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>) {
+	while let Some(message_response) = ack_receiver.next().await {
 		match message_response {
 			MessageResponse::Ack { delivery_tag } => {
-				futures::future::Either::A(channel.basic_ack(delivery_tag, false).map_err(|e| {
-					error!("Error sending Ack on AMQP channel: {}", e)
-				}))
+				channel.basic_ack(delivery_tag, BasicAckOptions { multiple: false }).await;
 			},
 			MessageResponse::Nack { delivery_tag } => {
-				futures::future::Either::B(channel.basic_nack(delivery_tag, false, false).map_err(|e| {
-					error!("Error sending Nack on AMQP channel: {}", e)
-				}))
+				channel.basic_nack(delivery_tag, BasicNackOptions { multiple: false, requeue: false }).await;
 			}
 		}
-	})
+	}
 }
 
-pub fn start(
-    amqp_client: lapin_futures::Client,
+#[derive(Debug)]
+pub enum SftpCommandConsumeError {
+	RabbitMQError(lapin::Error)
+}
+
+impl fmt::Display for SftpCommandConsumeError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match *self {
+			SftpCommandConsumeError::RabbitMQError(ref e) => e.fmt(f),
+		}
+	}
+}
+
+impl std::error::Error for SftpCommandConsumeError {
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+		match *self {
+			SftpCommandConsumeError::RabbitMQError(ref e) => Some(e),
+		}
+	}
+}
+
+impl From<lapin::Error> for SftpCommandConsumeError {
+	fn from(err: lapin::Error) -> SftpCommandConsumeError {
+		SftpCommandConsumeError::RabbitMQError(err)
+	}
+}
+
+pub async fn start(
+    amqp_client: lapin::Connection,
     sftp_source_name: String,
 	ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
     command_sender: Sender<(u64, SftpDownload)>
-) -> Box<dyn Future<Item=(), Error=()> + Send> {
+) -> Result<(), SftpCommandConsumeError> {
     let sftp_source_name_2 = sftp_source_name.clone();
 
-	let channel_future = amqp_client.create_channel()
-		.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError));
+	let channel_resp = amqp_client.create_channel().await;
 
-	let future = channel_future.and_then(move |channel| {
-		let ch = channel.clone();
-		let id = channel.id();
-		info!("Created channel with id {}", id);
+	let channel = channel_resp.unwrap();
 
-		tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
+	let id = channel.id();
+	info!("Created channel with id {}", id);
 
-		let consumer_tag = "cortex-dispatcher";
-		let queue_name = format!("source.{}", &sftp_source_name);
-		let stream_handler_queue_name = queue_name.clone();
+	//tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
 
-		let queue_declare_future = channel
-			.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default())
-			.map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError));
+	let consumer_tag = "cortex-dispatcher";
+	let queue_name = format!("source.{}", &sftp_source_name);
 
-		let consume_future = queue_declare_future.and_then(move |queue| {
-			info!("channel {} declared queue '{}'", id, &queue_name);
-			let routing_key = format!("source.{}", &sftp_source_name);
-			let exchange = "amq.direct";
+	let queue_declare_result = channel
+		.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default()).await;
 
-			channel.queue_bind(
-				&queue_name,
-				&exchange,
-				&routing_key,
-				QueueBindOptions::default(),
-				FieldTable::default(),
-			).map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError)).and_then(move |_| {
-				debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
+	let queue = queue_declare_result.unwrap();
 
-				// Setup command consuming stream
-				channel
-					.basic_consume(&queue, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default())
-					.map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError))
-			})
-		});
+	info!("channel {} declared queue '{}'", id, &queue_name);
+	let routing_key = format!("source.{}", &sftp_source_name);
+	let exchange = "amq.direct";
 
-		consume_future.and_then(|stream| {
-			stream.map_err(|_| ConsumeError::from(ConsumeErrorKind::UnknownStreamError)).for_each(move |message| {
-				let action_source_name = sftp_source_name_2.clone();
-				let action_command_sender = command_sender.clone();
-				let or_else_delivery_tag = message.delivery_tag;
+	channel.queue_bind(
+		&queue_name,
+		&exchange,
+		&routing_key,
+		QueueBindOptions::default(),
+		FieldTable::default(),
+	).await?;
 
-				let queue_name = stream_handler_queue_name.clone();
+	debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
 
-				let action = move || {
-					debug!("Received message from AMQP queue '{}'", &queue_name);
-					metrics::MESSAGES_RECEIVED_COUNTER
-						.with_label_values(&[&action_source_name])
-						.inc();
+	// Setup command consuming stream
+	let consume_result = channel.basic_consume(
+		&queue_name, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default()
+	).await;
 
-					let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
+	let mut consumer = consume_result.unwrap();
 
-					match deserialize_result {
-						Ok(sftp_download) => {
-							let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download));
-							
-							match send_result {
-								Ok(_) => Ok(()),
-								Err(e) => {
-									match e {
-										TrySendError::Disconnected(_) => Err(e.context(ConsumeErrorKind::ChannelDisconnected)),
-										TrySendError::Full(_) => Err(e.context(ConsumeErrorKind::ChannelFull))
-									}
-								}
-							}
-						},
-						Err(e) => {
-							Err(e.context(ConsumeErrorKind::DeserializeError))
+	while let Some(message) = consumer.next().await {
+		let message = message.unwrap();
+		let action_command_sender = command_sender.clone();
+
+		debug!("Received message from AMQP queue '{}'", &queue_name);
+		metrics::MESSAGES_RECEIVED_COUNTER
+			.with_label_values(&[&sftp_source_name_2])
+			.inc();
+
+		let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
+
+		let result = match deserialize_result {
+			Ok(sftp_download) => {
+				let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download));
+				
+				match send_result {
+					Ok(_) => Ok(()),
+					Err(e) => {
+						match e {
+							TrySendError::Disconnected(_) => Err(ConsumeErrorKind::ChannelDisconnected),
+							TrySendError::Full(_) => Err(ConsumeErrorKind::ChannelFull)
 						}
 					}
-				};
+				}
+			},
+			Err(e) => {
+				Err(ConsumeErrorKind::DeserializeError)
+			}
+		};
 
-				fn condition(e: &Context<ConsumeErrorKind>) -> bool {
-					match e.get_context() {
-						ConsumeErrorKind::DeserializeError{..} => false,
-						ConsumeErrorKind::ChannelDisconnected{..} => false,
-						_ => true
-					}
-				};
+		if let Err(e) = result {
+			let requeue_message = match e {
+				ConsumeErrorKind::DeserializeError => {
+					error!("Error deserializing message: {}", e);
+					false
+				}
+				ConsumeErrorKind::ChannelFull => {
+					error!("Error sending command on channel: channel full");
+					// Put the message back on the queue, because we could temporarily not process it
+					true
+				},
+				ConsumeErrorKind::ChannelDisconnected => {
+					error!("Channel disconnected");
+					true
+				},
+				ConsumeErrorKind::UnknownStreamError => {
+					error!("Unknown stream error");
+					true
+				},
+				ConsumeErrorKind::NackFailure => {
+					error!("Error sending nack");
+					true
+				},
+				ConsumeErrorKind::SetupError => {
+					error!("Setup error should not occur here");
+					true
+				}
+			};
 
-				let retry_strategy = ExponentialBackoff::from_millis(10)
-					.max_delay(Duration::from_millis(10000))
-					.map(jitter)
-					.take(7);
+			channel.basic_nack(message.delivery_tag, BasicNackOptions{ multiple: false, requeue: requeue_message}).await;
+		}
+	}
 
-				let or_else_ch = ch.clone();
-
-				RetryIf::spawn(retry_strategy, action, condition)
-					.and_then(|_| futures::future::ok(()) )
-					.or_else(move |e| {
-						let map_to_empty = |_| ();
-						let map_to_consume_err = |_| ConsumeError::from(ConsumeErrorKind::NackFailure);
-
-						let requeue_message = match e {
-							tokio_retry::Error::OperationError(er) => {
-								match er.get_context() {
-									ConsumeErrorKind::DeserializeError => {
-										error!("Error deserializing message: {}", er);
-										false
-									}
-									ConsumeErrorKind::ChannelFull => {
-										error!("Error sending command on channel: channel full");
-										// Put the message back on the queue, because we could temporarily not process it
-										true
-									},
-									ConsumeErrorKind::ChannelDisconnected => {
-										error!("Channel disconnected");
-										true
-									},
-									ConsumeErrorKind::UnknownStreamError => {
-										error!("Unknown stream error");
-										true
-									},
-									ConsumeErrorKind::NackFailure => {
-										error!("Error sending nack");
-										true
-									},
-									ConsumeErrorKind::SetupError => {
-										error!("Setup error should not occur here");
-										true
-									}
-								}
-							},
-							tokio_retry::Error::TimerError(te) => {
-								error!("Retry timer error: {}", te);
-								true
-							}
-						};
-
-						or_else_ch.basic_nack(or_else_delivery_tag, false, requeue_message)
-							.map(map_to_empty)
-							.map_err(map_to_consume_err)
-					})
-			})
-		})
-	}).map_err(|_| ());
-
-	Box::new(future)
+	Ok(())
 }

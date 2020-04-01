@@ -2,8 +2,8 @@ use std::os::unix::fs::symlink;
 use std::fs::{hard_link, copy, Permissions, set_permissions};
 use std::os::unix::fs::PermissionsExt;
 
-use futures::stream::Stream;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::stream::StreamExt;
 
 use crate::event::FileEvent;
 use crate::{settings, settings::LocalTargetMethod};
@@ -11,16 +11,14 @@ use crate::{settings, settings::LocalTargetMethod};
 pub fn to_stream(
     settings: &settings::DirectoryTarget,
     receiver: UnboundedReceiver<FileEvent>,
-) -> impl futures::Stream<Item = FileEvent, Error = ()> {
+) -> impl futures::Stream<Item=FileEvent> + std::marker::Unpin {
     let overwrite = settings.overwrite;
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
     let method = settings.method.clone();
     let target_permissions = Permissions::from_mode(settings.permissions);
 
-    receiver.map_err(|e| {
-        error!("[E01006] Error receiving: {}", e);
-    }).map(move |file_event: FileEvent| -> FileEvent {
+    receiver.map(move |file_event: FileEvent| -> FileEvent {
         let source_path_str = file_event.path.to_string_lossy();
         let file_name = file_event.path.file_name().unwrap();
         let target_path = target_directory.join(file_name);

@@ -21,7 +21,7 @@ error_chain! {
 
 pub struct SftpConnection {
     _tcp: TcpStream,
-    pub sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>,
+    pub sftp: OwningHandle<Box<Session>, Box<Sftp>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -44,7 +44,7 @@ impl SftpConnection {
 
         let mut session = Box::new(Session::new().unwrap());
         session.set_compress(config.compress);
-        let handshake_result = session.handshake(&tcp);
+        let handshake_result = session.handshake();
 
         match handshake_result {
             Ok(()) => debug!("SSH handshake succeeded"),

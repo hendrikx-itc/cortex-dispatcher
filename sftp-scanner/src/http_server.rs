@@ -3,7 +3,7 @@ use std::thread;
 use log::{error, info};
 
 use actix_rt;
-use actix_web::{middleware, web, App, HttpServer, Responder};
+use actix_web::{middleware, web, App, HttpServer, Responder, HttpResponse};
 
 use prometheus::{Encoder, TextEncoder};
 
@@ -24,7 +24,7 @@ pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>,
         let server = match bind_result {
             Ok(http_server) => {
                 info!("Web server bound to address: {}", addr);
-                Some(http_server.start())
+                Some(http_server.run())
             },
             Err(e) => {
                 error!("Could not bind to address {}: {}", addr, e);
@@ -49,7 +49,7 @@ pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>,
     (join_handle, system, server)
 }
 
-fn metrics() -> impl Responder {
+async fn metrics() -> impl Responder {
     let metric_families = prometheus::gather();
 
     let encoder = TextEncoder::new();
@@ -63,5 +63,5 @@ fn metrics() -> impl Responder {
         Err(e) => error!("Error encoding metrics: {}", e),
     }
 
-    String::from_utf8(buffer).unwrap()
+    HttpResponse::from(String::from_utf8(buffer).unwrap())
 }

@@ -1,5 +1,3 @@
-#![cfg(target_os = "linux")]
-use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,8 +7,13 @@ use std::thread;
 use std::time::Duration;
 use std::sync::mpsc::{Sender, Receiver};
 
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
+
+#[cfg(target_os = "linux")]
 extern crate inotify;
 
+#[cfg(target_os = "linux")]
 use inotify::{Inotify, WatchMask};
 
 extern crate failure;
@@ -69,6 +72,7 @@ fn visit_files(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Resu
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn construct_watch_mask(events: Vec<settings::FileSystemEvent>) -> WatchMask {
     let mut watch_mask: WatchMask = WatchMask::empty();
 
@@ -79,6 +83,7 @@ fn construct_watch_mask(events: Vec<settings::FileSystemEvent>) -> WatchMask {
     watch_mask
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone)]
 struct InotifyEventContext {
     recursive: bool,
@@ -156,6 +161,7 @@ pub fn start_directory_sweep(
     (join_handle, stop_cmd)
 }
 
+#[cfg(target_os = "linux")]
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
     local_intake_sender: Sender<LocalFileEvent>,
@@ -224,6 +230,7 @@ pub fn start_directory_sources(
     start_inotify_event_thread(inotify, watch_mapping, local_intake_sender)
 }
 
+#[cfg(target_os = "linux")]
 fn start_inotify_event_thread(
     mut inotify: Inotify,
     mut watch_mapping: HashMap<inotify::WatchDescriptor, InotifyEventContext>,

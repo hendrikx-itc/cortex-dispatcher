@@ -15,7 +15,6 @@ mod directory_target;
 mod event;
 mod http_server;
 mod metrics;
-mod metrics_collector;
 mod persistence;
 mod settings;
 mod sftp_downloader;
