@@ -20,7 +20,6 @@ error_chain! {
 }
 
 pub struct SftpConnection {
-    _tcp: TcpStream,
     pub sftp: OwningHandle<Box<Session>, Box<Sftp>>,
 }
 
@@ -44,11 +43,15 @@ impl SftpConnection {
 
         let mut session = Box::new(Session::new().unwrap());
         session.set_compress(config.compress);
+        session.set_tcp_stream(tcp);
         let handshake_result = session.handshake();
 
         match handshake_result {
             Ok(()) => debug!("SSH handshake succeeded"),
-            Err(e) => return Err(Error::with_chain(e, "SSH handshake failed"))
+            Err(e) => {
+                let msg = format!("SSH handshake failed: {}", &e);
+                return Err(Error::with_chain(e, msg))
+            }
         }
 
         let auth_result = match config.key_file {
@@ -76,7 +79,7 @@ impl SftpConnection {
         // OwningHandle is needed to store a value and a reference to that value in the same struct
         let sftp = OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
-        Ok(SftpConnection {_tcp: tcp, sftp})
+        Ok(SftpConnection {sftp})
     }
 
     pub fn connect_loop(config: SftpConfig, stop: Arc<AtomicBool>) -> Result<SftpConnection> {
