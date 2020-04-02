@@ -167,12 +167,6 @@ pub struct CommandQueue {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PrometheusPush {
-    pub gateway: String,
-    pub interval: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Postgresql {
     pub url: String,
 }
@@ -192,7 +186,6 @@ pub struct Settings {
     pub directory_targets: Vec<DirectoryTarget>,
     pub sftp_sources: Vec<SftpSource>,
     pub connections: Vec<Connection>,
-    pub prometheus_push: Option<PrometheusPush>,
     pub postgresql: Postgresql,
     pub http_server: HttpServer,
     #[serde(default = "default_scan_interval")]
@@ -262,7 +255,6 @@ impl Default for Settings {
                 },
             ],
             connections: vec![],
-            prometheus_push: None,
             postgresql: Postgresql {
                 url: "postgresql://postgres:password@127.0.0.1:5432/cortex".to_string(),
             },

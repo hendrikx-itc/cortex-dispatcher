@@ -1,12 +1,12 @@
 storage:
-  directory: /cortex/storage
+  directory: $CORTEX_DATA_ROOT/storage
 
 command_queue:
   address: "amqp://127.0.0.1:5672/%2f"
 
 directory_sources:
   - name: mixed-directory
-    directory: /cortex/incoming
+    directory: $CORTEX_DATA_ROOT/incoming
     recursive: True
     events:
       - CloseWrite
@@ -16,15 +16,15 @@ scan_interval: 5000
 
 directory_targets:
   - name: v5
-    directory: /cortex/storage/v5
+    directory: $CORTEX_DATA_ROOT/storage/v5
     overwrite: false
     permissions: 0o644
   - name: v6
-    directory: /cortex/storage/v6
+    directory: $CORTEX_DATA_ROOT/storage/v6
     overwrite: false
     permissions: 0o644
   - name: red
-    directory: /cortex/storage/red-consumer
+    directory: $CORTEX_DATA_ROOT/storage/red-consumer
     overwrite: false
     permissions: 0o644
     notify:

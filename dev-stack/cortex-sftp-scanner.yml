@@ -26,4 +26,3 @@ postgresql:
 
 http_server:
   address: "0.0.0.0:56009"
-  static_content_path: static-web

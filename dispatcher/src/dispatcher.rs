@@ -324,27 +324,17 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         actix_system.stop();
     }));
 
-    let spawn_signal_handler = futures::future::poll_fn(move |_cx: &mut Context<'_>| -> futures::task::Poll<Result<(), Error>> {
-        let s_stop = Arc::clone(&stop);
+    //let s_stop = Arc::clone(&stop);
 
-        let unwrap_result = Arc::try_unwrap(s_stop);
+    //let unwrapped = Arc::try_unwrap(s_stop)?;
 
-        match unwrap_result {
-            Ok(unwrapped) => {
-                tokio::spawn(setup_signal_handler(unwrapped.into_inner().unwrap()));
-                futures::task::Poll::Ready(Ok(()))
-            },
-            Err(_) => {
-                futures::task::Poll::Ready(Err(err_msg("Could not unwrap Arc")))
-            }
-        }
-    });
-
-    runtime.spawn(spawn_signal_handler);
+    let signal_handler_join_handle = runtime.spawn(
+        setup_signal_handler()
+    );
 
     // Wait until all tasks have finished
-    runtime
-        .block_on(sftp_sources_join_handle)
+    let _result = runtime
+        .block_on(signal_handler_join_handle)
         .expect("Shutdown cannot error");
 
     info!("Tokio runtime shutdown");
@@ -365,7 +355,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     Ok(())
 }
 
-fn setup_signal_handler(stop: Stop) -> impl futures::future::Future<Output=()> + Send + 'static {
+fn setup_signal_handler() -> impl futures::future::Future<Output=()> + Send + 'static {
     let signals = Signals::new(&[
         signal_hook::SIGHUP,
         signal_hook::SIGTERM,

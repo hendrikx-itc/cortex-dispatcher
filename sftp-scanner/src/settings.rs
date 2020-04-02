@@ -34,12 +34,6 @@ fn default_false() -> bool {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PrometheusPush {
-    pub gateway: String,
-    pub interval: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Postgresql {
     pub url: String,
 }
@@ -47,14 +41,12 @@ pub struct Postgresql {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpServer {
     pub address: std::net::SocketAddr,
-    pub static_content_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub command_queue: CommandQueue,
     pub sftp_sources: Vec<SftpSource>,
-    pub prometheus_push: Option<PrometheusPush>,
     pub postgresql: Postgresql,
     pub http_server: HttpServer,
 }
@@ -95,13 +87,11 @@ impl Default for Settings {
                     recurse: true,
                 },
             ],
-            prometheus_push: None,
             postgresql: Postgresql {
                 url: "postgresql://postgres:password@127.0.0.1:5432/cortex".to_string(),
             },
             http_server: HttpServer {
                 address: "0.0.0.0:56008".parse().unwrap(),
-                static_content_path: PathBuf::from("static-web"),
             },
         }
     }
