@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "linux")]
 extern crate inotify;
 
-use failure::{Error, err_msg};
+use failure::{Error};
 
 extern crate lapin;
 use lapin::{ConnectionProperties};
@@ -16,7 +16,6 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::stream::StreamExt;
 
-use futures::task::Context;
 use futures::future::Either;
 use futures_util::compat::Compat01As03;
 
@@ -324,10 +323,6 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         actix_system.stop();
     }));
 
-    //let s_stop = Arc::clone(&stop);
-
-    //let unwrapped = Arc::try_unwrap(s_stop)?;
-
     let signal_handler_join_handle = runtime.spawn(
         setup_signal_handler()
     );
@@ -369,7 +364,6 @@ fn setup_signal_handler() -> impl futures::future::Future<Output=()> + Send + 's
         while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
             if let Some(s) = signal {
                 info!("signal: {}", s);
-                //local_stop.stop();  
             }
         }
     }
