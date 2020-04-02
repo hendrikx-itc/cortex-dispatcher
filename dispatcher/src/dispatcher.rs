@@ -364,6 +364,7 @@ fn setup_signal_handler() -> impl futures::future::Future<Output=()> + Send + 's
         while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
             if let Some(s) = signal {
                 info!("signal: {}", s);
+                break;
             }
         }
     }
