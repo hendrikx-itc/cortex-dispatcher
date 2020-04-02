@@ -11,12 +11,10 @@ use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
 
 pub trait Notify {
-    fn and_then_notify<T>(
+    fn and_then_notify(
         &self,
-        stream: impl futures::StreamExt<Item = Result<FileEvent, ()>> + 'static + Send,
-    ) -> Box<dyn futures::Stream<Item = Result<FileEvent, ()>> + 'static + Send>
-    where
-        T: futures::Stream<Item = Result<FileEvent, ()>> + 'static + Send;
+        stream: impl futures::StreamExt<Item = FileEvent> + 'static + Send + Unpin,
+    ) -> Box<dyn futures::Stream<Item = FileEvent> + 'static + Send + Unpin>;
 }
 
 pub struct RabbitMQNotify {
@@ -27,12 +25,10 @@ pub struct RabbitMQNotify {
 }
 
 impl Notify for RabbitMQNotify {
-    fn and_then_notify<T>(
+    fn and_then_notify(
         &self,
-        stream: impl futures::StreamExt<Item = Result<FileEvent, ()>> + 'static + Send,
-    ) -> Box<dyn futures::Stream<Item = Result<FileEvent, ()>> + 'static + Send>
-    where
-        T: futures::Stream<Item = Result<FileEvent, ()>> + 'static + Send,
+        stream: impl futures::StreamExt<Item = FileEvent> + 'static + Send + Unpin,
+    ) -> Box<dyn futures::Stream<Item = FileEvent> + 'static + Send + Unpin>
     {
         let template_name = "notification";
         let channel = self.channel.clone();
@@ -45,38 +41,32 @@ impl Notify for RabbitMQNotify {
             error!("Error adding template: {}", e);
         }
 
-        Box::new(stream.then(move |item| {
-            if let Ok(file_event) = item {
-                let mut context = Context::new();
-                context.insert("file_path", &file_event.path);
+        Box::new(stream.then(move |file_event| {
+            let mut context = Context::new();
+            context.insert("file_path", &file_event.path);
 
-                let render_result = tera.render(template_name, &context);
+            let render_result = tera.render(template_name, &context);
 
-                match render_result {
-                    Ok(message_str) => {
-                        Either::Left(
-                            channel
-                                .basic_publish(
-                                    &exchange,
-                                    &routing_key,
-                                    BasicPublishOptions::default(),
-                                    message_str.as_bytes().to_vec(),
-                                    BasicProperties::default(),
-                                )
-                                .then(|_r| { futures::future::ok(file_event) })
-                        )
-                    },
-                    Err(e) => {
-                        error!("Error rendering template: {}", e);
-                        Either::Right(
-                            futures::future::ok(file_event)
-                        )
-                    }
+            match render_result {
+                Ok(message_str) => {
+                    Either::Left(
+                        channel
+                            .basic_publish(
+                                &exchange,
+                                &routing_key,
+                                BasicPublishOptions::default(),
+                                message_str.as_bytes().to_vec(),
+                                BasicProperties::default(),
+                            )
+                            .then(|_r| { futures::future::ready(file_event) })
+                    )
+                },
+                Err(e) => {
+                    error!("Error rendering template: {}", e);
+                    Either::Right(
+                        futures::future::ready(file_event)
+                    )
                 }
-            } else {
-                Either::Right(
-                    futures::future::err(())
-                )
             }
         }))
     }

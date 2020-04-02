@@ -17,6 +17,7 @@ use tokio::sync::oneshot;
 use tokio::stream::StreamExt;
 
 use futures::task::Context;
+use futures::future::Either;
 use futures_util::compat::Compat01As03;
 
 use postgres::NoTls;
@@ -29,7 +30,7 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 
 use cortex_core::{wait_for, SftpDownload, StopCmd};
 
-use crate::base_types::{Connection, RabbitMQNotify, Target, CortexConfig, Notify, Source};
+use crate::base_types::{Connection, RabbitMQNotify, Target, Notify, Source};
 
 use crate::directory_source::{start_directory_sweep, start_local_intake_thread};
 #[cfg(target_os = "linux")]
@@ -44,15 +45,6 @@ use crate::sftp_downloader;
 use crate::sftp_command_consumer;
 use crate::base_types::MessageResponse;
 use crate::local_storage::LocalStorage;
-
-fn stream_consuming_future(
-    mut stream: impl futures::Stream<Item = FileEvent> + Send + std::marker::Unpin,
-) -> impl futures::Future<Output=()> + Send {
-    async move {
-        while let Some(_) = tokio::stream::StreamExt::next(&mut stream).await {
-        }
-    }
-}
 
 async fn connect_channel(
     addr: &str,
@@ -110,15 +102,11 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
 
     settings.directory_targets.iter().for_each(|target_conf| {
-        let (mut stream, stop_cmd, target) = setup_directory_target(target_conf);
+        let (future, stop_cmd, target) = setup_directory_target(target_conf);
 
         stop.lock().unwrap().add_command(stop_cmd);
 
-        runtime.spawn(async move {
-            while let Some(file_event) = stream.next().await {
-
-            }
-        });
+        runtime.spawn(future);
 
         targets.insert(target_conf.name.clone(), target);
     });
@@ -397,43 +385,50 @@ fn setup_signal_handler(stop: Stop) -> impl futures::future::Future<Output=()> +
     }
 }
 
-fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl tokio::stream::Stream<Item=FileEvent>, StopCmd, Arc<Target>) {
+fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) {
     let (sender, receiver) = unbounded_channel();
 
-    let target_stream = to_stream(target_conf, receiver);
+    let l_target_conf = target_conf.clone();
 
-    // let target_stream = match &target_conf.notify {
-    //     Some(conf) => match conf {
-    //         settings::Notify::RabbitMQ(notify_conf) => async {
-    //             debug!("Connecting notifier to directory target stream");
+    let mut target_stream = to_stream(&l_target_conf, receiver);
 
-    //             let amqp_channel_result = connect_channel(&notify_conf.address).await;
-    //             let amqp_channel = amqp_channel_result.unwrap();
+    let future = match l_target_conf.notify {
+        Some(conf) => match conf {
+            settings::Notify::RabbitMQ(notify_conf) => Either::Left(async move {
+                debug!("Connecting notifier to directory target stream");
 
-    //             let message_template = notify_conf.message_template.clone();
-    //             let exchange = notify_conf.exchange.clone();
-    //             let routing_key = notify_conf.routing_key.clone();
+                let amqp_channel_result = connect_channel(&notify_conf.address).await;
+                let amqp_channel = amqp_channel_result.unwrap();
 
-    //             let address = notify_conf.address.clone();
+                let message_template = notify_conf.message_template.clone();
+                let exchange = notify_conf.exchange.clone();
+                let routing_key = notify_conf.routing_key.clone();
 
-    //             debug!("Notifying on AMQP queue");
+                debug!("Notifying on AMQP queue");
 
-    //             let notify = RabbitMQNotify {
-    //                 message_template: message_template,
-    //                 channel: amqp_channel,
-    //                 exchange: exchange,
-    //                 routing_key: routing_key,
-    //             };
+                let notify = RabbitMQNotify {
+                    message_template: message_template,
+                    channel: amqp_channel,
+                    exchange: exchange,
+                    routing_key: routing_key,
+                };
 
-    //             stream_consuming_future(notify.and_then_notify(target_stream))
-    //         }
-    //     },
-    //     None => stream_consuming_future(target_stream),
-    // };
+                let mut stream = notify.and_then_notify(target_stream);
+
+                while let Some(_file_event) = stream.next().await {
+                }
+            })
+        },
+        None => {
+            Either::Right(async move {
+                while let Some(_file_event) = target_stream.next().await {
+
+                }
+            })
+        },
+    };
 
     let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
-
-    let name = target_conf.name.clone();
 
     let stop_cmd = Box::new(move || {
         stop_sender.send(()).unwrap();
@@ -444,6 +439,6 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl toki
         sender: sender,
     });
 
-    (target_stream, stop_cmd, target)
+    (future, stop_cmd, target)
 }
 

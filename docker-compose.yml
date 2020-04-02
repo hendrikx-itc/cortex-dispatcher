@@ -47,7 +47,7 @@ services:
 
   adapter:
     image: timescale/prometheus-postgresql-adapter:latest
-    command: ["-pg.host=pg_prometheus", "-pg.password=password", "-pg.prometheus-log-samples"]
+    command: ["-pg-host=pg_prometheus", "-pg-password=password", "-pg-prometheus-log-samples"]
 
   generator:
     build: dev-stack/data-generator

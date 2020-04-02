@@ -60,13 +60,8 @@ connections:
   - source: local-red
     target: red
 
-prometheus:
-  gateway: 127.0.0.1:9091
-  interval: 5000
-
 postgresql:
   url: "postgresql://postgres:password@127.0.0.1:5432/cortex"
 
 http_server:
   address: "0.0.0.0:56008"
-  static_content_path: "dispatcher/static-web/dist"
