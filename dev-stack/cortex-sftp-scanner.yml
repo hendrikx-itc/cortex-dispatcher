@@ -20,6 +20,7 @@ sftp_sources:
     directory: upload/blue
     scan_interval: 2000
     remove: true
+    recurse: true
 
 postgresql:
   url: "postgresql://postgres:password@127.0.0.1:5432/cortex"

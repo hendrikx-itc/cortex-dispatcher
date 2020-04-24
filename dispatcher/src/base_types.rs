@@ -8,7 +8,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::event::FileEvent;
 use crate::settings;
 use lapin::options::BasicPublishOptions;
-use lapin::{BasicProperties, Channel};
+use lapin::{BasicProperties, Channel, CloseOnDrop};
 
 pub trait Notify {
     fn and_then_notify(
@@ -19,7 +19,7 @@ pub trait Notify {
 
 pub struct RabbitMQNotify {
     pub message_template: String,
-    pub channel: Channel,
+    pub channel: CloseOnDrop<Channel>,
     pub exchange: String,
     pub routing_key: String,
 }

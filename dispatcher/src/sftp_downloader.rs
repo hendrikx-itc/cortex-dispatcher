@@ -63,7 +63,7 @@ where
         local_storage: LocalStorage<T>,
         persistence: T,
     ) -> thread::JoinHandle<Result<()>> {
-        thread::spawn(move || {
+        thread::spawn(move || -> Result<()> {
             proctitle::set_title("sftp_dl");
 
             let sftp_config = SftpConfig {
@@ -185,8 +185,10 @@ where
                         match e {
                             RecvTimeoutError::Timeout => (),
                             RecvTimeoutError::Disconnected => {
-                                error!("[E02005] Channel disconnected");
-                                thread::sleep(timeout)
+                                error!("[E02005] SFTP download command channel receiver disconnected");
+
+                                return Err(Error::with_chain(e, "[E02005] SFTP download command channel receiver disconnected"));
+                                //thread::sleep(timeout)
                             }
                         }
                     }

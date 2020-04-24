@@ -42,9 +42,11 @@ async fn setup_message_responder(channel: lapin::Channel, mut ack_receiver: toki
 		match message_response {
 			MessageResponse::Ack { delivery_tag } => {
 				channel.basic_ack(delivery_tag, BasicAckOptions { multiple: false }).await?;
+				debug!("Sent Ack for {}", delivery_tag);
 			},
 			MessageResponse::Nack { delivery_tag } => {
 				channel.basic_nack(delivery_tag, BasicNackOptions { multiple: false, requeue: false }).await?;
+				debug!("Sent Nack for {}", delivery_tag);
 			}
 		}
 	}
@@ -60,9 +62,7 @@ pub async fn start(
 ) -> Result<(), ConsumeError> {
     let sftp_source_name_2 = sftp_source_name.clone();
 
-	let channel_resp = amqp_client.create_channel().await;
-
-	let channel = channel_resp.unwrap();
+	let channel = amqp_client.create_channel().await?;
 
 	let id = channel.id();
 	info!("Created channel with id {}", id);

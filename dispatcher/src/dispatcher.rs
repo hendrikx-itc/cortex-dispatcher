@@ -45,18 +45,6 @@ use crate::sftp_command_consumer;
 use crate::base_types::MessageResponse;
 use crate::local_storage::LocalStorage;
 
-async fn connect_channel(
-    addr: &str,
-) -> Result<lapin::Channel, lapin::Error> {
-    let connect_result = lapin::Connection::connect(
-        addr,
-        lapin::ConnectionProperties::default(),
-    ).await;
-
-    let connection = connect_result.unwrap();
-
-    connection.create_channel().await
-}
 
 struct Stop {
     stop_commands: Vec<StopCmd>
@@ -382,7 +370,15 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl futu
             settings::Notify::RabbitMQ(notify_conf) => Either::Left(async move {
                 debug!("Connecting notifier to directory target stream");
 
-                let amqp_channel_result = connect_channel(&notify_conf.address).await;
+                let connect_result = lapin::Connection::connect(
+                    &notify_conf.address,
+                    lapin::ConnectionProperties::default(),
+                ).await;
+            
+                let connection = connect_result.unwrap();
+            
+                let amqp_channel_result = connection.create_channel().await;
+            
                 let amqp_channel = amqp_channel_result.unwrap();
 
                 let message_template = notify_conf.message_template.clone();
