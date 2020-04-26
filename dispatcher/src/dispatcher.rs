@@ -181,7 +181,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let mut sftp_source_senders: Vec<SftpSourceSend> = Vec::new();    
     
     settings.sftp_sources.iter().for_each(|sftp_source| {
-        let (cmd_sender, cmd_receiver) = bounded::<(u64, SftpDownload)>(1000);
+        let (cmd_sender, cmd_receiver) = bounded::<(u64, SftpDownload)>(10);
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 

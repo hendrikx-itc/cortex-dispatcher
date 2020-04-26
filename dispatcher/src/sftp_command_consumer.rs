@@ -1,4 +1,4 @@
-use std::{fmt, fmt::Display};
+use std::{fmt, fmt::Display, time};
 
 extern crate lapin;
 
@@ -6,6 +6,8 @@ use futures::StreamExt;
 
 use lapin::options::{BasicConsumeOptions, QueueBindOptions, QueueDeclareOptions, BasicNackOptions, BasicAckOptions};
 use lapin::types::FieldTable;
+
+use tokio_timer::sleep;
 
 use crossbeam_channel::{Sender, TrySendError};
 
@@ -64,16 +66,7 @@ pub async fn start(
 	
 	debug!("Creating SFTP command AMQP channel '{}'", &sftp_source_name);
 
-	//let channel = amqp_client.create_channel().await?;
-	let channel_result = amqp_client.create_channel().await;
-
-	let channel = match channel_result {
-		Ok(ch) => ch,
-		Err(e) => {
-			error!("Error creating channel for '{}': {}", &sftp_source_name, e);
-			return Err(ConsumeError::from(e));
-		}
-	};
+	let channel = amqp_client.create_channel().await?;
 
 	let id = channel.id();
 	info!("Created SFTP command AMQP channel with id {}", id);
@@ -83,10 +76,8 @@ pub async fn start(
 	let consumer_tag = "cortex-dispatcher";
 	let queue_name = format!("source.{}", &sftp_source_name);
 
-	let queue_declare_result = channel
-		.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default()).await;
-
-	let _queue = queue_declare_result.unwrap();
+	let _queue = channel
+		.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default()).await?;
 
 	info!("channel {} declared queue '{}'", id, &queue_name);
 	let routing_key = format!("source.{}", &sftp_source_name);
@@ -103,11 +94,9 @@ pub async fn start(
 	debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
 
 	// Setup command consuming stream
-	let consume_result = channel.basic_consume(
+	let mut consumer = channel.basic_consume(
 		&queue_name, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default()
-	).await;
-
-	let mut consumer = consume_result.unwrap();
+	).await?;
 
 	while let Some(message) = consumer.next().await {
 		let message = message.unwrap();
@@ -146,7 +135,8 @@ pub async fn start(
 					false
 				}
 				ConsumeError::ChannelFull => {
-					error!("Error sending command on channel: channel full");
+					debug!("Could not send command on channel: channel full");
+					tokio::time::delay_for(time::Duration::from_millis(1000)).await;
 					// Put the message back on the queue, because we could temporarily not process it
 					true
 				},

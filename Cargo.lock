@@ -713,6 +713,7 @@ dependencies = [
  "tera",
  "tokio",
  "tokio-postgres",
+ "tokio-timer",
 ]
 
 [[package]]
@@ -2731,6 +2732,18 @@ checksum = "edfe50152bc8164fcc456dab7891fa9bf8beaf01c5ee7e1dd43a397c3cf87dee"
 dependencies = [
  "fnv",
  "futures 0.1.29",
+]
+
+[[package]]
+name = "tokio-timer"
+version = "0.2.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93044f2d313c95ff1cb7809ce9a7a05735b012288a888b62d4434fd58c94f296"
+dependencies = [
+ "crossbeam-utils",
+ "futures 0.1.29",
+ "slab",
+ "tokio-executor",
 ]
 
 [[package]]
