@@ -60,12 +60,23 @@ pub async fn start(
 	ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
     command_sender: Sender<(u64, SftpDownload)>
 ) -> Result<(), ConsumeError> {
-    let sftp_source_name_2 = sftp_source_name.clone();
+	let sftp_source_name_2 = sftp_source_name.clone();
+	
+	debug!("Creating SFTP command AMQP channel '{}'", &sftp_source_name);
 
-	let channel = amqp_client.create_channel().await?;
+	//let channel = amqp_client.create_channel().await?;
+	let channel_result = amqp_client.create_channel().await;
+
+	let channel = match channel_result {
+		Ok(ch) => ch,
+		Err(e) => {
+			error!("Error creating channel for '{}': {}", &sftp_source_name, e);
+			return Err(ConsumeError::from(e));
+		}
+	};
 
 	let id = channel.id();
-	info!("Created channel with id {}", id);
+	info!("Created SFTP command AMQP channel with id {}", id);
 
 	tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
 

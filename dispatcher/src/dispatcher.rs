@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use std::thread;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -212,6 +213,8 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let l_settings = settings.clone();
 
     let sftp_sources_join_handle = runtime.spawn(async move {
+        debug!("Connecting to AMQP service at {}", &l_settings.command_queue.address);
+        
         let conn_result = lapin::Connection::connect(
             &l_settings.command_queue.address,
             ConnectionProperties::default(),
@@ -219,10 +222,14 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
         let client = conn_result.unwrap();
 
-        sftp_source_senders.into_iter().for_each(|channels| {
+        debug!("Connected to AMQP service");
+
+        let stream_join_handles: Vec<tokio::task::JoinHandle<Result<(), sftp_command_consumer::ConsumeError>>> = sftp_source_senders.into_iter().map(|channels| -> tokio::task::JoinHandle<Result<(), sftp_command_consumer::ConsumeError>> {
             let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
 
             for n in 0..channels.sftp_source.thread_count {
+                debug!("Starting SFTP downloader '{}'", &channels.sftp_source.name);
+
                 let join_handle = sftp_downloader::SftpDownloader::start(
                     stop_flag.clone(),
                     channels.cmd_receiver.clone(),
@@ -237,7 +244,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
                 guard.unwrap().push(join_handle);
 
-                info!("Started {} download thread {}", &channels.sftp_source.name, n + 1);
+                info!("Started '{}' download thread {}", &channels.sftp_source.name, n + 1);
             }
 
             let stream = sftp_command_consumer::start(
@@ -246,57 +253,24 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                 ack_receiver, channels.cmd_sender.clone()
             );
 
-            debug!("Spawning AMQP stream");
-            tokio::spawn(stream);
-        });
+            debug!("Spawning AMQP stream '{}'", &channels.sftp_source.name);
+            tokio::spawn(stream)
+        }).collect();
 
-        sources.into_iter().for_each(|mut source| {
-            // Filter connections belonging to this source
+        let dispatcher_join_handles = sources.into_iter().map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
+            // Filter connections to this source
             let source_connections: Vec<Connection> = connections.lock().unwrap()
                 .iter()
                 .filter(|c| c.source_name == source.name)
                 .cloned()
                 .collect();
 
-            let source_name = source.name.clone();
+            debug!("Spawing local event dispatcher for {}", &source.name);
 
-            let stream_future = async move {
-                while let Some(file_event) = tokio::stream::StreamExt::next(&mut source.receiver).await {
-                    debug!(
-                        "FileEvent from {}: {}",
-                        &source.name,
-                        file_event.path.to_string_lossy()
-                    );
-    
-                    source_connections
-                        .deref()
-                        .iter()
-                        .filter(|c| {
-                            match &c.filter {
-                                Some(f) => f.file_matches(&file_event.path),
-                                None => true
-                            }
-                        })
-                        .for_each(|c| {
-                            let s = c.target.sender.clone();
-                            let send_result = s.send(file_event.clone());
-    
-                            match send_result {
-                                Ok(_) => (),
-                                Err(e) => {
-                                    // Could not send file event to target
-                                    // TODO: Implement retry mechanism
-                                    error!("Could not send event to target handler: {}", e);
-                                }
-                            }
-                        });    
-                }
-            };
-
-            debug!("Spawing local event dispatcher for {}", &source_name);
-
-            tokio::spawn(stream_future);
+            tokio::spawn(dispatch_stream(source, source_connections))
         });
+
+        join_all(stream_join_handles).await;
     });
 
     let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(
@@ -334,6 +308,43 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     Arc::try_unwrap(sftp_join_handles).expect("still users of handles").into_inner().unwrap().into_iter().for_each(|jh| {
         wait_for(jh, "sftp download");
     });
+
+    Ok(())
+}
+
+async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Result<(), ()> {
+    while let Some(file_event) = tokio::stream::StreamExt::next(&mut source.receiver).await {
+        debug!(
+            "FileEvent from {}: {}",
+            &source.name,
+            file_event.path.to_string_lossy()
+        );
+
+        connections
+            .deref()
+            .iter()
+            .filter(|c| {
+                match &c.filter {
+                    Some(f) => f.file_matches(&file_event.path),
+                    None => true
+                }
+            })
+            .for_each(|c| {
+                let s = c.target.sender.clone();
+                let send_result = s.send(file_event.clone());
+
+                match send_result {
+                    Ok(_) => (),
+                    Err(e) => {
+                        // Could not send file event to target
+                        // TODO: Implement retry mechanism
+                        error!("Could not send event to target handler: {}", e);
+                    }
+                }
+            });    
+    }
+
+    debug!("End of dispatch stream '{}'", &source.name);
 
     Ok(())
 }
