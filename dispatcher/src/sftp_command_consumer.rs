@@ -136,7 +136,7 @@ pub async fn start(
 				}
 				ConsumeError::ChannelFull => {
 					debug!("Could not send command on channel: channel full");
-					tokio::time::delay_for(time::Duration::from_millis(1000)).await;
+					tokio::time::delay_for(time::Duration::from_millis(200)).await;
 					// Put the message back on the queue, because we could temporarily not process it
 					true
 				},

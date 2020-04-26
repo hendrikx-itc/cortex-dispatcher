@@ -26,6 +26,7 @@ use cortex_core::SftpDownload;
 
 use sha2::{Digest, Sha256};
 use tee::TeeReader;
+use ssh2;
 
 use chrono::{Utc, DateTime, NaiveDateTime};
 
@@ -171,7 +172,7 @@ where
                                     },
                                     retry::Error::Internal(int) => {
                                         int
-                                    }
+                                    },
                                 };
 
                                 error!(
@@ -188,7 +189,6 @@ where
                                 error!("[E02005] SFTP download command channel receiver disconnected");
 
                                 return Err(Error::with_chain(e, "[E02005] SFTP download command channel receiver disconnected"));
-                                //thread::sleep(timeout)
                             }
                         }
                     }
@@ -234,20 +234,24 @@ where
         let (copy_result, hash, stat) = {
             let borrow = sftp_connection.borrow();
 
-            let stat_result = borrow.sftp.stat(&remote_path);
+            // let stat_result = borrow.sftp.stat(&remote_path);
 
-            let stat = match stat_result {
-                Ok(s) => s,
-                Err(e) => {
-                    match e.code() {
-                        0 => {
-                            // unknown error, probably a fault in the SFTP connection
-                            return Err(ErrorKind::DisconnectedError.into())
-                        },
-                        _ => return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
-                    }
-                }
-            };
+            // let stat = match stat_result {
+            //     Ok(s) => s,
+            //     Err(e) => {
+            //         match e.code() {
+            //             0 => {
+            //                 // unknown error, probably a fault in the SFTP connection
+            //                 return Err(ErrorKind::DisconnectedError.into())
+            //             },
+            //             -31 => {
+            //                 // SFTP protocol error
+            //                 return Err(ErrorKind::DisconnectedError.into())
+            //             },
+            //             _ => return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
+            //         }
+            //     }
+            // };
             
             let open_result = borrow.sftp.open(&remote_path);
 
@@ -267,10 +271,20 @@ where
                                 Err(e) => return Err(Error::with_chain(e, "Error removing record of non-existent remote file"))
                             }
                         },
+                        -31 => {
+                            let delete_result = self.persistence.delete_sftp_download_file(msg.id);
+
+                            match delete_result {
+                                Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
+                                Err(e) => return Err(Error::with_chain(e, "Error removing record of non-existent remote file"))
+                            }
+                        },
                         _ => return Err(Error::with_chain(e, "Error opening remote file"))
                     }
                 }
             };
+
+            let stat = remote_file.stat().unwrap();
 
             let local_path_parent = local_path.parent().unwrap();
 
