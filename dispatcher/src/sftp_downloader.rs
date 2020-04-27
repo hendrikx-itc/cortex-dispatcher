@@ -26,7 +26,6 @@ use cortex_core::SftpDownload;
 
 use sha2::{Digest, Sha256};
 use tee::TeeReader;
-use ssh2;
 
 use chrono::{Utc, DateTime, NaiveDateTime};
 

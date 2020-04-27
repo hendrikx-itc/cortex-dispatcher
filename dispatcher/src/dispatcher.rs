@@ -1,3 +1,4 @@
+use futures::future::join;
 use futures::future::join_all;
 use std::thread;
 use std::collections::HashMap;
@@ -87,12 +88,12 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let connections: Arc<Mutex<Vec<Connection>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Stop orchestrator
-    let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
+    let mut stop: Stop = Stop::new();
 
     settings.directory_targets.iter().for_each(|target_conf| {
         let (future, stop_cmd, target) = setup_directory_target(target_conf);
 
-        stop.lock().unwrap().add_command(stop_cmd);
+        stop.add_command(stop_cmd);
 
         runtime.spawn(future);
 
@@ -129,14 +130,14 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let (local_intake_handle, local_intake_stop_cmd) = start_local_intake_thread(local_intake_receiver, event_dispatcher, local_storage.clone());
 
-    stop.lock().unwrap().add_command(local_intake_stop_cmd);
+    stop.add_command(local_intake_stop_cmd);
 
     #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, inotify_stop_cmd) =
         start_directory_sources(settings.directory_sources.clone(), local_intake_sender.clone());
 
     #[cfg(target_os = "linux")]
-    stop.lock().unwrap().add_command(inotify_stop_cmd);
+    stop.add_command(inotify_stop_cmd);
 
     let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(
         settings.directory_sources.clone(),
@@ -144,7 +145,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         settings.scan_interval
     );
 
-    stop.lock().unwrap().add_command(sweep_stop_cmd);
+    stop.add_command(sweep_stop_cmd);
 
     settings
         .connections
@@ -164,7 +165,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();
 
-    stop.lock().unwrap().add_command(Box::new(move || {
+    stop.add_command(Box::new(move || {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
@@ -185,7 +186,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
-        stop.lock().unwrap().add_command(Box::new(move || {
+        stop.add_command(Box::new(move || {
             match stop_sender.send(()) {
                 Ok(_) => (),
                 Err(e) => error!("[E02008] Error sending stop signal: {:?}", e)
@@ -277,22 +278,36 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         settings.http_server.address,
     );
 
-    stop.lock().unwrap().add_command(Box::new(move || {
+    stop.add_command(Box::new(move || {
         tokio::spawn(actix_http_server.stop(true));
     }));
 
-    stop.lock().unwrap().add_command(Box::new(move || {
+    stop.add_command(Box::new(move || {
         actix_system.stop();
     }));
 
-    let signal_handler_join_handle = runtime.spawn(
-        setup_signal_handler()
-    );
+    let signal_handler_join_handle = runtime.spawn(async move {
+        let signals = Signals::new(&[
+            signal_hook::SIGHUP,
+            signal_hook::SIGTERM,
+            signal_hook::SIGINT,
+            signal_hook::SIGQUIT,
+        ]).unwrap();
+    
+        let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
+    
+        while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
+            if let Some(s) = signal {
+                info!("signal: {}", s);
+                stop.stop();
+                break;
+            }
+        }        
+    });
 
     // Wait until all tasks have finished
     let _result = runtime
-        .block_on(signal_handler_join_handle)
-        .expect("Shutdown cannot error");
+        .block_on(join(signal_handler_join_handle, sftp_sources_join_handle));
 
     info!("Tokio runtime shutdown");
 
@@ -349,26 +364,6 @@ async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Re
     Ok(())
 }
 
-fn setup_signal_handler() -> impl futures::future::Future<Output=()> + Send + 'static {
-    let signals = Signals::new(&[
-        signal_hook::SIGHUP,
-        signal_hook::SIGTERM,
-        signal_hook::SIGINT,
-        signal_hook::SIGQUIT,
-    ]).unwrap();
-
-    async {
-        let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
-
-        while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
-            if let Some(s) = signal {
-                info!("signal: {}", s);
-                break;
-            }
-        }
-    }
-}
-
 fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) {
     let (sender, receiver) = unbounded_channel();
 
@@ -423,7 +418,12 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl futu
     let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
 
     let stop_cmd = Box::new(move || {
-        stop_sender.send(()).unwrap();
+        let send_result = stop_sender.send(());
+
+        match send_result {
+            Ok(_) => debug!("Stop command sent"),
+            Err(e) => debug!("Error sending stop command: {:?}", e)
+        }
     });
 
     let target = Arc::new(Target {

@@ -7,8 +7,6 @@ use futures::StreamExt;
 use lapin::options::{BasicConsumeOptions, QueueBindOptions, QueueDeclareOptions, BasicNackOptions, BasicAckOptions};
 use lapin::types::FieldTable;
 
-use tokio_timer::sleep;
-
 use crossbeam_channel::{Sender, TrySendError};
 
 use crate::base_types::MessageResponse;
