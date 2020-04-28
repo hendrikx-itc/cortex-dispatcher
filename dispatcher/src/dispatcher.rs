@@ -255,7 +255,15 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             );
 
             debug!("Spawning AMQP stream '{}'", &channels.sftp_source.name);
-            tokio::spawn(stream)
+            tokio::spawn(async move {
+                tokio::select!(
+                    a = stream => a,
+                    b = channels.stop_receiver => {
+                        debug!("Interrupted SFTP command consumer stream '{}'", &channels.sftp_source.name);
+                        Ok(())
+                    }
+                )
+            })
         }).collect();
 
         let dispatcher_join_handles = sources.into_iter().map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
@@ -271,7 +279,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             tokio::spawn(dispatch_stream(source, source_connections))
         });
 
-        join_all(stream_join_handles).await;
+        join(join_all(stream_join_handles), join_all(dispatcher_join_handles)).await;
     });
 
     let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(
@@ -307,7 +315,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     // Wait until all tasks have finished
     let _result = runtime
-        .block_on(join(signal_handler_join_handle, sftp_sources_join_handle));
+        .block_on(signal_handler_join_handle);
 
     info!("Tokio runtime shutdown");
 
@@ -371,58 +379,76 @@ fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl futu
 
     let mut target_stream = to_stream(&l_target_conf, receiver);
 
+    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+
     let future = match l_target_conf.notify {
         Some(conf) => match conf {
-            settings::Notify::RabbitMQ(notify_conf) => Either::Left(async move {
-                debug!("Connecting notifier to directory target stream");
+            settings::Notify::RabbitMQ(notify_conf) => {
+                let fut = async move {
+                    debug!("Connecting notifier to directory target stream");
 
-                let connect_result = lapin::Connection::connect(
-                    &notify_conf.address,
-                    lapin::ConnectionProperties::default(),
-                ).await;
-            
-                let connection = connect_result.unwrap();
-            
-                let amqp_channel_result = connection.create_channel().await;
-            
-                let amqp_channel = amqp_channel_result.unwrap();
+                    let connect_result = lapin::Connection::connect(
+                        &notify_conf.address,
+                        lapin::ConnectionProperties::default(),
+                    ).await;
+                
+                    let connection = connect_result.unwrap();
+                
+                    let amqp_channel_result = connection.create_channel().await;
+                
+                    let amqp_channel = amqp_channel_result.unwrap();
 
-                let message_template = notify_conf.message_template.clone();
-                let exchange = notify_conf.exchange.clone();
-                let routing_key = notify_conf.routing_key.clone();
+                    let message_template = notify_conf.message_template.clone();
+                    let exchange = notify_conf.exchange.clone();
+                    let routing_key = notify_conf.routing_key.clone();
 
-                debug!("Notifying on AMQP queue");
+                    debug!("Notifying on AMQP queue");
 
-                let notify = RabbitMQNotify {
-                    message_template: message_template,
-                    channel: amqp_channel,
-                    exchange: exchange,
-                    routing_key: routing_key,
+                    let notify = RabbitMQNotify {
+                        message_template: message_template,
+                        channel: amqp_channel,
+                        exchange: exchange,
+                        routing_key: routing_key,
+                    };
+
+                    let mut stream = notify.and_then_notify(target_stream);
+
+                    while let Some(_file_event) = stream.next().await {
+                    }
                 };
 
-                let mut stream = notify.and_then_notify(target_stream);
-
-                while let Some(_file_event) = stream.next().await {
-                }
-            })
+                Either::Left(async move {
+                    tokio::select!(
+                        a = fut => (),
+                        b = stop_receiver => ()
+                    )
+                })
+            }
         },
         None => {
-            Either::Right(async move {
+            let fut = async move {
                 while let Some(_file_event) = target_stream.next().await {
 
                 }
+            };
+
+            Either::Right(async move {
+                tokio::select!(
+                    a = fut => (),
+                    b = stop_receiver => ()
+                )
             })
         },
     };
 
-    let (stop_sender, _stop_receiver) = oneshot::channel::<()>();
+    let stop_cmd_name = target_conf.name.clone();
 
     let stop_cmd = Box::new(move || {
         let send_result = stop_sender.send(());
 
         match send_result {
-            Ok(_) => debug!("Stop command sent"),
-            Err(e) => debug!("Error sending stop command: {:?}", e)
+            Ok(_) => debug!("Stop command sent for directory target '{}'", &stop_cmd_name),
+            Err(e) => debug!("Error sending stop command for directory target '{}': {:?}", &stop_cmd_name, e)
         }
     });
 

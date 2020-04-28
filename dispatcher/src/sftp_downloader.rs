@@ -194,7 +194,7 @@ where
                 }
             }
 
-            debug!("SFTP source stream ended");
+            debug!("SFTP source stream '{}' ended", config.name);
 
             Ok(())
         })
