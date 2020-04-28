@@ -30,3 +30,9 @@ then
 
     echo "Created $CORTEX_CONFIG_FILE for testing"
 fi
+
+export PGHOST=127.0.0.1
+export PGPORT=5432
+export PGUSER=postgres
+export PGPASSWORD=password
+export PGDATABASE=cortex
