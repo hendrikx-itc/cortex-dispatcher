@@ -1,4 +1,4 @@
-use futures::future::join;
+use futures::join;
 use futures::future::join_all;
 use std::thread;
 use std::collections::HashMap;
@@ -179,9 +179,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         pub stop_receiver: oneshot::Receiver<()>
     }
 
-    let mut sftp_source_senders: Vec<SftpSourceSend> = Vec::new();    
-    
-    settings.sftp_sources.iter().for_each(|sftp_source| {
+    let (sftp_source_senders, mut sftp_sources): (Vec<SftpSourceSend>, Vec<Source>) = settings.sftp_sources.iter().map(|sftp_source| {
         let (cmd_sender, cmd_receiver) = bounded::<(u64, SftpDownload)>(10);
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
@@ -193,21 +191,23 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             }
         }));
 
-        sftp_source_senders.push(
-            SftpSourceSend {
-                sftp_source: sftp_source.clone(),
-                cmd_sender: cmd_sender,
-                cmd_receiver: cmd_receiver,
-                file_event_sender: file_event_sender,
-                stop_receiver: stop_receiver,
-            }
-        );
+        let sftp_source_send = SftpSourceSend {
+            sftp_source: sftp_source.clone(),
+            cmd_sender: cmd_sender,
+            cmd_receiver: cmd_receiver,
+            file_event_sender: file_event_sender,
+            stop_receiver: stop_receiver,
+        };
 
-        sources.push(Source {
+        let source = Source {
             name: sftp_source.name.clone(),
             receiver: file_event_receiver
-        });    
-    });
+        };    
+
+        (sftp_source_send, source)
+    }).unzip();
+
+    sources.append(&mut sftp_sources);
 
     let jhs = sftp_join_handles.clone();
 
@@ -229,7 +229,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
 
             for n in 0..channels.sftp_source.thread_count {
-                debug!("Starting SFTP downloader '{}'", &channels.sftp_source.name);
+                debug!("Starting SFTP download thread '{}'", &channels.sftp_source.name);
 
                 let join_handle = sftp_downloader::SftpDownloader::start(
                     stop_flag.clone(),
@@ -245,19 +245,21 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
                 guard.unwrap().push(join_handle);
 
-                info!("Started '{}' download thread {}", &channels.sftp_source.name, n + 1);
+                info!("Started SFTP download thread '{}' ({})", &channels.sftp_source.name, n + 1);
             }
 
-            let stream = sftp_command_consumer::start(
+            let consume_future = sftp_command_consumer::start(
                 client.clone(),
                 channels.sftp_source.name.clone(),
                 ack_receiver, channels.cmd_sender.clone()
             );
 
-            debug!("Spawning AMQP stream '{}'", &channels.sftp_source.name);
+            debug!("Spawning AMQP stream task '{}'", &channels.sftp_source.name);
+            //let join_handle = tokio::spawn(consume_future);
+
             tokio::spawn(async move {
                 tokio::select!(
-                    a = stream => a,
+                    a = consume_future => a,
                     b = channels.stop_receiver => {
                         debug!("Interrupted SFTP command consumer stream '{}'", &channels.sftp_source.name);
                         Ok(())
@@ -266,7 +268,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             })
         }).collect();
 
-        let dispatcher_join_handles = sources.into_iter().map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
+        let dispatcher_join_handles: Vec<tokio::task::JoinHandle<Result<(), ()>>> = sources.into_iter().map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
             // Filter connections to this source
             let source_connections: Vec<Connection> = connections.lock().unwrap()
                 .iter()
@@ -274,12 +276,13 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                 .cloned()
                 .collect();
 
-            debug!("Spawing local event dispatcher for {}", &source.name);
+            debug!("Spawing local event dispatcher task for {}", &source.name);
 
             tokio::spawn(dispatch_stream(source, source_connections))
-        });
+        }).collect();
 
-        join(join_all(stream_join_handles), join_all(dispatcher_join_handles)).await;
+        // Await on futures so that the AMQP client does not get destroyed.
+        join_all(stream_join_handles).await
     });
 
     let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(

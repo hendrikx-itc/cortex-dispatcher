@@ -64,7 +64,16 @@ pub async fn start(
 	
 	debug!("Creating SFTP command AMQP channel '{}'", &sftp_source_name);
 
-	let channel = amqp_client.create_channel().await?;
+	//let channel = amqp_client.create_channel().await?;
+	let channel_result = amqp_client.create_channel().await;
+
+    let channel = match channel_result {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Error creating channel: {}", e);
+            return Err(ConsumeError::from(e))
+        }
+    };
 
 	let id = channel.id();
 	info!("Created SFTP command AMQP channel with id {}", id);
