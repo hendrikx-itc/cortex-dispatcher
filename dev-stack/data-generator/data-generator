@@ -4,11 +4,21 @@ import datetime
 import time
 import logging
 import random
+import argparse
 
 import pysftp
 
 
 def main():
+    parser = argparse.ArgumentParser('Generate and SFTP upload data for testing')
+
+    parser.add_argument(
+        '--delete-some', action='store_true', default=False,
+        help='Delete some files after uploading'
+    )
+
+    args = parser.parse_args()
+
     root_logger = logging.getLogger('')
     root_logger.setLevel(logging.INFO)
 
@@ -28,6 +38,9 @@ def main():
                 logging.info("Data generation start")
 
                 generate_data(sftp, storage_path, next_run)
+
+                if args.delete_some:
+                    generate_and_remove_data(sftp, storage_path, next_run)
 
                 next_run += interval
 
@@ -80,6 +93,8 @@ def generate_data(sftp, storage_path, timestamp):
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))
 
+
+def generate_and_remove_data(sftp, storage_path, timestamp):
     check_path(sftp, 'upload/red')
 
     with sftp.cd('upload/red'):
