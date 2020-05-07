@@ -12,6 +12,7 @@ sftp_sources:
     directory: upload/red
     scan_interval: 3000
     remove: true
+    deduplicate: true
   - name: local-blue
     address: 127.0.0.1:2222
     username: cortex 
@@ -21,6 +22,7 @@ sftp_sources:
     scan_interval: 2000
     remove: true
     recurse: true
+    deduplicate: true
 
 postgresql:
   url: "postgresql://postgres:password@127.0.0.1:5432/cortex"
