@@ -7,11 +7,19 @@ use tokio::stream::StreamExt;
 
 use crate::event::FileEvent;
 use crate::{settings, settings::LocalTargetMethod};
+use crate::persistence::Persistence;
 
-pub fn to_stream(
+pub fn to_stream<T>(
     settings: &settings::DirectoryTarget,
     receiver: UnboundedReceiver<FileEvent>,
-) -> impl futures::Stream<Item=FileEvent> + std::marker::Unpin {
+    persistence: T
+) -> impl futures::Stream<Item=FileEvent> + std::marker::Unpin 
+where
+    T: Persistence,
+    T: Send,
+    T: Clone,
+    T: 'static,
+{
     let overwrite = settings.overwrite;
     let target_name = settings.name.clone();
     let target_directory = settings.directory.clone();
@@ -126,6 +134,8 @@ pub fn to_stream(
                 error!("Could not set file permissions on '{}': {}", &target_path_str, e)
             }
         }
+
+        persistence.insert_dispatched(&target_name, file_event.id);
 
         FileEvent {
             source_name: target_name.clone(),

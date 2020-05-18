@@ -40,7 +40,7 @@ use crate::directory_source::start_directory_sources;
 use crate::directory_target::to_stream;
 use crate::event::{FileEvent, EventDispatcher};
 use crate::http_server::start_http_server;
-use crate::persistence::PostgresPersistence;
+use crate::persistence::{PostgresPersistence, Persistence};
 use crate::settings;
 use crate::sftp_downloader;
 use crate::sftp_command_consumer;
@@ -90,8 +90,15 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     // Stop orchestrator
     let mut stop: Stop = Stop::new();
 
+    let connection_manager =
+        PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
+
+    let persistence = PostgresPersistence::new(connection_manager);
+
+    let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
+
     settings.directory_targets.iter().for_each(|target_conf| {
-        let (future, stop_cmd, target) = setup_directory_target(target_conf);
+        let (future, stop_cmd, target) = setup_directory_target(target_conf, persistence.clone());
 
         stop.add_command(stop_cmd);
 
@@ -99,13 +106,6 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
         targets.insert(target_conf.name.clone(), target);
     });
-
-    let connection_manager =
-        PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
-
-    let persistence = PostgresPersistence::new(connection_manager);
-
-    let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
 
     let (local_intake_sender, local_intake_receiver) = std::sync::mpsc::channel();
 
@@ -375,12 +375,18 @@ async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Re
     Ok(())
 }
 
-fn setup_directory_target(target_conf: &settings::DirectoryTarget) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) {
+fn setup_directory_target<T>(target_conf: &settings::DirectoryTarget, persistence: T) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) 
+where
+    T: Persistence,
+    T: Send,
+    T: Clone,
+    T: 'static,
+{
     let (sender, receiver) = unbounded_channel();
 
     let l_target_conf = target_conf.clone();
 
-    let mut target_stream = to_stream(&l_target_conf, receiver);
+    let mut target_stream = to_stream(&l_target_conf, receiver, persistence);
 
     let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 

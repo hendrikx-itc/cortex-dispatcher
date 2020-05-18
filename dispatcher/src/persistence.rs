@@ -44,6 +44,7 @@ pub trait Persistence {
     fn insert_file(&self, source: &str, path: &str, modified: &DateTime<Utc>, size: i64, hash: Option<String>) -> Result<i64,PersistenceError>;
     fn remove_file(&self, source: &str, path: &str) -> Result<(),PersistenceError>;
     fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>,PersistenceError>;
+    fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError>;
 }
 
 #[derive(Clone)]
@@ -208,5 +209,22 @@ where
             })
         }
 
+    }
+
+    fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
+        let mut client = self.conn_pool.get().unwrap();
+
+        let insert_result = client.query_one(
+            "insert into dispatcher.dispatched (file_id, target, timestamp) values ($1, $2, now())",
+            &[&file_id, &dest]
+        );
+
+        match insert_result {
+            Ok(row) => Ok(()),
+            Err(e) => Err(PersistenceError{
+                source: Some(Box::new(e)),
+                message: String::from("Error inserting dispatched record into database")
+            })
+        }
     }
 }

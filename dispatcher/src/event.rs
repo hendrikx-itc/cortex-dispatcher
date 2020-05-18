@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone)]
 pub struct FileEvent {
+    pub file_id: i64,
     pub source_name: String,
     pub path: PathBuf,
 }
