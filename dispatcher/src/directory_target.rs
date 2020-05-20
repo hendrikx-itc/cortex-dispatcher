@@ -2,23 +2,25 @@ use std::os::unix::fs::symlink;
 use std::fs::{hard_link, copy, Permissions, set_permissions};
 use std::os::unix::fs::PermissionsExt;
 
-use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::stream::StreamExt;
+//use tokio::sync::mpsc::UnboundedReceiver;
+//use tokio::stream::StreamExt;
+use tokio_postgres::Socket;
+use postgres::tls::{MakeTlsConnect, TlsConnect};
 
 use crate::event::FileEvent;
 use crate::{settings, settings::LocalTargetMethod};
-use crate::persistence::Persistence;
+use crate::persistence::PostgresAsyncPersistence;
 
-pub fn to_stream<T>(
+pub async fn handle_file_event<T>(
     settings: &settings::DirectoryTarget,
-    receiver: UnboundedReceiver<FileEvent>,
-    persistence: T
-) -> impl futures::Stream<Item=FileEvent> + std::marker::Unpin 
+    file_event: FileEvent,
+    persistence: PostgresAsyncPersistence<T>
+) -> FileEvent
 where
-    T: Persistence,
-    T: Send,
-    T: Clone,
-    T: 'static,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
     let overwrite = settings.overwrite;
     let target_name = settings.name.clone();
@@ -26,120 +28,124 @@ where
     let method = settings.method.clone();
     let target_permissions = Permissions::from_mode(settings.permissions);
 
-    receiver.map(move |file_event: FileEvent| -> FileEvent {
-        let source_path_str = file_event.path.to_string_lossy();
-        let file_name = file_event.path.file_name().unwrap();
-        let target_path = target_directory.join(file_name);
-        let target_path_str = target_path.to_string_lossy();
-        let target_perms = target_permissions.clone();
+    let source_path_str = file_event.path.to_string_lossy();
+    let file_name = file_event.path.file_name().unwrap();
+    let target_path = target_directory.join(file_name);
+    let target_path_str = target_path.to_string_lossy();
+    let target_perms = target_permissions.clone();
 
-        debug!("FileEvent for {}: '{}'", &target_name, &source_path_str);
+    debug!("FileEvent for {}: '{}'", &target_name, &source_path_str);
 
-        if overwrite {
-            // If overwrite is enabled, we just always try to remove the target and
-            // expect that a NotFound error might be returned.
-            let remove_result = std::fs::remove_file(&target_path);
+    if overwrite {
+        // If overwrite is enabled, we just always try to remove the target and
+        // expect that a NotFound error might be returned.
+        let remove_result = std::fs::remove_file(&target_path);
 
-            match remove_result {
-                Ok(_) => debug!("Removed existing target '{}'", &target_path_str),
+        match remove_result {
+            Ok(_) => debug!("Removed existing target '{}'", &target_path_str),
+            Err(e) => {
+                match e.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        // Ok, this can happen
+                    },
+                    _ => {
+                        // Unexpected error, so log it
+                        error!("Error removing file '{}': {}", &target_path_str, e);
+                    }
+                }
+            }
+        }
+    }
+
+    let placement_result = match method {
+        LocalTargetMethod::Copy => {
+            let result = copy(&file_event.path, &target_path);
+
+            match result {
+                Ok(size) => {
+                    debug!("'{}' copied {} bytes to '{}'", &source_path_str, size, &target_path_str);
+                    Ok(())
+                }
                 Err(e) => {
-                    match e.kind() {
-                        std::io::ErrorKind::NotFound => {
-                            // Ok, this can happen
-                        },
-                        _ => {
-                            // Unexpected error, so log it
-                            error!("Error removing file '{}': {}", &target_path_str, e);
-                        }
+                    if overwrite {
+                        // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                        error!(
+                            "[E01005] Error copying '{}' to '{}': {}",
+                            &source_path_str, &target_path_str, &e
+                        );
+                        Err(())
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
+        },
+        LocalTargetMethod::Hardlink => {
+            let result = hard_link(&file_event.path, &target_path);
+
+            match result {
+                Ok(()) => {
+                    debug!("Hardlinked '{}' to '{}'", &source_path_str, &target_path_str);
+                    Ok(())
+                }
+                Err(e) => {
+                    debug!("Error hardlinking: {}", e);
+
+                    if overwrite {
+                        // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                        error!(
+                            "[E01004] Error hardlinking '{}' to '{}': {}",
+                            &source_path_str, &target_path_str, &e
+                        );
+                        Err(())
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
+        },
+        LocalTargetMethod::Symlink => {
+            let result = symlink(&file_event.path, &target_path);
+
+            match result {
+                Ok(()) => {
+                    debug!("Symlinked '{}' to '{}'", &source_path_str, &target_path_str);
+                    Ok(())
+                }
+                Err(e) => {
+                    if overwrite {
+                        // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                        error!(
+                            "[E01007] Error symlinking '{}' to '{}': {}",
+                            &source_path_str, &target_path_str, &e
+                        );
+                        Err(())
+                    } else {
+                        Ok(())
                     }
                 }
             }
         }
+    };
 
-        let placement_result = match method {
-            LocalTargetMethod::Copy => {
-                let result = copy(&file_event.path, &target_path);
+    if let Ok(_) = placement_result {
+        let set_result = set_permissions(&target_path, target_perms);
 
-                match result {
-                    Ok(size) => {
-                        debug!("'{}' copied {} bytes to '{}'", &source_path_str, size, &target_path_str);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if overwrite {
-                            // When overwrite is enabled, this should not occur, because any existing file should first be removed
-                            error!(
-                                "[E01005] Error copying '{}' to '{}': {}",
-                                &source_path_str, &target_path_str, &e
-                            );
-                            Err(())
-                        } else {
-                            Ok(())
-                        }
-                    }
-                }
-            },
-            LocalTargetMethod::Hardlink => {
-                let result = hard_link(&file_event.path, &target_path);
-
-                match result {
-                    Ok(()) => {
-                        debug!("Hardlinked '{}' to '{}'", &source_path_str, &target_path_str);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        debug!("Error hardlinking: {}", e);
-
-                        if overwrite {
-                            // When overwrite is enabled, this should not occur, because any existing file should first be removed
-                            error!(
-                                "[E01004] Error hardlinking '{}' to '{}': {}",
-                                &source_path_str, &target_path_str, &e
-                            );
-                            Err(())
-                        } else {
-                            Ok(())
-                        }
-                    }
-                }
-            },
-            LocalTargetMethod::Symlink => {
-                let result = symlink(&file_event.path, &target_path);
-
-                match result {
-                    Ok(()) => {
-                        debug!("Symlinked '{}' to '{}'", &source_path_str, &target_path_str);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if overwrite {
-                            // When overwrite is enabled, this should not occur, because any existing file should first be removed
-                            error!(
-                                "[E01007] Error symlinking '{}' to '{}': {}",
-                                &source_path_str, &target_path_str, &e
-                            );
-                            Err(())
-                        } else {
-                            Ok(())
-                        }
-                    }
-                }
-            }
-        };
-
-        if let Ok(_) = placement_result {
-            let set_result = set_permissions(&target_path, target_perms);
-
-            if let Err(e) = set_result {
-                error!("Could not set file permissions on '{}': {}", &target_path_str, e)
-            }
+        if let Err(e) = set_result {
+            error!("Could not set file permissions on '{}': {}", &target_path_str, e)
         }
+    }
 
-        persistence.insert_dispatched(&target_name, file_event.id);
+    let insert_result = persistence.insert_dispatched(&target_name, file_event.file_id).await;
 
-        FileEvent {
-            source_name: target_name.clone(),
-            path: target_path
-        }
-    })
+    match insert_result {
+        Ok(_) => debug!("Dispatched to directory"),
+        Err(e) => debug!("Error persisting dispatch: {}", &e)
+    }
+
+    FileEvent {
+        file_id: file_event.file_id,
+        source_name: target_name.clone(),
+        path: target_path
+    }
 }

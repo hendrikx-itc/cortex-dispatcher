@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use r2d2;
 use r2d2_postgres::PostgresConnectionManager;
+use bb8;
+use bb8_postgres;
 use tokio_postgres::Socket;
 use chrono::prelude::*;
 
@@ -16,7 +18,11 @@ pub struct PersistenceError {
 
 impl fmt::Display for PersistenceError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.message)
+        if let Some(s) = &self.source {
+            write!(f, "{}: {}", self.message, s)
+        } else {
+            write!(f, "{}", self.message)
+        }
     }
 }
 
@@ -212,7 +218,20 @@ where
     }
 
     fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+        let get_result = self.conn_pool.get_timeout(std::time::Duration::from_millis(10_000));
+
+        let mut client = match get_result {
+            Ok(c) => c,
+            Err(e) => {
+                let message = format!("Error getting PostgreSQL conection from pool: {}", &e);
+                error!("{}", &message);
+
+                return Err(PersistenceError{
+                    source: Some(Box::new(e)),
+                    message: message 
+                })
+            }
+        };
 
         let insert_result = client.query_one(
             "insert into dispatcher.dispatched (file_id, target, timestamp) values ($1, $2, now())",
@@ -221,6 +240,62 @@ where
 
         match insert_result {
             Ok(row) => Ok(()),
+            Err(e) => Err(PersistenceError{
+                source: Some(Box::new(e)),
+                message: String::from("Error inserting dispatched record into database")
+            })
+        }
+    }
+}
+
+
+#[derive(Clone)]
+pub struct PostgresAsyncPersistence<T>
+where
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
+{
+    conn_pool: bb8::Pool<bb8_postgres::PostgresConnectionManager<T>>,
+}
+
+impl<T> PostgresAsyncPersistence<T>
+where
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
+{
+    pub async fn new(connection_manager: bb8_postgres::PostgresConnectionManager<T>) -> PostgresAsyncPersistence<T> {
+        let pool = bb8::Pool::builder().build(connection_manager).await.unwrap();
+
+        PostgresAsyncPersistence { conn_pool: pool }
+    }
+
+    pub async fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
+        let get_result = self.conn_pool.get().await;
+
+        let client = match get_result {
+            Ok(c) => c,
+            Err(e) => {
+                let message = format!("Error getting PostgreSQL conection from pool: {}", &e);
+                error!("{}", &message);
+
+                return Err(PersistenceError{
+                    source: Some(Box::new(e)),
+                    message: message 
+                })
+            }
+        };
+
+        let insert_result = client.execute(
+            "insert into dispatcher.dispatched (file_id, target, timestamp) values ($1, $2, now())",
+            &[&file_id, &dest]
+        ).await;
+
+        match insert_result {
+            Ok(_) => Ok(()),
             Err(e) => Err(PersistenceError{
                 source: Some(Box::new(e)),
                 message: String::from("Error inserting dispatched record into database")

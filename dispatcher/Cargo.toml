@@ -43,7 +43,7 @@ serde_yaml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.8"
 tee = "0.1"
-prometheus = { version = "0.8" }
+prometheus = { version = "0.9" }
 lazy_static = "1.4"
 postgres = { version = "0.17", features = ["with-chrono-0_4"] }
 tokio-postgres = "0.5"
@@ -55,8 +55,10 @@ actix-rt = "1.1"
 actix-http = "1.0"
 r2d2 = "0.8"
 r2d2_postgres = "0.16"
-tera = "1.2"
-signal-hook = { version = "0.1.13", features = ["tokio-support"] }
+bb8 = "0.4"
+bb8-postgres = "0.4"
+tera = "1.3"
+signal-hook = { version = "0.1.15", features = ["tokio-support"] }
 retry = "1.0"
 proctitle = "0.1"
 error-chain = "0.12"

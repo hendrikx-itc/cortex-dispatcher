@@ -387,8 +387,9 @@ where
                             let source_path_str = file_event.path.to_string_lossy();
                 
                             match store_result {
-                                Ok(target_path) => {
+                                Ok((file_id, target_path)) => {
                                     let source_file_event = FileEvent {
+                                        file_id: file_id,
                                         source_name: file_event.source_name.clone(),
                                         path: target_path.clone(),
                                     };

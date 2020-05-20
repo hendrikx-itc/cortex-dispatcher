@@ -1,4 +1,3 @@
-use futures::join;
 use futures::future::join_all;
 use std::thread;
 use std::collections::HashMap;
@@ -21,8 +20,13 @@ use tokio::stream::StreamExt;
 use futures::future::Either;
 use futures_util::compat::Compat01As03;
 
+use postgres::tls::{MakeTlsConnect, TlsConnect};
+
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
+
+use tokio_postgres;
+use bb8_postgres;
 
 use signal_hook;
 use signal_hook::iterator::Signals;
@@ -31,22 +35,21 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 
 use cortex_core::{wait_for, SftpDownload, StopCmd};
 
-use crate::base_types::{Connection, RabbitMQNotify, Target, Notify, Source};
+use crate::base_types::{Connection, RabbitMQNotify, Target, Source};
 
 use crate::directory_source::{start_directory_sweep, start_local_intake_thread};
 #[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
 
-use crate::directory_target::to_stream;
+use crate::directory_target::handle_file_event;
 use crate::event::{FileEvent, EventDispatcher};
 use crate::http_server::start_http_server;
-use crate::persistence::{PostgresPersistence, Persistence};
+use crate::persistence::{PostgresPersistence, PostgresAsyncPersistence};
 use crate::settings;
 use crate::sftp_downloader;
 use crate::sftp_command_consumer;
 use crate::base_types::MessageResponse;
 use crate::local_storage::LocalStorage;
-
 
 struct Stop {
     stop_commands: Vec<StopCmd>
@@ -80,7 +83,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let mut runtime = tokio::runtime::Runtime::new()?;
 
     // List of targets with their file event channels
-    let mut targets: HashMap<String, Arc<Target>> = HashMap::new();
+    let targets: Arc<Mutex<HashMap<String, Arc<Target>>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // List of sources with their file event channels
     let mut sources: Vec<Source> = Vec::new();
@@ -88,24 +91,37 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let connections: Arc<Mutex<Vec<Connection>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Stop orchestrator
-    let mut stop: Stop = Stop::new();
+    let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
 
     let connection_manager =
         PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
 
+    let tokio_connection_manager = 
+        bb8_postgres::PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), tokio_postgres::NoTls);
+
+    let t_settings = settings.clone();
+
+    let directory_target_stop = stop.clone();
+
+    let directory_target_targets = targets.clone();
+
+    runtime.spawn(async move {
+        let tokio_persistence = PostgresAsyncPersistence::new(tokio_connection_manager).await;
+
+        t_settings.directory_targets.iter().for_each(|target_conf| {
+            let (future, stop_cmd, target) = setup_directory_target(target_conf.clone(), tokio_persistence.clone());
+    
+            directory_target_stop.lock().unwrap().add_command(stop_cmd);
+    
+            tokio::spawn(future);
+    
+            directory_target_targets.lock().unwrap().insert(target_conf.name.clone(), target);
+        });
+    });
+
     let persistence = PostgresPersistence::new(connection_manager);
 
     let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
-
-    settings.directory_targets.iter().for_each(|target_conf| {
-        let (future, stop_cmd, target) = setup_directory_target(target_conf, persistence.clone());
-
-        stop.add_command(stop_cmd);
-
-        runtime.spawn(future);
-
-        targets.insert(target_conf.name.clone(), target);
-    });
 
     let (local_intake_sender, local_intake_receiver) = std::sync::mpsc::channel();
 
@@ -130,7 +146,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let (local_intake_handle, local_intake_stop_cmd) = start_local_intake_thread(local_intake_receiver, event_dispatcher, local_storage.clone());
 
-    stop.add_command(local_intake_stop_cmd);
+    stop.lock().unwrap().add_command(local_intake_stop_cmd);
 
     #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, inotify_stop_cmd) =
@@ -145,13 +161,13 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         settings.scan_interval
     );
 
-    stop.add_command(sweep_stop_cmd);
+    stop.lock().unwrap().add_command(sweep_stop_cmd);
 
     settings
         .connections
         .iter()
         .for_each(|conn_conf| {
-            let target = targets.get(&conn_conf.target).unwrap().clone();
+            let target = targets.lock().unwrap().get(&conn_conf.target).unwrap().clone();
 
             connections.lock().unwrap().push(
                 Connection {
@@ -165,7 +181,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();
 
-    stop.add_command(Box::new(move || {
+    stop.lock().unwrap().add_command(Box::new(move || {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
@@ -184,7 +200,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
-        stop.add_command(Box::new(move || {
+        stop.lock().unwrap().add_command(Box::new(move || {
             match stop_sender.send(()) {
                 Ok(_) => (),
                 Err(e) => error!("[E02008] Error sending stop signal: {:?}", e)
@@ -289,11 +305,11 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         settings.http_server.address,
     );
 
-    stop.add_command(Box::new(move || {
+    stop.lock().unwrap().add_command(Box::new(move || {
         tokio::spawn(actix_http_server.stop(true));
     }));
 
-    stop.add_command(Box::new(move || {
+    stop.lock().unwrap().add_command(Box::new(move || {
         actix_system.stop();
     }));
 
@@ -306,11 +322,13 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         ]).unwrap();
     
         let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
-    
+
+        let l_stop = Arc::try_unwrap(stop).unwrap().into_inner().unwrap();
+
         while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
             if let Some(s) = signal {
                 info!("signal: {}", s);
-                stop.stop();
+                l_stop.stop();
                 break;
             }
         }        
@@ -341,7 +359,8 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Result<(), ()> {
     while let Some(file_event) = tokio::stream::StreamExt::next(&mut source.receiver).await {
         debug!(
-            "FileEvent from {}: {}",
+            "FileEvent for {} connections, from {}: {}",
+            connections.len(),
             &source.name,
             file_event.path.to_string_lossy()
         );
@@ -356,8 +375,10 @@ async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Re
                 }
             })
             .for_each(|c| {
-                let s = c.target.sender.clone();
-                let send_result = s.send(file_event.clone());
+                info!("Sending FileEvent to target {}", &c.target.name);
+
+                //let s = c.target.sender.clone();
+                let send_result = c.target.sender.send(file_event.clone());
 
                 match send_result {
                     Ok(_) => (),
@@ -375,22 +396,20 @@ async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Re
     Ok(())
 }
 
-fn setup_directory_target<T>(target_conf: &settings::DirectoryTarget, persistence: T) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) 
+fn setup_directory_target<T>(target_conf: settings::DirectoryTarget, persistence: PostgresAsyncPersistence<T>) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) 
 where
-    T: Persistence,
-    T: Send,
-    T: Clone,
-    T: 'static,
+    T: MakeTlsConnect<tokio_postgres::Socket> + Clone + 'static + Sync + Send,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<tokio_postgres::Socket>>::Future: Send,
 {
-    let (sender, receiver) = unbounded_channel();
+    let (sender, mut receiver) = unbounded_channel();
 
-    let l_target_conf = target_conf.clone();
-
-    let mut target_stream = to_stream(&l_target_conf, receiver, persistence);
+    let c_target_conf = target_conf.clone();
 
     let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
-    let future = match l_target_conf.notify {
+    let future = match c_target_conf.notify {
         Some(conf) => match conf {
             settings::Notify::RabbitMQ(notify_conf) => {
                 let fut = async move {
@@ -420,9 +439,13 @@ where
                         routing_key: routing_key,
                     };
 
-                    let mut stream = notify.and_then_notify(target_stream);
+                    while let Some(file_event) = receiver.next().await {
+                        let l_persistence = persistence.clone();
+                        let l_target_conf = target_conf.clone();
 
-                    while let Some(_file_event) = stream.next().await {
+                        let result_event = handle_file_event(&l_target_conf, file_event, l_persistence).await;
+                        
+                        notify.notify(result_event).await;
                     }
                 };
 
@@ -436,8 +459,11 @@ where
         },
         None => {
             let fut = async move {
-                while let Some(_file_event) = target_stream.next().await {
+                while let Some(file_event) = receiver.next().await {
+                    let l_persistence = persistence.clone();
+                    let l_target_conf = target_conf.clone();
 
+                    handle_file_event(&l_target_conf, file_event, l_persistence).await;
                 }
             };
 
@@ -450,7 +476,7 @@ where
         },
     };
 
-    let stop_cmd_name = target_conf.name.clone();
+    let stop_cmd_name = c_target_conf.name.clone();
 
     let stop_cmd = Box::new(move || {
         let send_result = stop_sender.send(());
@@ -462,7 +488,7 @@ where
     });
 
     let target = Arc::new(Target {
-        name: target_conf.name.clone(),
+        name: c_target_conf.name.clone(),
         sender: sender,
     });
 

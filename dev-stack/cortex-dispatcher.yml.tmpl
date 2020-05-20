@@ -32,7 +32,17 @@ directory_targets:
         message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
         address: "amqp://127.0.0.1:5672/%2f"
         exchange: "amq.direct"
-        routing_key: "processing-node"
+        routing_key: "processing-node-red"
+  - name: blue
+    directory: $CORTEX_DATA_ROOT/storage/blue-consumer
+    overwrite: false
+    permissions: 0o644
+    notify:
+      rabbitmq:
+        message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
+        address: "amqp://127.0.0.1:5672/%2f"
+        exchange: "amq.direct"
+        routing_key: "processing-node-blue"
 
 sftp_sources:
   - name: local-red
@@ -59,6 +69,8 @@ connections:
         pattern: "^.*-v6\\.xml$"
   - source: local-red
     target: red
+  - source: local-blue
+    target: blue
 
 postgresql:
   url: "postgresql://postgres:password@127.0.0.1:5432/cortex"

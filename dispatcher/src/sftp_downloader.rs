@@ -357,6 +357,7 @@ where
                 }
 
                 Ok(FileEvent {
+                    file_id: file_id,
                     source_name: self.sftp_source.name.clone(),
                     path: local_path,
                 })

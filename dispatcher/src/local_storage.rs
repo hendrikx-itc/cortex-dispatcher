@@ -94,7 +94,7 @@ where
     /// Store file in local storage. The file will be hardlinked from the
     /// specified file_path and will be stored in a directory with the name of
     /// the source. The prefix will be stripped from the file path.
-    pub fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<PathBuf, LocalStorageError>
+    pub fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<(i64, PathBuf), LocalStorageError>
     where
         P: AsRef<Path>,
     {
@@ -136,11 +136,11 @@ where
                 let modified = system_time_to_date_time(metadata.modified().unwrap());
                 let size = i64::try_from(metadata.len()).unwrap();
 
-                self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
+                let file_id = self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
 
                 debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
 
-                Ok(local_path)
+                Ok((file_id, local_path))
             }
             Err(e) => Err(LocalStorageError{ message: format!(
                 "[E?????] Error hardlinking '{}' to '{}': {}",
