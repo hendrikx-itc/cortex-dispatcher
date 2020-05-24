@@ -430,13 +430,11 @@ where
                     let exchange = notify_conf.exchange.clone();
                     let routing_key = notify_conf.routing_key.clone();
 
-                    debug!("Notifying on AMQP queue");
-
                     let notify = RabbitMQNotify {
                         message_template: message_template,
                         channel: amqp_channel,
                         exchange: exchange,
-                        routing_key: routing_key,
+                        routing_key: notify_conf.routing_key.clone(),
                     };
 
                     while let Some(file_event) = receiver.next().await {
@@ -444,7 +442,9 @@ where
                         let l_target_conf = target_conf.clone();
 
                         let result_event = handle_file_event(&l_target_conf, file_event, l_persistence).await;
-                        
+
+                        debug!("Notifying with AMQP routing key {}", &routing_key);
+
                         notify.notify(result_event).await;
                     }
                 };

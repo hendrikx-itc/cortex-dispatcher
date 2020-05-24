@@ -36,9 +36,13 @@ impl RabbitMQNotify {
 
         match render_result {
             Ok(message_str) => {
-                channel.basic_publish(&exchange, &routing_key, BasicPublishOptions::default(), message_str.as_bytes().to_vec(), BasicProperties::default())
-                .wait()
-                .expect("basic_publish");
+                let publish_result = channel.basic_publish(&exchange, &routing_key, BasicPublishOptions::default(), message_str.as_bytes().to_vec(), BasicProperties::default())
+                .wait();
+
+                match publish_result {
+                    Ok(_) => debug!("published"),
+                    Err(e) => error!("Error publishing notification: {}", e)
+                }
             },
             Err(e) => {
                 error!("Error rendering template: {}", e);
