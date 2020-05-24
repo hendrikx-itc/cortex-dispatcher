@@ -6,20 +6,18 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::event::FileEvent;
 use crate::settings;
 use lapin::options::BasicPublishOptions;
-use lapin::{BasicProperties, Channel, CloseOnDrop};
+use lapin::{BasicProperties, Channel};
 
 
 pub struct RabbitMQNotify {
     pub message_template: String,
-    pub channel: CloseOnDrop<Channel>,
     pub exchange: String,
     pub routing_key: String,
 }
 
 impl RabbitMQNotify {
-    pub async fn notify(&self, file_event: FileEvent) {
+    pub async fn notify(&self, channel: &Channel, file_event: FileEvent) {
         let template_name = "notification";
-        let channel = self.channel.clone();
         let exchange = self.exchange.clone();
         let routing_key = self.routing_key.clone();
 
@@ -36,8 +34,13 @@ impl RabbitMQNotify {
 
         match render_result {
             Ok(message_str) => {
-                let publish_result = channel.basic_publish(&exchange, &routing_key, BasicPublishOptions::default(), message_str.as_bytes().to_vec(), BasicProperties::default())
-                .wait();
+                let publish_result = channel.basic_publish(
+                    &exchange,
+                    &routing_key,
+                    BasicPublishOptions::default(),
+                    message_str.as_bytes().to_vec(),
+                    BasicProperties::default()
+                ).await;
 
                 match publish_result {
                     Ok(_) => debug!("published"),

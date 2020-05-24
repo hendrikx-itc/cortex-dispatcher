@@ -109,12 +109,97 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         let tokio_persistence = PostgresAsyncPersistence::new(tokio_connection_manager).await;
 
         t_settings.directory_targets.iter().for_each(|target_conf| {
-            let (future, stop_cmd, target) = setup_directory_target(target_conf.clone(), tokio_persistence.clone());
-    
+            let persistence = tokio_persistence.clone();
+            let (sender, mut receiver) = unbounded_channel();
+
+            let c_target_conf = target_conf.clone();
+            let d_target_conf = target_conf.clone();
+        
+            let (stop_sender, stop_receiver) = oneshot::channel::<()>();
+        
+            match c_target_conf.notify {
+                Some(conf) => match conf {
+                    settings::Notify::RabbitMQ(notify_conf) => {
+                        let fut = async move {
+                            debug!("Connecting notifier to directory target stream");
+        
+                            let connect_result = lapin::Connection::connect(
+                                &notify_conf.address,
+                                lapin::ConnectionProperties::default(),
+                            ).await;
+                        
+                            let connection = connect_result.unwrap();
+                        
+                            let amqp_channel_result = connection.create_channel().await;
+
+                            let amqp_channel = match amqp_channel_result {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Error creating AMQP channel: {}", e);
+                                    return
+                                }
+                            };
+                                        
+                            let notify = RabbitMQNotify {
+                                message_template: notify_conf.message_template.clone(),
+                                //channel: amqp_channel,
+                                exchange: notify_conf.exchange.clone(),
+                                routing_key: notify_conf.routing_key.clone(),
+                            };
+
+                            let routing_key = notify_conf.routing_key.clone();
+        
+                            while let Some(file_event) = receiver.next().await {        
+                                let result_event = handle_file_event(&d_target_conf, file_event, persistence.clone()).await;
+        
+                                debug!("Notifying with AMQP routing key {}", &routing_key);
+        
+                                notify.notify(&amqp_channel, result_event).await;
+                            }
+                        };
+        
+                        tokio::spawn(async move {
+                            tokio::select!(
+                                _a = fut => (),
+                                _b = stop_receiver => ()
+                            )
+                        })
+                    }
+                },
+                None => {
+                    let fut = async move {
+                        while let Some(file_event) = receiver.next().await {        
+                            handle_file_event(&d_target_conf, file_event, persistence.clone()).await;
+                        }
+                    };
+        
+                    tokio::spawn(async move {
+                        tokio::select!(
+                            _a = fut => (),
+                            _b = stop_receiver => ()
+                        )
+                    })
+                },
+            };
+        
+            let stop_cmd_name = c_target_conf.name.clone();
+        
+            let stop_cmd = Box::new(move || {
+                let send_result = stop_sender.send(());
+        
+                match send_result {
+                    Ok(_) => debug!("Stop command sent for directory target '{}'", &stop_cmd_name),
+                    Err(e) => debug!("Error sending stop command for directory target '{}': {:?}", &stop_cmd_name, e)
+                }
+            });
+        
+            let target = Arc::new(Target {
+                name: c_target_conf.name.clone(),
+                sender: sender,
+            });
+                    
             directory_target_stop.lock().unwrap().add_command(stop_cmd);
-    
-            tokio::spawn(future);
-    
+        
             directory_target_targets.lock().unwrap().insert(target_conf.name.clone(), target);
         });
     });
@@ -395,103 +480,3 @@ async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Re
 
     Ok(())
 }
-
-fn setup_directory_target<T>(target_conf: settings::DirectoryTarget, persistence: PostgresAsyncPersistence<T>) -> (impl futures::future::Future<Output=()> + Send + 'static, StopCmd, Arc<Target>) 
-where
-    T: MakeTlsConnect<tokio_postgres::Socket> + Clone + 'static + Sync + Send,
-    T::TlsConnect: Send,
-    T::Stream: Send + Sync,
-    <T::TlsConnect as TlsConnect<tokio_postgres::Socket>>::Future: Send,
-{
-    let (sender, mut receiver) = unbounded_channel();
-
-    let c_target_conf = target_conf.clone();
-
-    let (stop_sender, stop_receiver) = oneshot::channel::<()>();
-
-    let future = match c_target_conf.notify {
-        Some(conf) => match conf {
-            settings::Notify::RabbitMQ(notify_conf) => {
-                let fut = async move {
-                    debug!("Connecting notifier to directory target stream");
-
-                    let connect_result = lapin::Connection::connect(
-                        &notify_conf.address,
-                        lapin::ConnectionProperties::default(),
-                    ).await;
-                
-                    let connection = connect_result.unwrap();
-                
-                    let amqp_channel_result = connection.create_channel().await;
-                
-                    let amqp_channel = amqp_channel_result.unwrap();
-
-                    let message_template = notify_conf.message_template.clone();
-                    let exchange = notify_conf.exchange.clone();
-                    let routing_key = notify_conf.routing_key.clone();
-
-                    let notify = RabbitMQNotify {
-                        message_template: message_template,
-                        channel: amqp_channel,
-                        exchange: exchange,
-                        routing_key: notify_conf.routing_key.clone(),
-                    };
-
-                    while let Some(file_event) = receiver.next().await {
-                        let l_persistence = persistence.clone();
-                        let l_target_conf = target_conf.clone();
-
-                        let result_event = handle_file_event(&l_target_conf, file_event, l_persistence).await;
-
-                        debug!("Notifying with AMQP routing key {}", &routing_key);
-
-                        notify.notify(result_event).await;
-                    }
-                };
-
-                Either::Left(async move {
-                    tokio::select!(
-                        a = fut => (),
-                        b = stop_receiver => ()
-                    )
-                })
-            }
-        },
-        None => {
-            let fut = async move {
-                while let Some(file_event) = receiver.next().await {
-                    let l_persistence = persistence.clone();
-                    let l_target_conf = target_conf.clone();
-
-                    handle_file_event(&l_target_conf, file_event, l_persistence).await;
-                }
-            };
-
-            Either::Right(async move {
-                tokio::select!(
-                    a = fut => (),
-                    b = stop_receiver => ()
-                )
-            })
-        },
-    };
-
-    let stop_cmd_name = c_target_conf.name.clone();
-
-    let stop_cmd = Box::new(move || {
-        let send_result = stop_sender.send(());
-
-        match send_result {
-            Ok(_) => debug!("Stop command sent for directory target '{}'", &stop_cmd_name),
-            Err(e) => debug!("Error sending stop command for directory target '{}': {:?}", &stop_cmd_name, e)
-        }
-    });
-
-    let target = Arc::new(Target {
-        name: c_target_conf.name.clone(),
-        sender: sender,
-    });
-
-    (future, stop_cmd, target)
-}
-

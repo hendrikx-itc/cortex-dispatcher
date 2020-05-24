@@ -31,7 +31,7 @@ directory_targets:
       rabbitmq:
         message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
         address: "amqp://127.0.0.1:5672/%2f"
-        exchange: "amq.default"
+        exchange: ""
         routing_key: "processing-node-red"
   - name: blue
     directory: $CORTEX_DATA_ROOT/storage/blue-consumer
@@ -41,7 +41,7 @@ directory_targets:
       rabbitmq:
         message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
         address: "amqp://127.0.0.1:5672/%2f"
-        exchange: "amq.default"
+        exchange: ""
         routing_key: "processing-node-blue"
 
 sftp_sources:
