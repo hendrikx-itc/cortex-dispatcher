@@ -41,6 +41,12 @@ impl From<PersistenceError> for LocalStorageError {
     }
 }
 
+impl From<std::io::Error> for LocalStorageError {
+    fn from(e: std::io::Error) -> Self {
+        LocalStorageError { message: format!("{}", e) }
+    }
+}
+
 impl<T> LocalStorage<T>
 where
     T: Persistence,
@@ -106,35 +112,37 @@ where
         };
         let local_path_str = local_path.to_string_lossy();
 
-        let local_path_parent = local_path.parent().unwrap();
-
-        if !local_path_parent.exists() {
-            let local_path_parent_str = local_path_parent.to_string_lossy();
-            let create_dir_result = std::fs::create_dir_all(local_path_parent);
-
-            match create_dir_result {
-                Ok(_) => info!("Created containing directory '{}'", local_path_parent_str),
-                Err(e) => {
-                    return Err(LocalStorageError { message: format!("Error creating containing directory '{}': {}", local_path_parent_str, e) })
+        if let Some(local_path_parent) = local_path.parent() {
+            if !local_path_parent.exists() {
+                let local_path_parent_str = local_path_parent.to_string_lossy();
+                let create_dir_result = std::fs::create_dir_all(local_path_parent);
+    
+                match create_dir_result {
+                    Ok(_) => info!("Created containing directory '{}'", local_path_parent_str),
+                    Err(e) => {
+                        return Err(LocalStorageError { message: format!("Error creating containing directory '{}': {}", local_path_parent_str, e) })
+                    }
                 }
-            }
-        } else {
-            if local_path.is_file() {
-                self.persistence.remove_file(source_name, &local_path_str)?;
-
-                // Remove existing file before creating new hardlink
-                std::fs::remove_file(&local_path).unwrap();
-            }
-        }
-
+            } else {
+                if local_path.is_file() {
+                    self.persistence.remove_file(source_name, &local_path_str)?;
+    
+                    // Remove existing file before creating new hardlink
+                    std::fs::remove_file(&local_path)?;
+                }
+            }        
+        };
 
         let link_result = hard_link(&file_path, &local_path);
 
         match link_result {
             Ok(()) => {
-                let metadata = std::fs::metadata(&local_path).unwrap();
-                let modified = system_time_to_date_time(metadata.modified().unwrap());
-                let size = i64::try_from(metadata.len()).unwrap();
+                let metadata = std::fs::metadata(&local_path)?;
+                let modified = system_time_to_date_time(metadata.modified()?);
+                let size = match i64::try_from(metadata.len()) {
+                    Ok(s) => s,
+                    Err(e) => return Err(LocalStorageError{ message: format!("Error converting file size to i64: {}", e) })
+                };
 
                 let file_id = self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
 

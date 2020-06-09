@@ -1,6 +1,5 @@
 use std::thread;
 
-use actix_rt;
 use actix_web::{middleware, web, App, HttpRequest, HttpServer, Responder};
 
 use prometheus::{Encoder, TextEncoder};

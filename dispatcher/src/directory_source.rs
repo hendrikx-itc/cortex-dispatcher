@@ -34,6 +34,7 @@ pub struct LocalFileEvent {
     pub prefix: PathBuf
 }
 
+#[cfg(target_os = "linux")]
 fn visit_dirs(dir: &Path, cb: &mut dyn FnMut(&Path), recurse: bool) -> io::Result<()> {
     if dir.is_dir() {
         cb(dir);

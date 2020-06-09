@@ -2,7 +2,6 @@ use std::thread;
 
 use log::{error, info};
 
-use actix_rt;
 use actix_web::{middleware, web, App, HttpServer, Responder, HttpResponse};
 
 use prometheus::{Encoder, TextEncoder};

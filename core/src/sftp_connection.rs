@@ -41,7 +41,11 @@ impl SftpConnection {
             Err(e) => return Err(Error::with_chain(e, "TCP connect failed"))
         };
 
-        let mut session = Box::new(Session::new().unwrap());
+        let mut session = match Session::new() {
+            Ok(s) => Box::new(s),
+            Err(e) => return Err(Error::with_chain(e, "Session setup failed"))
+        };
+
         session.set_compress(config.compress);
         session.set_tcp_stream(tcp);
         let handshake_result = session.handshake();
@@ -56,7 +60,7 @@ impl SftpConnection {
 
         let auth_result = match config.key_file {
             Some(key_file_path) => {
-                info!("Authorizing using key {}", &key_file_path.to_str().unwrap());
+                info!("Authorizing using key {}", &key_file_path.to_string_lossy());
                 session.userauth_pubkey_file(&config.username, None, key_file_path.as_path(), None)
             },
             None => match config.password {

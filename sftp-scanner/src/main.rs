@@ -3,15 +3,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write;
 
-use env_logger;
 use futures::stream::TryStreamExt;
 use futures_util::compat::Compat01As03;
 use log::{error, info};
-use tokio;
 
 use crossbeam_channel::bounded;
 
-use signal_hook;
 use signal_hook::iterator::Signals;
 
 extern crate config;

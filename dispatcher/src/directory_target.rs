@@ -15,7 +15,7 @@ pub async fn handle_file_event<T>(
     settings: &settings::DirectoryTarget,
     file_event: FileEvent,
     persistence: PostgresAsyncPersistence<T>
-) -> FileEvent
+) -> Result<FileEvent, String>
 where
     T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
     T::TlsConnect: Send,
@@ -29,7 +29,12 @@ where
     let target_permissions = Permissions::from_mode(settings.permissions);
 
     let source_path_str = file_event.path.to_string_lossy();
-    let file_name = file_event.path.file_name().unwrap();
+    let file_name = match file_event.path.file_name() {
+        Some(f) => f,
+        None => {
+            return Err(format!("No file name from file event path '{}'", &source_path_str));
+        }
+    };
     let target_path = target_directory.join(file_name);
     let target_path_str = target_path.to_string_lossy();
     let target_perms = target_permissions.clone();
@@ -128,7 +133,7 @@ where
         }
     };
 
-    if let Ok(_) = placement_result {
+    if placement_result.is_ok() {
         let set_result = set_permissions(&target_path, target_perms);
 
         if let Err(e) = set_result {
@@ -143,9 +148,9 @@ where
         Err(e) => debug!("Error persisting dispatch: {}", &e)
     }
 
-    FileEvent {
+    Ok(FileEvent {
         file_id: file_event.file_id,
         source_name: target_name.clone(),
         path: target_path
-    }
+    })
 }

@@ -7,7 +7,6 @@ use std::{thread, time};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use proctitle;
 extern crate failure;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
@@ -237,25 +236,6 @@ where
 
         let (copy_result, hash, stat) = {
             let borrow = sftp_connection.borrow();
-
-            // let stat_result = borrow.sftp.stat(&remote_path);
-
-            // let stat = match stat_result {
-            //     Ok(s) => s,
-            //     Err(e) => {
-            //         match e.code() {
-            //             0 => {
-            //                 // unknown error, probably a fault in the SFTP connection
-            //                 return Err(ErrorKind::DisconnectedError.into())
-            //             },
-            //             -31 => {
-            //                 // SFTP protocol error
-            //                 return Err(ErrorKind::DisconnectedError.into())
-            //             },
-            //             _ => return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
-            //         }
-            //     }
-            // };
             
             let open_result = borrow.sftp.open(&remote_path);
 
@@ -288,15 +268,32 @@ where
                 }
             };
 
-            let stat = remote_file.stat().unwrap();
+            let stat_result = remote_file.stat();
 
-            let local_path_parent = local_path.parent().unwrap();
+            let stat = match stat_result {
+                Ok(s) => s,
+                Err(e) => {
+                    match e.code() {
+                        0 => {
+                            // unknown error, probably a fault in the SFTP connection
+                            return Err(ErrorKind::DisconnectedError.into())
+                        },
+                        -31 => {
+                            // SFTP protocol error
+                            return Err(ErrorKind::DisconnectedError.into())
+                        },
+                        _ => return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
+                    }
+                }
+            };
 
-            if !local_path_parent.exists() {
-                std::fs::create_dir_all(local_path_parent)
-                    .chain_err(||format!("Error creating containing directory '{}'", local_path_parent.to_string_lossy()))?;
-
-                info!("Created containing directory '{}'", local_path_parent.to_string_lossy());
+            if let Some(local_path_parent) = local_path.parent() {
+                if !local_path_parent.exists() {
+                    std::fs::create_dir_all(local_path_parent)
+                        .chain_err(||format!("Error creating containing directory '{}'", local_path_parent.to_string_lossy()))?;
+    
+                    info!("Created containing directory '{}'", local_path_parent.to_string_lossy());
+                }    
             }
 
             let mut local_file = File::create(&local_path)
@@ -320,16 +317,30 @@ where
                     self.sftp_source.name, msg.path, bytes_copied
                 );
 
-                let file_size = i64::try_from(bytes_copied).unwrap();
+                let file_size = match i64::try_from(bytes_copied) {
+                    Ok(size) => size,
+                    Err(e) => return Err(Error::with_chain(e, "Error converting bytes copied to i64"))
+                };
 
-				let sec = i64::try_from(stat.mtime.unwrap()).unwrap();
+                let mtime = match stat.mtime {
+                    Some(t) => t,
+                    None => 0
+                };
+
+				let sec = match i64::try_from(mtime) {
+                    Ok(s) => s,
+                    Err(e) => return Err(Error::with_chain(e, "Error converting mtime to i64"))
+                };
 				let nsec = 0;
 
                 let modified = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc);
 
-                let file_id = self.persistence.insert_file(
+                let file_id = match self.persistence.insert_file(
                     &self.sftp_source.name, &local_path.to_string_lossy(), &modified, file_size, Some(hash)
-                ).unwrap();
+                ) {
+                    Ok(id) => id,
+                    Err(e) => return Err(ErrorKind::PersistenceError.into())
+                };
 
                 let set_result = self.persistence.set_sftp_download_file(msg.id, file_id);
 

@@ -3,10 +3,7 @@ use std::error;
 use std::path::PathBuf;
 
 use postgres::tls::{MakeTlsConnect, TlsConnect};
-use r2d2;
 use r2d2_postgres::PostgresConnectionManager;
-use bb8;
-use bb8_postgres;
 use tokio_postgres::Socket;
 use chrono::prelude::*;
 
@@ -239,7 +236,7 @@ where
         );
 
         match insert_result {
-            Ok(row) => Ok(()),
+            Ok(_row) => Ok(()),
             Err(e) => Err(PersistenceError{
                 source: Some(Box::new(e)),
                 message: String::from("Error inserting dispatched record into database")
