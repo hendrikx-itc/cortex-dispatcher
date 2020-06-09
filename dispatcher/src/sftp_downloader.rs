@@ -185,9 +185,14 @@ where
                         match e {
                             RecvTimeoutError::Timeout => (),
                             RecvTimeoutError::Disconnected => {
-                                error!("[E02005] SFTP download command channel receiver disconnected");
+                                // If the stop flag was set, the other side of the channel was dropped because of that, otherwise return an error
+                                if (stop.load(Ordering::Relaxed)) {
+                                    return Ok(())
+                                } else {
+                                    error!("[E02005] SFTP download command channel receiver disconnected");
 
-                                return Err(Error::with_chain(e, "[E02005] SFTP download command channel receiver disconnected"));
+                                    return Err(Error::with_chain(e, "[E02005] SFTP download command channel receiver disconnected"));
+                                }
                             }
                         }
                     }

@@ -20,7 +20,7 @@ use tokio::stream::StreamExt;
 use futures::future::Either;
 use futures_util::compat::Compat01As03;
 
-use postgres::tls::{MakeTlsConnect, TlsConnect};
+use postgres::tls::MakeTlsConnect;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
@@ -317,16 +317,16 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     let sftp_sources_join_handle = runtime.spawn(async move {
         debug!("Connecting to AMQP service at {}", &l_settings.command_queue.address);
         
-        let conn_result = lapin::Connection::connect(
+        let amqp_client = lapin::Connection::connect(
             &l_settings.command_queue.address,
             ConnectionProperties::default(),
-        ).await;
-
-        let client = conn_result.unwrap();
+        ).await?;
 
         debug!("Connected to AMQP service");
 
-        let stream_join_handles: Vec<tokio::task::JoinHandle<Result<(), sftp_command_consumer::ConsumeError>>> = sftp_source_senders.into_iter().map(|channels| -> tokio::task::JoinHandle<Result<(), sftp_command_consumer::ConsumeError>> {
+        let mut stream_join_handles: Vec<tokio::task::JoinHandle<Result<(), sftp_command_consumer::ConsumeError>>> = Vec::new();
+        
+        for channels in sftp_source_senders {
             let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
 
             for n in 0..channels.sftp_source.thread_count {
@@ -349,25 +349,34 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                 info!("Started SFTP download thread '{}' ({})", &channels.sftp_source.name, n + 1);
             }
 
+            let channel_result = amqp_client.create_channel().await;
+
+            let amqp_channel = match channel_result {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Error creating channel: {}", e);
+                    return Err(sftp_command_consumer::ConsumeError::RabbitMQError(e))
+                }
+            };
+
+            debug!("Spawning AMQP stream task '{}'", &channels.sftp_source.name);
+
             let consume_future = sftp_command_consumer::start(
-                client.clone(),
+                amqp_channel,
                 channels.sftp_source.name.clone(),
                 ack_receiver, channels.cmd_sender.clone()
             );
 
-            debug!("Spawning AMQP stream task '{}'", &channels.sftp_source.name);
-            //let join_handle = tokio::spawn(consume_future);
-
-            tokio::spawn(async move {
+            stream_join_handles.push(tokio::spawn(async {
                 tokio::select!(
                     a = consume_future => a,
                     b = channels.stop_receiver => {
                         debug!("Interrupted SFTP command consumer stream '{}'", &channels.sftp_source.name);
                         Ok(())
                     }
-                )
-            })
-        }).collect();
+                )    
+            }));
+        }
 
         let dispatcher_join_handles: Vec<tokio::task::JoinHandle<Result<(), ()>>> = sources.into_iter().map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
             // Filter connections to this source
@@ -382,8 +391,10 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
             tokio::spawn(dispatch_stream(source, source_connections))
         }).collect();
 
-        // Await on futures so that the AMQP client does not get destroyed.
-        join_all(stream_join_handles).await
+        // Await on futures so that the AMQP connection does not get destroyed.
+        let stream_results = join_all(stream_join_handles).await;
+
+        Ok::<(), sftp_command_consumer::ConsumeError>(())
     });
 
     let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(

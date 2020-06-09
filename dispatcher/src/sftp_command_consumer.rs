@@ -55,7 +55,7 @@ async fn setup_message_responder(channel: lapin::Channel, mut ack_receiver: toki
 }
 
 pub async fn start(
-    amqp_client: lapin::Connection,
+    amqp_channel: lapin::Channel,
     sftp_source_name: String,
 	ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
     command_sender: Sender<(u64, SftpDownload)>
@@ -64,33 +64,22 @@ pub async fn start(
 	
 	debug!("Creating SFTP command AMQP channel '{}'", &sftp_source_name);
 
-	//let channel = amqp_client.create_channel().await?;
-	let channel_result = amqp_client.create_channel().await;
-
-    let channel = match channel_result {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Error creating channel: {}", e);
-            return Err(ConsumeError::from(e))
-        }
-    };
-
-	let id = channel.id();
+	let id = amqp_channel.id();
 	info!("Created SFTP command AMQP channel with id {}", id);
 
-	tokio::spawn(setup_message_responder(channel.clone(), ack_receiver));
+	tokio::spawn(setup_message_responder(amqp_channel.clone(), ack_receiver));
 
 	let consumer_tag = "cortex-dispatcher";
 	let queue_name = format!("source.{}", &sftp_source_name);
 
-	let _queue = channel
+	let _queue = amqp_channel
 		.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default()).await?;
 
 	info!("channel {} declared queue '{}'", id, &queue_name);
 	let routing_key = format!("source.{}", &sftp_source_name);
 	let exchange = "amq.direct";
 
-	channel.queue_bind(
+	amqp_channel.queue_bind(
 		&queue_name,
 		&exchange,
 		&routing_key,
@@ -101,12 +90,12 @@ pub async fn start(
 	debug!("Queue '{}' bound to exchange '{}' for routing key '{}'", &queue_name, &exchange, &routing_key);
 
 	// Setup command consuming stream
-	let mut consumer = channel.basic_consume(
+	let mut consumer = amqp_channel.basic_consume(
 		&queue_name, &consumer_tag, BasicConsumeOptions::default(), FieldTable::default()
 	).await?;
 
 	while let Some(message) = consumer.next().await {
-		let message = message.unwrap();
+		let (channel, delivery) = message.unwrap();
 		let action_command_sender = command_sender.clone();
 
 		debug!("Received message from AMQP queue '{}'", &queue_name);
@@ -114,11 +103,11 @@ pub async fn start(
 			.with_label_values(&[&sftp_source_name_2])
 			.inc();
 
-		let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(message.data.as_slice());
+		let deserialize_result: serde_json::Result<SftpDownload> = serde_json::from_slice(delivery.data.as_slice());
 
 		let result = match deserialize_result {
 			Ok(sftp_download) => {
-				let send_result = action_command_sender.try_send((message.delivery_tag, sftp_download));
+				let send_result = action_command_sender.try_send((delivery.delivery_tag, sftp_download));
 				
 				match send_result {
 					Ok(_) => Ok(()),
@@ -157,7 +146,7 @@ pub async fn start(
 				}
 			};
 
-			channel.basic_nack(message.delivery_tag, BasicNackOptions{ multiple: false, requeue: requeue_message}).await?;
+			channel.basic_nack(delivery.delivery_tag, BasicNackOptions{ multiple: false, requeue: requeue_message}).await?;
 		}
 	}
 
