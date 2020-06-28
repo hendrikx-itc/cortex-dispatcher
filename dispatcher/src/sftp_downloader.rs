@@ -185,7 +185,7 @@ where
                             RecvTimeoutError::Timeout => (),
                             RecvTimeoutError::Disconnected => {
                                 // If the stop flag was set, the other side of the channel was dropped because of that, otherwise return an error
-                                if (stop.load(Ordering::Relaxed)) {
+                                if stop.load(Ordering::Relaxed) {
                                     return Ok(())
                                 } else {
                                     error!("[E02005] SFTP download command channel receiver disconnected");
@@ -305,7 +305,7 @@ where
 
             (
                 io::copy(&mut tee_reader, &mut local_file),
-                format!("{:x}", sha256.result()),
+                format!("{:x}", sha256.finalize()),
                 stat
             )
         };
