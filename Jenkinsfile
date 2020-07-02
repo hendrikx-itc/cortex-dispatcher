@@ -1,4 +1,8 @@
 pipeline {
+    parameters {
+        string(name: 'PACKAGE_SECTION', defaultValue: 'unstable', description: '')
+    }
+
     agent {
         node {
             label 'git'
@@ -25,7 +29,7 @@ pipeline {
             }
             steps {
                 script {
-                    publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                    publishPackages 'target/debian', "common/bionic/${params.PACKAGE_SECTION}", 'bionic'
                 }
             }
         }
@@ -49,7 +53,7 @@ pipeline {
             }
             steps {
                 script {
-                    publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                    publishPackages 'target/debian', "common/bionic/${params.PACKAGE_SECTION}", 'bionic'
                 }
             }
         }
