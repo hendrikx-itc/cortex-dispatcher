@@ -238,7 +238,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         start_directory_sources(settings.directory_sources.clone(), local_intake_sender.clone());
 
     #[cfg(target_os = "linux")]
-    stop.add_command(inotify_stop_cmd);
+    stop.lock().unwrap().add_command(inotify_stop_cmd);
 
     let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(
         settings.directory_sources.clone(),

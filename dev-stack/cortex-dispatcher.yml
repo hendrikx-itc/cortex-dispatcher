@@ -1,0 +1,79 @@
+storage:
+  directory: $CORTEX_DATA_ROOT/storage
+
+command_queue:
+  address: "amqp://127.0.0.1:5672/%2f"
+
+directory_sources:
+  - name: mixed-directory
+    directory: $CORTEX_DATA_ROOT/incoming
+    recursive: True
+    events:
+      - CloseWrite
+      - MovedTo
+
+scan_interval: 5000
+
+directory_targets:
+  - name: v5
+    directory: $CORTEX_DATA_ROOT/storage/v5
+    overwrite: false
+    permissions: 0o644
+  - name: v6
+    directory: $CORTEX_DATA_ROOT/storage/v6
+    overwrite: false
+    permissions: 0o644
+  - name: red
+    directory: $CORTEX_DATA_ROOT/storage/red-consumer
+    overwrite: false
+    permissions: 0o644
+    notify:
+      rabbitmq:
+        message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
+        address: "amqp://127.0.0.1:5672/%2f"
+        exchange: ""
+        routing_key: "processing-node-red"
+  - name: blue
+    directory: $CORTEX_DATA_ROOT/storage/blue-consumer
+    overwrite: false
+    permissions: 0o644
+    notify:
+      rabbitmq:
+        message_template: '{"type": "new_file", "file_path": "{{ file_path }}"}'
+        address: "amqp://127.0.0.1:5672/%2f"
+        exchange: ""
+        routing_key: "processing-node-blue"
+
+sftp_sources:
+  - name: local-red
+    address: 127.0.0.1:2222
+    username: cortex
+    password: password
+    thread_count: 4
+  - name: local-blue
+    address: 127.0.0.1:2222
+    username: cortex
+    password: password
+    thread_count: 2
+
+connections:
+  - source: mixed-directory
+    target: v5
+    filter:
+      Regex:
+        pattern: "^.*-v5\\.xml$"
+  - source: mixed-directory
+    target: v6
+    filter:
+      Regex:
+        pattern: "^.*-v6\\.xml$"
+  - source: local-red
+    target: red
+  - source: local-blue
+    target: blue
+
+postgresql:
+  url: "postgresql://postgres:password@127.0.0.1:5432/cortex"
+
+http_server:
+  address: "0.0.0.0:56008"
