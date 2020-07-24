@@ -53,6 +53,6 @@ services:
     build: dev-stack/data-generator
     environment:
       SFTP_HOST: sftp
-      SFTP_PORT: 22 
+      SFTP_PORT: 22
       SFTP_USER: cortex
       SFTP_PASSWORD: password
