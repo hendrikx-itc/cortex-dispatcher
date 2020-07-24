@@ -22,20 +22,12 @@ def main():
     root_logger = logging.getLogger('')
     root_logger.setLevel(logging.INFO)
 
-    cnopts = pysftp.CnOpts()
-    cnopts.hostkeys = None
-
     storage_path = '.'
 
     interval = datetime.timedelta(seconds=30)
     next_run = datetime.datetime.now()
 
-    host = os.environ['SFTP_HOST']
-    port = os.environ['SFTP_PORT']
-    username = os.environ['SFTP_USERNAME']
-    password = os.environ['SFTP_PASSWORD']
-
-    with pysftp.Connection(host, port=port, username=username, password=password, cnopts=cnopts) as sftp:
+    with connect_sftp() as sftp:
         while True:
             now = datetime.datetime.now()
 
@@ -51,7 +43,26 @@ def main():
 
                 logging.info(f"Done, waiting for next run at {next_run}")
 
-            time.sleep(100)
+            time.sleep(10)
+
+
+def connect_sftp():
+    cnopts = pysftp.CnOpts()
+    cnopts.hostkeys = None
+
+    host = os.environ['SFTP_HOST']
+    port = int(os.environ['SFTP_PORT'])
+    username = os.environ['SFTP_USERNAME']
+    password = os.environ['SFTP_PASSWORD']
+
+    while True:
+        try:
+            conn = pysftp.Connection(host, port=port, username=username, password=password, cnopts=cnopts)
+
+            return conn
+        except Exception as exc:
+            logging.warn('Could not connect to SFTP server: {}'.format(exc))
+            time.sleep(2)
 
 
 def send_file(sftp, storage_path, file_name, generate_lines):
