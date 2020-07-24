@@ -30,7 +30,12 @@ def main():
     interval = datetime.timedelta(seconds=30)
     next_run = datetime.datetime.now()
 
-    with pysftp.Connection('localhost', port=2222, username='cortex', password='password', cnopts=cnopts) as sftp:
+    host = os.environ['SFTP_HOST']
+    port = os.environ['SFTP_PORT']
+    username = os.environ['SFTP_USERNAME']
+    password = os.environ['SFTP_PASSWORD']
+
+    with pysftp.Connection(host, port=port, username=username, password=password, cnopts=cnopts) as sftp:
         while True:
             now = datetime.datetime.now()
 
