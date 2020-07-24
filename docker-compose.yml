@@ -54,5 +54,5 @@ services:
     environment:
       SFTP_HOST: sftp
       SFTP_PORT: 22
-      SFTP_USER: cortex
+      SFTP_USERNAME: cortex
       SFTP_PASSWORD: password
