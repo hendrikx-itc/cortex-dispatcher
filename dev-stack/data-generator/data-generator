@@ -80,11 +80,11 @@ def mkdir_all(sftp, path):
 
     if not sftp.isdir(head):
         mkdir_all(sftp, head)
-    else:
-        try:
-            sftp.mkdir(path)
-        except PermissionError as exc:
-            raise Exception(f"Error creating remote directory '{path}': {exc}")
+
+    try:
+        sftp.mkdir(path)
+    except PermissionError as exc:
+        raise Exception(f"Error creating remote directory '{path}': {exc}")
 
 
 def check_path(sftp, path):
