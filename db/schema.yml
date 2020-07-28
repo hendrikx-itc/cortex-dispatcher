@@ -19,12 +19,12 @@ objects:
 - function:
     name: version
     schema: dispatcher 
-    return_type: system.version_tuple
+    return_type: dispatcher.version_tuple
     language: sql
     volatility: immutable
     arguments: []
     source: |-
-      SELECT (1,0,0)::system.version_tuple;
+      SELECT (1,0,1)::dispatcher.version_tuple;
 
 - table:
     name: file
@@ -183,3 +183,68 @@ objects:
         columns:
         - id
       on_delete: cascade
+
+- function:
+    name: undispatched_files
+    schema: dispatcher
+    return_type: bigint
+    returns_set: true
+    language: sql
+    volatility: immutable
+    arguments:
+      - name: source
+        data_type: text
+      - name: target
+        data_type: text
+      - data_type: timestamptz
+    description: |-
+      Provide the ids of files from source that have not been sent to
+      the target yet. Only files inserted before the given timestamp
+      are checked.
+    source: |-
+      SELECT file.id
+      FROM dispatcher.file LEFT JOIN dispatcher.dispatched
+      ON dispatched.file_id = file.id
+        AND file.source = $1
+        AND dispatched.target = $2
+      WHERE dispatched IS NULL
+        AND file.timestamp < $3;
+
+- function:
+    name: undispatched_files
+    schema: dispatcher
+    return_type: bigint
+    returns_set: true
+    language: sql
+    volatility: immutable
+    arguments:
+      - name: source
+        data_type: text
+      - name: target
+        data_type: text
+      - data_type: interval
+    description: |-
+      Provide the ids of files from source that have not been sent to
+      the target yet. Only files that have been in the database for
+      at least the given interval are checked.
+    source: |-
+      SELECT dispatcher.undispatched_files($1, $2, now()-$3);
+
+- function:
+    name: undispatched_files
+    schema: dispatcher
+    return_type: bigint
+    returns_set: true
+    language: sql
+    volatility: immutable
+    arguments:
+      - name: source
+        data_type: text
+      - name: target
+        data_type: text
+    description: |-
+      Provide the ids of files from source that have not been sent to
+      the target yet.
+    source: |-
+      SELECT dispatcher.undispatched_files($1, $2, now());
+
