@@ -32,6 +32,12 @@ def main():
             now = datetime.datetime.now()
 
             if now > next_run:
+                logging.info("Create directories")
+
+                check_path(sftp, 'upload/blue/1')
+                check_path(sftp, 'upload/blue/2')
+                check_path(sftp, 'upload/red')
+
                 logging.info("Data generation start")
 
                 generate_data(sftp, storage_path, next_run)
@@ -93,15 +99,11 @@ def check_path(sftp, path):
 
 
 def generate_data(sftp, storage_path, timestamp):
-    check_path(sftp, 'upload/blue/1')
-
     with sftp.cd('upload/blue/1'):
         for i in range(100):
             file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(1000, 30))
-
-    check_path(sftp, 'upload/blue/2')
 
     with sftp.cd('upload/blue/2'):
         for i in range(1000):
@@ -111,8 +113,6 @@ def generate_data(sftp, storage_path, timestamp):
 
 
 def generate_and_remove_data(sftp, storage_path, timestamp):
-    check_path(sftp, 'upload/red')
-
     with sftp.cd('upload/red'):
         generated_files = []
 
