@@ -22,6 +22,7 @@ use crate::event::{FileEvent, EventDispatcher};
 use crate::local_storage::LocalStorage;
 use crate::persistence::Persistence;
 use crate::settings;
+use crate::metrics;
 
 
 #[derive(Debug, Clone)]
@@ -110,12 +111,20 @@ pub fn start_directory_sweep(
                 info!("Sweeping directory source: {}", directory_source.name);
 
                 let mut handle_file = |path: &Path| {
+                    metrics::SWEEP_ENCOUNTERED_COUNTER
+                        .with_label_values(&[&directory_source.name])
+                        .inc();
+
                     let file_matches = match &directory_source.filter {
                         Some(f) => f.file_matches(path),
                         None => true,
                     };
 
                     if file_matches {
+                        metrics::SWEEP_RE_MATCHING_COUNTER
+                            .with_label_values(&[&directory_source.name])
+                            .inc();
+
                         let local_file_event = LocalFileEvent {
                             source_name: directory_source.name.clone(),
                             path: PathBuf::from(path),
@@ -125,7 +134,11 @@ pub fn start_directory_sweep(
                         let send_result = local_intake_sender.send(local_file_event);
 
                         match send_result {
-                            Ok(_) => {},
+                            Ok(_) => {
+                                metrics::SWEEP_NEW_COUNTER
+                                    .with_label_values(&[&directory_source.name])
+                                    .inc();
+                            },
                             Err(e) => error!("Could not send local file event on intake channel: {}", e)
                         }
                     }
