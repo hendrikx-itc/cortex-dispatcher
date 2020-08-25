@@ -11,7 +11,7 @@ use std::sync::mpsc::{Sender, Receiver};
 
 extern crate inotify;
 
-use inotify::{Inotify, WatchMask};
+use inotify::{Inotify, WatchMask, EventMask};
 
 extern crate failure;
 extern crate lapin;
@@ -254,6 +254,21 @@ fn start_inotify_event_thread(
             };
 
             for event in events {
+                if event.mask.contains(EventMask::Q_OVERFLOW) {
+                    let get_result = watch_mapping.get(&event.wd);
+
+                    match get_result {
+                        Some(event_context) => {
+                            error!("Inotify Q_OVERFLOW for directory {}", &event_context.directory.to_string_lossy());
+                        },
+                        None => {
+                            error!("Inotify Q_OVERFLOW");
+                        }
+                    }
+
+                    continue;
+                }
+
                 let name = match event.name {
                     Some(name) => name,
                     None => {
