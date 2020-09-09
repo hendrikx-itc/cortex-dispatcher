@@ -62,7 +62,7 @@ impl Notify for RabbitMQNotify {
                                 &routing_key,
                                 message_str.as_bytes().to_vec(),
                                 BasicPublishOptions::default(),
-                                properties,
+                                &properties,
                             )
                             .and_then(move |_| {
                                 debug!("Notification sent to AMQP queue: {}", message_str_log);

@@ -36,7 +36,7 @@ pub fn start_sender(stop: Arc<AtomicBool>, receiver: Receiver<SftpDownload>, add
                     let command_str = serde_json::to_string(&command).unwrap();
                     let routing_key = format!("source.{}", &command.sftp_source);
 
-                    channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), properies)
+                    channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), &properies)
                         .wait()
                         .expect("basic_publish");
                     debug!("Sent on AMQP");
