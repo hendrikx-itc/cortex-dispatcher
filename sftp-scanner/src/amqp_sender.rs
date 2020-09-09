@@ -26,7 +26,6 @@ pub fn start_sender(stop: Arc<AtomicBool>, receiver: Receiver<SftpDownload>, add
         info!("Created channel with id {}", channel.id());
 
         let exchange = "amq.direct";
-        let properies = BasicProperties::default().with_delivery_mode(2);
 
         while !stop.load(Ordering::Relaxed) {
             let receive_result = receiver.recv_timeout(Duration::from_millis(100));
@@ -36,7 +35,7 @@ pub fn start_sender(stop: Arc<AtomicBool>, receiver: Receiver<SftpDownload>, add
                     let command_str = serde_json::to_string(&command).unwrap();
                     let routing_key = format!("source.{}", &command.sftp_source);
 
-                    channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), &properies)
+                    channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), BasicProperties::default().with_delivery_mode(2))
                         .wait()
                         .expect("basic_publish");
                     debug!("Sent on AMQP");

@@ -50,7 +50,6 @@ impl Notify for RabbitMQNotify {
             context.insert("file_path", &file_event.path);
 
             let render_result = tera.render(template_name, &context);
-            let properties = BasicProperties::default().with_delivery_mode(2);
 
             match render_result {
                 Ok(message_str) => {
@@ -62,7 +61,7 @@ impl Notify for RabbitMQNotify {
                                 &routing_key,
                                 message_str.as_bytes().to_vec(),
                                 BasicPublishOptions::default(),
-                                &properties,
+                                BasicProperties::default().with_delivery_mode(2),
                             )
                             .and_then(move |_| {
                                 debug!("Notification sent to AMQP queue: {}", message_str_log);
