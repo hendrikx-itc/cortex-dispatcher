@@ -232,7 +232,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                     }
                 }
             }
-        } else {
+        } else if stat.is_file() {
             scan_result.encountered_files += 1;
 
             let file_size: u64 = stat.size.unwrap();
