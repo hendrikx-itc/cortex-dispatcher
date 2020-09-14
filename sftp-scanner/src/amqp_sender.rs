@@ -29,13 +29,14 @@ pub fn start_sender(stop: Arc<AtomicBool>, receiver: Receiver<SftpDownload>, add
 
         while !stop.load(Ordering::Relaxed) {
             let receive_result = receiver.recv_timeout(Duration::from_millis(100));
+            let properties = BasicProperties::default().with_delivery_mode(2);
 
             match receive_result {
                 Ok(command) => {
                     let command_str = serde_json::to_string(&command).unwrap();
                     let routing_key = format!("source.{}", &command.sftp_source);
 
-                    channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), BasicProperties::default().with_delivery_mode(2))
+                    channel.basic_publish(exchange, &routing_key, BasicPublishOptions::default(), command_str.as_bytes().to_vec(), properties.clone());
                         .wait()
                         .expect("basic_publish");
                     debug!("Sent on AMQP");
