@@ -7,13 +7,9 @@ use lapin::{BasicProperties, options::BasicPublishOptions};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 
-use serde_json;
-
 use cortex_core::SftpDownload;
 
 use log::{debug, info, error};
-
-use lapin;
 
 
 pub fn start_sender(stop: Arc<AtomicBool>, receiver: Receiver<SftpDownload>, address: String) -> thread::JoinHandle<()> {

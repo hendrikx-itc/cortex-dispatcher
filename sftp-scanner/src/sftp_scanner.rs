@@ -14,8 +14,6 @@ use retry::{retry, delay::Fixed, OperationResult};
 extern crate chrono;
 use chrono::prelude::*;
 
-use proctitle;
-
 use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
 use cortex_core::SftpDownload;
 
@@ -304,10 +302,10 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                         let result = sender.send_timeout(command.clone(), send_timeout);
 
                         match result {
-                            Ok(v) => {
+                            Ok(()) => {
                                 scan_result.dispatched_files += 1;
                                 debug!("Sent message {} on channel", command);
-                                OperationResult::Ok(v)
+                                OperationResult::Ok(())
                             },
                             Err(e) => {
                                 match e {

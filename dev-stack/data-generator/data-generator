@@ -4,36 +4,71 @@ import datetime
 import time
 import logging
 import random
+import argparse
 
 import pysftp
 
 
 def main():
+    parser = argparse.ArgumentParser('Generate and SFTP upload data for testing')
+
+    parser.add_argument(
+        '--delete-some', action='store_true', default=False,
+        help='Delete some files after uploading'
+    )
+
+    args = parser.parse_args()
+
     root_logger = logging.getLogger('')
     root_logger.setLevel(logging.INFO)
-
-    cnopts = pysftp.CnOpts()
-    cnopts.hostkeys = None
 
     storage_path = '.'
 
     interval = datetime.timedelta(seconds=30)
     next_run = datetime.datetime.now()
 
-    with pysftp.Connection('localhost', port=2222, username='cortex', password='password', cnopts=cnopts) as sftp:
+    with connect_sftp() as sftp:
         while True:
             now = datetime.datetime.now()
 
             if now > next_run:
+                logging.info("Create directories")
+
+                check_path(sftp, 'upload/blue/1')
+                check_path(sftp, 'upload/blue/2')
+                check_path(sftp, 'upload/red')
+
                 logging.info("Data generation start")
 
                 generate_data(sftp, storage_path, next_run)
+
+                if args.delete_some:
+                    generate_and_remove_data(sftp, storage_path, next_run)
 
                 next_run += interval
 
                 logging.info(f"Done, waiting for next run at {next_run}")
 
-            time.sleep(100)
+            time.sleep(10)
+
+
+def connect_sftp():
+    cnopts = pysftp.CnOpts()
+    cnopts.hostkeys = None
+
+    host = os.environ['SFTP_HOST']
+    port = int(os.environ['SFTP_PORT'])
+    username = os.environ['SFTP_USERNAME']
+    password = os.environ['SFTP_PASSWORD']
+
+    while True:
+        try:
+            conn = pysftp.Connection(host, port=port, username=username, password=password, cnopts=cnopts)
+
+            return conn
+        except Exception as exc:
+            logging.warn('Could not connect to SFTP server: {}'.format(exc))
+            time.sleep(2)
 
 
 def send_file(sftp, storage_path, file_name, generate_lines):
@@ -51,8 +86,11 @@ def mkdir_all(sftp, path):
 
     if not sftp.isdir(head):
         mkdir_all(sftp, head)
-    else:
+
+    try:
         sftp.mkdir(path)
+    except PermissionError as exc:
+        raise Exception(f"Error creating remote directory '{path}': {exc}")
 
 
 def check_path(sftp, path):
@@ -61,15 +99,11 @@ def check_path(sftp, path):
 
 
 def generate_data(sftp, storage_path, timestamp):
-    check_path(sftp, 'upload/blue/1')
-
     with sftp.cd('upload/blue/1'):
         for i in range(100):
             file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(1000, 30))
-
-    check_path(sftp, 'upload/blue/2')
 
     with sftp.cd('upload/blue/2'):
         for i in range(1000):
@@ -77,8 +111,8 @@ def generate_data(sftp, storage_path, timestamp):
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))
 
-    check_path(sftp, 'upload/red')
 
+def generate_and_remove_data(sftp, storage_path, timestamp):
     with sftp.cd('upload/red'):
         generated_files = []
 

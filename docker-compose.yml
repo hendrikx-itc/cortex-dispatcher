@@ -47,7 +47,12 @@ services:
 
   adapter:
     image: timescale/prometheus-postgresql-adapter:latest
-    command: ["-pg.host=pg_prometheus", "-pg.password=password", "-pg.prometheus-log-samples"]
+    command: ["-pg-host=pg_prometheus", "-pg-password=password", "-pg-prometheus-log-samples"]
 
   generator:
     build: dev-stack/data-generator
+    environment:
+      SFTP_HOST: sftp
+      SFTP_PORT: 22
+      SFTP_USERNAME: cortex
+      SFTP_PASSWORD: password

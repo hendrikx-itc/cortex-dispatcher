@@ -12,9 +12,9 @@ CREATE TYPE "dispatcher"."version_tuple" AS (
 
 
 CREATE FUNCTION "dispatcher"."version"()
-    RETURNS system.version_tuple
+    RETURNS dispatcher.version_tuple
 AS $$
-SELECT (1,0,0)::system.version_tuple;
+SELECT (1,0,1)::dispatcher.version_tuple;
 $$ LANGUAGE sql IMMUTABLE;
 
 
@@ -26,7 +26,8 @@ CREATE TABLE "dispatcher"."file"
   "path" text NOT NULL,
   "modified" timestamptz NOT NULL,
   "size" bigint NOT NULL,
-  "hash" text
+  "hash" text,
+  PRIMARY KEY (id)
 );
 
 COMMENT ON TABLE "dispatcher"."file" IS 'All files in the internal storage area of Cortex are registered here.';
@@ -42,7 +43,8 @@ CREATE TABLE "dispatcher"."sftp_download"
   "source" text NOT NULL,
   "path" text NOT NULL,
   "size" bigint,
-  "file_id" bigint
+  "file_id" bigint,
+  PRIMARY KEY (id)
 );
 
 COMMENT ON TABLE "dispatcher"."sftp_download" IS 'Contains records of files that need to be downloaded from a remote SFTP location.';
@@ -78,6 +80,44 @@ CREATE TABLE "dispatcher"."dispatched"
   "timestamp" timestamptz NOT NULL DEFAULT now()
 );
 
+
+
+CREATE FUNCTION "dispatcher"."undispatched_files"("source" text, "target" text, timestamptz)
+    RETURNS SETOF bigint
+AS $$
+SELECT file.id
+FROM dispatcher.file LEFT JOIN dispatcher.dispatched
+ON dispatched.file_id = file.id
+  AND file.source = $1
+  AND dispatched.target = $2
+WHERE dispatched IS NULL
+  AND file.timestamp < $3;
+$$ LANGUAGE sql IMMUTABLE;
+
+COMMENT ON FUNCTION "dispatcher"."undispatched_files"("source" text, "target" text, timestamptz) IS 'Provide the ids of files from source that have not been sent to
+the target yet. Only files inserted before the given timestamp
+are checked.';
+
+
+CREATE FUNCTION "dispatcher"."undispatched_files"("source" text, "target" text, interval)
+    RETURNS SETOF bigint
+AS $$
+SELECT dispatcher.undispatched_files($1, $2, now()-$3);
+$$ LANGUAGE sql IMMUTABLE;
+
+COMMENT ON FUNCTION "dispatcher"."undispatched_files"("source" text, "target" text, interval) IS 'Provide the ids of files from source that have not been sent to
+the target yet. Only files that have been in the database for
+at least the given interval are checked.';
+
+
+CREATE FUNCTION "dispatcher"."undispatched_files"("source" text, "target" text)
+    RETURNS SETOF bigint
+AS $$
+SELECT dispatcher.undispatched_files($1, $2, now());
+$$ LANGUAGE sql IMMUTABLE;
+
+COMMENT ON FUNCTION "dispatcher"."undispatched_files"("source" text, "target" text) IS 'Provide the ids of files from source that have not been sent to
+the target yet.';
 
 
 ALTER TABLE "dispatcher"."sftp_download"

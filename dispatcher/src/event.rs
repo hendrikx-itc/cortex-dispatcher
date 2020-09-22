@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone)]
 pub struct FileEvent {
+    pub file_id: i64,
     pub source_name: String,
     pub path: PathBuf,
 }
@@ -18,7 +19,7 @@ impl EventDispatcher {
     pub fn dispatch_event(&mut self, file_event: &FileEvent) -> Result<(), String> {
         let sender = self.senders.get_mut(&file_event.source_name).unwrap();
 
-        let send_result = sender.try_send(file_event.clone());
+        let send_result = sender.send(file_event.clone());
 
         match send_result {
             Ok(_) => Ok(()),

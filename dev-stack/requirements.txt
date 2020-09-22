@@ -1,1 +1,2 @@
 pysftp
+git+git://github.com/hendrikx-itc/pg-db-tools

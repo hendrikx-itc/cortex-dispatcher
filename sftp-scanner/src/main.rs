@@ -1,19 +1,14 @@
 use std::thread;
-use std::time::Duration;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write;
 
-use env_logger;
-use futures::stream::Stream;
-use futures::Future;
-use log::{debug, error, info};
-use tokio;
-use tokio_executor::enter;
+use futures::stream::TryStreamExt;
+use futures_util::compat::Compat01As03;
+use log::{error, info};
 
 use crossbeam_channel::bounded;
 
-use signal_hook;
 use signal_hook::iterator::Signals;
 
 extern crate config;
@@ -87,7 +82,6 @@ fn main() {
 
     let settings = load_settings(&config_file);
 
-    let mut entered = enter().expect("Failed to claim thread");
     let mut runtime = tokio::runtime::Runtime::new().unwrap();
 
     // Will hold all functions that stop components of the SFTP scannner
@@ -124,16 +118,6 @@ fn main() {
         })
         .collect();
 
-    let metrics_collector_join_handle = match settings.prometheus_push {
-        Some(conf) => {
-            let join_handle = start_metrics_collector(conf.gateway.clone(), conf.interval);
-
-            info!("Metrics collector thread started");
-
-            Some(join_handle)
-        }
-        None => Option::None,
-    };
 
     // Start the built in web server that currently only serves metrics.
     let (web_server_join_handle, actix_system, actix_http_server) = http_server::start_http_server(settings.http_server.address);
@@ -148,10 +132,10 @@ fn main() {
 
     let amqp_sender_join_handle = amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address);
 
-    runtime.spawn(setup_signal_handler(stop_commands));
+    let signal_handler_join_handle = runtime.spawn(setup_signal_handler(stop_commands));
 
-    entered
-        .block_on(runtime.shutdown_on_idle())
+    runtime
+        .block_on(signal_handler_join_handle)
         .expect("Shutdown cannot error");
 
     for (source_name, scanner_thread) in scanner_threads {
@@ -162,13 +146,9 @@ fn main() {
 
     wait_for(web_server_join_handle, "Http server");
     wait_for(amqp_sender_join_handle, "AMQP sender");
-
-    if let Some(join_handle) = metrics_collector_join_handle {
-        wait_for(join_handle, "Metrics collector");
-    }
 }
 
-fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>) -> impl Future<Item = (), Error = ()> + Send + 'static {
+fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>) -> impl futures::future::Future<Output=()> + Send + 'static {
     let signals = Signals::new(&[
         signal_hook::SIGHUP,
         signal_hook::SIGTERM,
@@ -176,17 +156,19 @@ fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'stat
         signal_hook::SIGQUIT,
     ]).unwrap();
 
-    let signal_stream = signals.into_async().unwrap().into_future();
+    let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
 
-    signal_stream
-        .map(move |sig| {
-            info!("signal: {}", sig.0.unwrap());
-
-            for stop_command in stop_commands {
-                stop_command();
+    async move {
+        while let Ok(signal) = signal_stream.try_next().await {
+            if let Some(s) = signal {
+                info!("signal: {}", s);
             }
-        })
-        .map_err(|e| panic!("{}", e.0))
+        }
+
+        for stop_command in stop_commands {
+            stop_command();
+        }
+    }
 }
 
 
@@ -220,31 +202,4 @@ fn load_settings(config_file: &str) -> Settings {
     info!("Configuration loaded");
 
     settings
-}
-
-fn start_metrics_collector(address: String, push_interval: u64) -> thread::JoinHandle<()> {
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(push_interval));
-
-        let metric_families = prometheus::gather();
-        let push_result = prometheus::push_metrics(
-            "cortex-sftp-scanner",
-            labels! {},
-            &address,
-            metric_families,
-            Some(prometheus::BasicAuthentication {
-                username: "user".to_owned(),
-                password: "pass".to_owned(),
-            }),
-        );
-
-        match push_result {
-            Ok(_) => {
-                debug!("Pushed metrics to Prometheus Gateway");
-            }
-            Err(e) => {
-                error!("Error pushing metrics to Prometheus Gateway: {}", e);
-            }
-        }
-    })
 }

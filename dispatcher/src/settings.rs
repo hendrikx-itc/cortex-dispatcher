@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
+#[cfg(target_os = "linux")]
 use inotify::WatchMask;
 
 extern crate regex;
@@ -67,6 +68,7 @@ pub enum FileSystemEvent {
     AllEvents
 }
 
+#[cfg(target_os = "linux")]
 impl FileSystemEvent {
     pub fn watch_mask(&self) -> WatchMask {
         match self {
@@ -165,12 +167,6 @@ pub struct CommandQueue {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PrometheusPush {
-    pub gateway: String,
-    pub interval: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Postgresql {
     pub url: String,
 }
@@ -178,7 +174,6 @@ pub struct Postgresql {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HttpServer {
     pub address: std::net::SocketAddr,
-    pub static_content_path: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -191,7 +186,6 @@ pub struct Settings {
     pub directory_targets: Vec<DirectoryTarget>,
     pub sftp_sources: Vec<SftpSource>,
     pub connections: Vec<Connection>,
-    pub prometheus_push: Option<PrometheusPush>,
     pub postgresql: Postgresql,
     pub http_server: HttpServer,
     #[serde(default = "default_scan_interval")]
@@ -261,13 +255,11 @@ impl Default for Settings {
                 },
             ],
             connections: vec![],
-            prometheus_push: None,
             postgresql: Postgresql {
                 url: "postgresql://postgres:password@127.0.0.1:5432/cortex".to_string(),
             },
             http_server: HttpServer {
                 address: "0.0.0.0:56008".parse().unwrap(),
-                static_content_path: PathBuf::from("static-web"),
             },
             scan_interval: 60_000
         }

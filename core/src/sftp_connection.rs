@@ -20,8 +20,7 @@ error_chain! {
 }
 
 pub struct SftpConnection {
-    _tcp: TcpStream,
-    pub sftp: OwningHandle<Box<Session>, Box<Sftp<'static>>>,
+    pub sftp: OwningHandle<Box<Session>, Box<Sftp>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -42,18 +41,26 @@ impl SftpConnection {
             Err(e) => return Err(Error::with_chain(e, "TCP connect failed"))
         };
 
-        let mut session = Box::new(Session::new().unwrap());
+        let mut session = match Session::new() {
+            Ok(s) => Box::new(s),
+            Err(e) => return Err(Error::with_chain(e, "Session setup failed"))
+        };
+
         session.set_compress(config.compress);
-        let handshake_result = session.handshake(&tcp);
+        session.set_tcp_stream(tcp);
+        let handshake_result = session.handshake();
 
         match handshake_result {
             Ok(()) => debug!("SSH handshake succeeded"),
-            Err(e) => return Err(Error::with_chain(e, "SSH handshake failed"))
+            Err(e) => {
+                let msg = format!("SSH handshake failed: {}", &e);
+                return Err(Error::with_chain(e, msg))
+            }
         }
 
         let auth_result = match config.key_file {
             Some(key_file_path) => {
-                info!("Authorizing using key {}", &key_file_path.to_str().unwrap());
+                info!("Authorizing using key {}", &key_file_path.to_string_lossy());
                 session.userauth_pubkey_file(&config.username, None, key_file_path.as_path(), None)
             },
             None => match config.password {
@@ -76,7 +83,7 @@ impl SftpConnection {
         // OwningHandle is needed to store a value and a reference to that value in the same struct
         let sftp = OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
-        Ok(SftpConnection {_tcp: tcp, sftp})
+        Ok(SftpConnection {sftp})
     }
 
     pub fn connect_loop(config: SftpConfig, stop: Arc<AtomicBool>) -> Result<SftpConnection> {
