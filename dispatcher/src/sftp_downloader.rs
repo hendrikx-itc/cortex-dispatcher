@@ -354,7 +354,7 @@ where
                     .inc();
                 metrics::BYTES_DOWNLOADED_COUNTER_VEC
                     .with_label_values(&[&self.sftp_source.name])
-                    .inc_by(bytes_copied as i64);
+                    .inc_by(bytes_copied);
 
                 if msg.remove {
                     let unlink_result = sftp_connection.borrow().sftp.unlink(&remote_path);

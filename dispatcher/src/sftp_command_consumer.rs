@@ -38,7 +38,7 @@ impl Display for ConsumeError {
 }
 
 async fn setup_message_responder(channel: lapin::Channel, mut ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>) -> Result<(), ConsumeError> {
-	while let Some(message_response) = ack_receiver.next().await {
+	while let Some(message_response) = ack_receiver.recv().await {
 		match message_response {
 			MessageResponse::Ack { delivery_tag } => {
 				channel.basic_ack(delivery_tag, BasicAckOptions { multiple: false }).await?;
@@ -132,7 +132,7 @@ pub async fn start(
 				}
 				ConsumeError::ChannelFull => {
 					debug!("Could not send command on channel: channel full");
-					tokio::time::delay_for(time::Duration::from_millis(200)).await;
+					tokio::time::sleep(time::Duration::from_millis(200)).await;
 					// Put the message back on the queue, because we could temporarily not process it
 					true
 				},

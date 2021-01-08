@@ -15,14 +15,12 @@ use lapin::{ConnectionProperties};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::oneshot;
-use tokio::stream::StreamExt;
-
-use futures_util::compat::Compat01As03;
+use tokio_stream::StreamExt;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
 
-use signal_hook::iterator::Signals;
+use signal_hook_tokio::v0_3::Signals;
 
 use crossbeam_channel::{bounded, Sender, Receiver};
 
@@ -142,7 +140,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
                             let routing_key = notify_conf.routing_key.clone();
         
-                            while let Some(file_event) = receiver.next().await {        
+                            while let Some(file_event) = receiver.recv().await {        
                                 match handle_file_event(&d_target_conf, file_event, persistence.clone()).await {
                                     Ok(result_event) => {
                                         debug!("Notifying with AMQP routing key {}", &routing_key);
@@ -166,7 +164,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                 },
                 None => {
                     let fut = async move {
-                        while let Some(file_event) = receiver.next().await {        
+                        while let Some(file_event) = receiver.recv().await {        
                             if let Err(e) = handle_file_event(&d_target_conf, file_event, persistence.clone()).await {
                                 error!("Error handling event for directory target: {}", &e);
                             }
@@ -404,23 +402,19 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     }));
 
     let signal_handler_join_handle = runtime.spawn(async move {
-        let signals = Signals::new(&[
-            signal_hook::SIGHUP,
-            signal_hook::SIGTERM,
-            signal_hook::SIGINT,
-            signal_hook::SIGQUIT,
+        let mut signals = Signals::new(&[
+            signal_hook::consts::SIGHUP,
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGQUIT,
         ]).unwrap();
     
-        let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
-
         let l_stop = Arc::try_unwrap(stop).unwrap().into_inner().unwrap();
 
-        while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
-            if let Some(s) = signal {
-                info!("signal: {}", s);
-                l_stop.stop();
-                break;
-            }
+        while let Some(signal) = signals.next().await {
+            info!("signal: {}", signal);
+            l_stop.stop();
+            break;
         }        
     });
 
@@ -447,7 +441,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 }
 
 async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Result<(), ()> {
-    while let Some(file_event) = tokio::stream::StreamExt::next(&mut source.receiver).await {
+    while let Some(file_event) = source.receiver.recv().await {
         debug!(
             "FileEvent for {} connections, from {}: {}",
             connections.len(),
