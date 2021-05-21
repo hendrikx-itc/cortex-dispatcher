@@ -71,7 +71,7 @@ impl Stop {
 }
 
 pub fn run(settings: settings::Settings) -> Result<(), Error> {
-    let mut runtime = tokio::runtime::Runtime::new()?;
+    let runtime = tokio::runtime::Runtime::new()?;
 
     // List of targets with their file event channels
     let targets: Arc<Mutex<HashMap<String, Arc<Target>>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -118,9 +118,15 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                                 &notify_conf.address,
                                 lapin::ConnectionProperties::default(),
                             ).await;
-                        
-                            let connection = connect_result.unwrap();
-                        
+
+                            let connection = match connect_result {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Error connecting to AMQP service: {}", e);
+                                    return
+                                }
+                            };
+                                              
                             let amqp_channel_result = connection.create_channel().await;
 
                             let amqp_channel = match amqp_channel_result {
@@ -402,20 +408,20 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     }));
 
     let signal_handler_join_handle = runtime.spawn(async move {
-        let mut signals = Signals::new(&[
-            signal_hook::consts::SIGHUP,
-            signal_hook::consts::SIGTERM,
-            signal_hook::consts::SIGINT,
-            signal_hook::consts::SIGQUIT,
-        ]).unwrap();
+        // let mut signals = Signals::new(&[
+        //     signal_hook::consts::SIGHUP,
+        //     signal_hook::consts::SIGTERM,
+        //     signal_hook::consts::SIGINT,
+        //     signal_hook::consts::SIGQUIT,
+        // ]).unwrap();
     
-        let l_stop = Arc::try_unwrap(stop).unwrap().into_inner().unwrap();
+        // let l_stop = Arc::try_unwrap(stop).unwrap().into_inner().unwrap();
 
-        while let Some(signal) = signals.next().await {
-            info!("signal: {}", signal);
-            l_stop.stop();
-            break;
-        }        
+        // while let Some(signal) = signals.next().await {
+        //     info!("signal: {}", signal);
+        //     l_stop.stop();
+        //     break;
+        // }        
     });
 
     // Wait until all tasks have finished

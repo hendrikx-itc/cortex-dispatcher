@@ -95,7 +95,13 @@ pub async fn start(
 	).await?;
 
 	while let Some(message) = consumer.next().await {
-		let (channel, delivery) = message.unwrap();
+		let (channel, delivery) = match message {
+			Ok(m) => m,
+			Err(e) => {
+				error!("Error reading message: {}", e);
+				return Err(ConsumeError::ChannelDisconnected)
+			}
+		};
 		let action_command_sender = command_sender.clone();
 
 		debug!("Received message from AMQP queue '{}'", &queue_name);
