@@ -124,8 +124,11 @@ pub fn start(
 		let queue_name = format!("source.{}", &sftp_source_name);
 		let stream_handler_queue_name = queue_name.clone();
 
+        let mut queue_options = QueueDeclareOptions::default();
+        queue_options.durable = true;
+
 		let queue_declare_future = channel
-			.queue_declare(&queue_name, QueueDeclareOptions::default(), FieldTable::default())
+			.queue_declare(&queue_name, queue_options, FieldTable::default())
 			.map_err(|_| ConsumeError::from(ConsumeErrorKind::SetupError));
 
 		let consume_future = queue_declare_future.and_then(move |queue| {
