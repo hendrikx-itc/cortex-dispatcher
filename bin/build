@@ -1,0 +1,5 @@
+#!/bin/bash
+
+docker build -t cortex-build -f $WORKSPACE/packaging/dispatcher.dockerfile $WORKSPACE/packaging
+
+docker run --rm --interactive --tty --user "$(id -u):$(id -g)" -v $WORKSPACE:/src -w /src -e "CARGO_HOME=/src" cortex-build cargo deb -p cortex-dispatcher
