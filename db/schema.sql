@@ -12,9 +12,9 @@ CREATE TYPE "dispatcher"."version_tuple" AS (
 
 
 CREATE FUNCTION "dispatcher"."version"()
-    RETURNS system.version_tuple
+    RETURNS dispatcher.version_tuple
 AS $$
-SELECT (1,0,0)::system.version_tuple;
+SELECT (1,0,0)::dispatcher.version_tuple;
 $$ LANGUAGE sql IMMUTABLE;
 
 
@@ -26,12 +26,13 @@ CREATE TABLE "dispatcher"."file"
   "path" text NOT NULL,
   "modified" timestamptz NOT NULL,
   "size" bigint NOT NULL,
-  "hash" text
+  "hash" text,
+  PRIMARY KEY (id)
 );
 
 COMMENT ON TABLE "dispatcher"."file" IS 'All files in the internal storage area of Cortex are registered here.';
 
-CREATE INDEX "sftp_download_file_index" ON "dispatcher"."file" USING btree (source, path);
+CREATE INDEX "file_index" ON "dispatcher"."file" USING btree (source, path);
 
 
 
@@ -47,7 +48,7 @@ CREATE TABLE "dispatcher"."sftp_download"
 
 COMMENT ON TABLE "dispatcher"."sftp_download" IS 'Contains records of files that need to be downloaded from a remote SFTP location.';
 
-CREATE INDEX "sftp_download_file_index" ON "dispatcher"."sftp_download" USING btree (source, path);
+CREATE INDEX "sftp_download_index" ON "dispatcher"."sftp_download" USING btree (source, path);
 
 
 
@@ -67,7 +68,7 @@ monitored with mechanisms like inotify. All files recorded here must be
 present on the filesystem, and when the file is copied/hardlinked to the
 internal Cortex storage, a reference to the file table is added.';
 
-CREATE INDEX "sftp_download_file_index" ON "dispatcher"."directory_source" USING btree (source, path);
+CREATE INDEX "directory_source_index" ON "dispatcher"."directory_source" USING btree (source, path);
 
 
 

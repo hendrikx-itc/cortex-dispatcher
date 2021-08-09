@@ -289,7 +289,7 @@ pub fn run(settings: settings::Settings) {
             let stream = sftp_command_consumer::start(client.clone(), channels.sftp_source.name.clone(), ack_receiver, channels.cmd_sender.clone())
                 //.select2(channels.stop_receiver.into_future())
                 .map(|_| debug!("End SFTP command stream"))
-                .map_err(move |_| error!("[E02007] Error in AMQP stream '{}'", &name));
+                .map_err(move |e| error!("[E02007] Error in AMQP stream '{}': {:?}", &name, &e));
 
             debug!("Spawning AMQP stream");
             tokio::spawn(stream);
