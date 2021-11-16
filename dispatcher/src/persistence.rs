@@ -53,7 +53,7 @@ pub trait Persistence {
 #[derive(Clone)]
 pub struct PostgresPersistence<T>
 where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
     T::TlsConnect: Send,
     T::Stream: Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
@@ -63,7 +63,7 @@ where
 
 impl<T> PostgresPersistence<T>
 where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
     T::TlsConnect: Send,
     T::Stream: Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,

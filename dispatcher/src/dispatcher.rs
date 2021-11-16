@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::iter::Iterator;
 
 #[cfg(target_os = "linux")]
 extern crate inotify;
@@ -15,14 +16,13 @@ use lapin::{ConnectionProperties};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::oneshot;
-use tokio::stream::StreamExt;
 
-use futures_util::compat::Compat01As03;
+use futures::stream::StreamExt;
 
 use postgres::NoTls;
 use r2d2_postgres::PostgresConnectionManager;
 
-use signal_hook::iterator::Signals;
+use signal_hook_tokio::Signals;
 
 use crossbeam_channel::{bounded, Sender, Receiver};
 
@@ -73,7 +73,7 @@ impl Stop {
 }
 
 pub fn run(settings: settings::Settings) -> Result<(), Error> {
-    let mut runtime = tokio::runtime::Runtime::new()?;
+    let runtime = tokio::runtime::Runtime::new()?;
 
     // List of targets with their file event channels
     let targets: Arc<Mutex<HashMap<String, Arc<Target>>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -142,7 +142,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
                             let routing_key = notify_conf.routing_key.clone();
         
-                            while let Some(file_event) = receiver.next().await {        
+                            while let Some(file_event) = receiver.recv().await {        
                                 match handle_file_event(&d_target_conf, file_event, persistence.clone()).await {
                                     Ok(result_event) => {
                                         debug!("Notifying with AMQP routing key {}", &routing_key);
@@ -166,7 +166,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                 },
                 None => {
                     let fut = async move {
-                        while let Some(file_event) = receiver.next().await {        
+                        while let Some(file_event) = receiver.recv().await {        
                             if let Err(e) = handle_file_event(&d_target_conf, file_event, persistence.clone()).await {
                                 error!("Error handling event for directory target: {}", &e);
                             }
@@ -403,25 +403,31 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         actix_system.stop();
     }));
 
+    let signals = Signals::new(&[
+        signal_hook::consts::signal::SIGHUP,
+        signal_hook::consts::signal::SIGTERM,
+        signal_hook::consts::signal::SIGINT,
+        signal_hook::consts::signal::SIGQUIT,
+    ]).unwrap();
+
     let signal_handler_join_handle = runtime.spawn(async move {
-        let signals = Signals::new(&[
-            signal_hook::SIGHUP,
-            signal_hook::SIGTERM,
-            signal_hook::SIGINT,
-            signal_hook::SIGQUIT,
-        ]).unwrap();
-    
-        let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
+        let mut signals = signals.fuse();
 
-        let l_stop = Arc::try_unwrap(stop).unwrap().into_inner().unwrap();
+        while let Some(signal) = signals.next().await {
+            let l_stop = Arc::try_unwrap(stop.clone()).unwrap().into_inner().unwrap();
 
-        while let Ok(signal) = tokio::stream::StreamExt::try_next(&mut signal_stream).await {
-            if let Some(s) = signal {
-                info!("signal: {}", s);
-                l_stop.stop();
-                break;
+            match signal {
+                signal_hook::consts::signal::SIGHUP => {
+                    // Reload configuration
+                    // Reopen the log file
+                }
+                signal_hook::consts::signal::SIGTERM | signal_hook::consts::signal::SIGINT | signal_hook::consts::signal::SIGQUIT => {
+                    // Shutdown the system;
+                    l_stop.stop();
+                },
+                _ => unreachable!(),
             }
-        }        
+        }
     });
 
     // Wait until all tasks have finished
@@ -447,7 +453,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 }
 
 async fn dispatch_stream(mut source: Source, connections: Vec<Connection>) -> Result<(), ()> {
-    while let Some(file_event) = tokio::stream::StreamExt::next(&mut source.receiver).await {
+    while let Some(file_event) = source.receiver.recv().await {
         debug!(
             "FileEvent for {} connections, from {}: {}",
             connections.len(),

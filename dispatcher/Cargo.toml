@@ -1,6 +1,6 @@
 [package]
 name = "cortex-dispatcher"
-version = "0.2.3"
+version = "1.0.0"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
 edition = "2018"
 description = """
@@ -15,7 +15,6 @@ repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 [package.metadata.deb]
 assets = [
     ["target/release/cortex-dispatcher", "/usr/bin/", "755"],
-    ["static-web/*", "/usr/lib/cortex/static-web/", "644"]
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -23,18 +22,18 @@ inotify = "0.8"
 
 [dependencies]
 log = "0.4"
-env_logger = "0.7"
+env_logger = "0.9"
 serde = "1.0"
 serde_derive = "1.0"
-config = "0.10"
+config = "0.11"
 regex = "1.3"
 serde_regex = "1.1"
 clap = "2"
-ssh2 = "0.8"
+ssh2 = "0.9"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
 lapin = "1.2"
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "1.9", features = ["full"] }
 tokio-timer = "0.2"
 failure = "0.1"
 failure_derive = "0.1"
@@ -43,23 +42,24 @@ serde_yaml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.9"
 tee = "0.1"
-prometheus = { version = "0.9" }
+prometheus = { version = "0.12" }
 lazy_static = "1.4"
-postgres = { version = "0.17", features = ["with-chrono-0_4"] }
-tokio-postgres = "0.5"
+postgres = { version = "0.19", features = ["with-chrono-0_4"] }
+tokio-postgres = "0.7"
 cortex-core = { path = "../core" }
-crossbeam-channel = "0.4"
+crossbeam-channel = "0.5"
 actix-web = "2.0"
-actix-files = "0.2"
+actix-files = "0.5"
 actix-rt = "1.1"
 actix-http = "1.0"
 r2d2 = "0.8"
-r2d2_postgres = "0.16"
-bb8 = "0.4"
-bb8-postgres = "0.4"
+r2d2_postgres = "0.18"
+bb8 = "0.7"
+bb8-postgres = "0.7"
 tera = "1.3"
-signal-hook = { version = "0.1.16", features = ["tokio-support"] }
+signal-hook = { version = "0.3" }
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 retry = "1.0"
 proctitle = "0.1"
 error-chain = "0.12"
-futures-retry = "0.5"
+futures-retry = "0.6"

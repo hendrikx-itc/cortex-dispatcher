@@ -1,4 +1,5 @@
 # vim: filetype=sh
+
 function absolute_dir {
     local old_pwd="$(pwd)"
     cd "$1"
@@ -18,21 +19,9 @@ RELATIVE_SCRIPT_DIR=${SCRIPT_PATH%/*}
 
 SCRIPT_DIR=$(absolute_dir $RELATIVE_SCRIPT_DIR)
 
-export CORTEX_ROOT=${SCRIPT_DIR%/*}
+echo $SCRIPT_DIR
 
-export PATH=$CORTEX_ROOT/bin:$PATH
+export WORKSPACE=${SCRIPT_DIR%/*}
 
-CORTEX_CONFIG_FILE="$CORTEX_ROOT/dev-stack/cortex-dispatcher.yml"
+export PATH=$WORKSPACE/bin:$PATH
 
-if [ ! -f "$CORTEX_CONFIG_FILE" ]
-then
-    cat "$CORTEX_CONFIG_FILE.tmpl" | CORTEX_DATA_ROOT="$CORTEX_ROOT/dev-stack/tmp" envsubst > "$CORTEX_CONFIG_FILE"
-
-    echo "Created $CORTEX_CONFIG_FILE for testing"
-fi
-
-export PGHOST=127.0.0.1
-export PGPORT=5432
-export PGUSER=postgres
-export PGPASSWORD=password
-export PGDATABASE=cortex
