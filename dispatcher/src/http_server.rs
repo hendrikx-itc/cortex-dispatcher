@@ -12,7 +12,7 @@ pub fn start_http_server(
     let (tx_http, rx_http) = std::sync::mpsc::channel();
 
     let join_handle = thread::spawn(move || {
-        let system = actix_rt::System::new("http_server");
+        let system = actix_rt::System::new();
 
         let server = HttpServer::new(move || {
             App::new()
