@@ -8,6 +8,23 @@ import argparse
 
 import pysftp
 
+VOLUME_CHOICES = {
+    'small': {
+        'blue1': 1,
+        'blue2': 2,
+        'red': 2,
+    },
+    'medium': {
+        'blue1': 10,
+        'blue2': 100,
+        'red': 100,
+    },
+    'large': {
+        'blue1': 100,
+        'blue2': 1000,
+        'red': 1000,
+    },
+}
 
 def main():
     parser = argparse.ArgumentParser('Generate and SFTP upload data for testing')
@@ -17,7 +34,14 @@ def main():
         help='Delete some files after uploading'
     )
 
+    parser.add_argument(
+        '--volume', choices=VOLUME_CHOICES.keys(),
+        default='small', help='Amount of data to create each cycle'
+    )
+
     args = parser.parse_args()
+
+    volume = VOLUME_CHOICES[args.volume]
 
     root_logger = logging.getLogger('')
     root_logger.setLevel(logging.INFO)
@@ -40,10 +64,10 @@ def main():
 
                 logging.info("Data generation start")
 
-                generate_data(sftp, storage_path, next_run)
+                generate_data(sftp, storage_path, next_run, volume)
 
                 if args.delete_some:
-                    generate_and_remove_data(sftp, storage_path, next_run)
+                    generate_and_remove_data(sftp, storage_path, next_run, volume)
 
                 next_run += interval
 
@@ -98,25 +122,25 @@ def check_path(sftp, path):
         mkdir_all(sftp, path)
 
 
-def generate_data(sftp, storage_path, timestamp):
+def generate_data(sftp, storage_path, timestamp, volume):
     with sftp.cd('upload/blue/1'):
-        for i in range(100):
+        for i in range(volume['blue1']):
             file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(1000, 30))
 
     with sftp.cd('upload/blue/2'):
-        for i in range(1000):
+        for i in range(volume['blue2']):
             file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))
 
 
-def generate_and_remove_data(sftp, storage_path, timestamp):
+def generate_and_remove_data(sftp, storage_path, timestamp, volume):
     with sftp.cd('upload/red'):
         generated_files = []
 
-        for i in range(1000):
+        for i in range(volume['red']):
             file_name = f'test_red_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))

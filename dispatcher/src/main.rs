@@ -13,7 +13,6 @@ mod dispatcher;
 mod directory_source;
 mod directory_target;
 mod event;
-mod http_server;
 mod metrics;
 mod persistence;
 mod settings;
@@ -47,7 +46,8 @@ extern crate lazy_static;
 
 extern crate cortex_core;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let matches = cmd::app().get_matches();
 
     let mut env_logger_builder = env_logger::builder();
@@ -100,7 +100,7 @@ fn main() {
 
     info!("Configuration loaded");
 
-    match dispatcher::run(settings) {
+    match dispatcher::run(settings).await {
         Ok(_) => (),
         Err(e) => error!("{}", e)
     }

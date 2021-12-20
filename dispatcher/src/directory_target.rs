@@ -94,7 +94,7 @@ where
                     Ok(())
                 }
                 Err(e) => {
-                    debug!("Error hardlinking: {}", e);
+                    debug!("Error hardlinking '{}' to '{}': {}", &source_path_str, &target_path_str, e);
 
                     if overwrite {
                         // When overwrite is enabled, this should not occur, because any existing file should first be removed

@@ -68,10 +68,11 @@ where
     T::Stream: Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    pub fn new(connection_manager: PostgresConnectionManager<T>) -> PostgresPersistence<T> {
-        let pool = r2d2::Pool::new(connection_manager).unwrap();
+    pub fn new(connection_manager: PostgresConnectionManager<T>) -> Result<PostgresPersistence<T>, String> {
+        let pool = r2d2::Pool::new(connection_manager)
+            .map_err(|e| format!("Error connecting to database: {}", e))?;
 
-        PostgresPersistence { conn_pool: pool }
+        Ok(PostgresPersistence { conn_pool: pool })
     }
 }
 

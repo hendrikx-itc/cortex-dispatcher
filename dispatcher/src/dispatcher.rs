@@ -9,7 +9,7 @@ use std::iter::Iterator;
 #[cfg(target_os = "linux")]
 extern crate inotify;
 
-use failure::{Error};
+use failure::{Error, err_msg};
 
 extern crate lapin;
 use lapin::{ConnectionProperties};
@@ -36,7 +36,6 @@ use crate::directory_source::start_directory_sources;
 
 use crate::directory_target::handle_file_event;
 use crate::event::{FileEvent, EventDispatcher};
-use crate::http_server::start_http_server;
 use crate::persistence::{PostgresPersistence, PostgresAsyncPersistence};
 use crate::settings;
 use crate::sftp_downloader;
@@ -72,9 +71,7 @@ impl Stop {
     }
 }
 
-pub fn run(settings: settings::Settings) -> Result<(), Error> {
-    let runtime = tokio::runtime::Runtime::new()?;
-
+pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     // List of targets with their file event channels
     let targets: Arc<Mutex<HashMap<String, Arc<Target>>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -98,7 +95,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let directory_target_targets = targets.clone();
 
-    runtime.spawn(async move {
+    tokio::spawn(async move {
         let tokio_persistence = PostgresAsyncPersistence::new(tokio_connection_manager).await;
 
         t_settings.directory_targets.iter().for_each(|target_conf| {
@@ -121,7 +118,13 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
                                 lapin::ConnectionProperties::default(),
                             ).await;
                         
-                            let connection = connect_result.unwrap();
+                            let connection = match connect_result {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Error connecting to AMQP server: {}", e);
+                                    return
+                                }
+                            };
                         
                             let amqp_channel_result = connection.create_channel().await;
 
@@ -204,7 +207,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         });
     });
 
-    let persistence = PostgresPersistence::new(connection_manager);
+    let persistence = PostgresPersistence::new(connection_manager).map_err(|e| err_msg(e))?;
 
     let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
 
@@ -316,7 +319,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let l_settings = settings.clone();
 
-    let _sftp_sources_join_handle = runtime.spawn(async move {
+    let _sftp_sources_join_handle = tokio::spawn(async move {
         debug!("Connecting to AMQP service at {}", &l_settings.command_queue.address);
         
         let amqp_client = lapin::Connection::connect(
@@ -391,18 +394,6 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         Ok::<(), sftp_command_consumer::ConsumeError>(())
     });
 
-    let (web_server_join_handle, actix_system, actix_http_server) = start_http_server(
-        settings.http_server.address,
-    );
-
-    stop.lock().unwrap().add_command(Box::new(move || {
-        tokio::spawn(actix_http_server.stop(true));
-    }));
-
-    stop.lock().unwrap().add_command(Box::new(move || {
-        actix_system.stop();
-    }));
-
     let signals = Signals::new(&[
         signal_hook::consts::signal::SIGHUP,
         signal_hook::consts::signal::SIGTERM,
@@ -410,7 +401,7 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
         signal_hook::consts::signal::SIGQUIT,
     ]).unwrap();
 
-    let signal_handler_join_handle = runtime.spawn(async move {
+    let signal_handler_join_handle = tokio::spawn(async move {
         let mut signals = signals.fuse();
 
         while let Some(signal) = signals.next().await {
@@ -431,15 +422,12 @@ pub fn run(settings: settings::Settings) -> Result<(), Error> {
     });
 
     // Wait until all tasks have finished
-    let _result = runtime
-        .block_on(signal_handler_join_handle);
+    let _result = signal_handler_join_handle.await;
 
     info!("Tokio runtime shutdown");
 
     #[cfg(target_os = "linux")]
     wait_for(directory_sources_join_handle, "directory sources");
-
-    wait_for(web_server_join_handle, "http server");
 
     wait_for(local_intake_handle, "local intake");
 

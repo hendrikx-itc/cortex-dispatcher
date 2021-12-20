@@ -8,4 +8,4 @@ RUN pip3 install pysftp
 
 COPY data-generator /usr/bin/
 
-CMD /usr/bin/data-generator
+ENTRYPOINT ["/usr/bin/data-generator"]
