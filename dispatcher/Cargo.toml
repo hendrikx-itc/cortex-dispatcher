@@ -29,11 +29,13 @@ config = "0.11"
 regex = "1.3"
 serde_regex = "1.1"
 clap = "2"
-ssh2 = "0.9"
+async-io = "1.6"
+async-ssh2-lite = "0.2"
 futures = "0.3"
-futures-util = { version = "0.3", features = ["compat"] }
+futures-io = "0.3"
+futures-util = { path = "/home/alfred/tmp/futures-rs/futures-util", version = "0.4.0-alpha.0", features = ["compat", "io", "io-compat"] }
 lapin = "1.2"
-tokio = { version = "1.14", features = ["full"] }
+tokio = { version = "1.15", features = ["full"] }
 tokio-timer = "0.2"
 failure = "0.1"
 failure_derive = "0.1"
@@ -48,10 +50,6 @@ postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 tokio-postgres = "0.7"
 cortex-core = { path = "../core" }
 crossbeam-channel = "0.5"
-actix-web = "3.3"
-actix-files = "0.5"
-actix-rt = "2.5"
-actix-http = "2.2"
 r2d2 = "0.8"
 r2d2_postgres = "0.18"
 bb8 = "0.7"
@@ -63,3 +61,4 @@ retry = "1.0"
 proctitle = "0.1"
 error-chain = "0.12"
 futures-retry = "0.6"
+tokio-retry = "0.3"

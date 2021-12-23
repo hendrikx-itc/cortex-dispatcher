@@ -9,12 +9,12 @@ use postgres::tls::{MakeTlsConnect, TlsConnect};
 
 use crate::event::FileEvent;
 use crate::{settings, settings::LocalTargetMethod};
-use crate::persistence::PostgresAsyncPersistence;
+use crate::persistence::Persistence;
 
 pub async fn handle_file_event<T>(
     settings: &settings::DirectoryTarget,
     file_event: FileEvent,
-    persistence: PostgresAsyncPersistence<T>
+    persistence: Persistence<T>
 ) -> Result<FileEvent, String>
 where
     T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,

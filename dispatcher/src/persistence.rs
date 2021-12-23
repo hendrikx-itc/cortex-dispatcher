@@ -2,8 +2,8 @@ use std::fmt;
 use std::error;
 use std::path::PathBuf;
 
-use postgres::tls::{MakeTlsConnect, TlsConnect};
-use r2d2_postgres::PostgresConnectionManager;
+use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
+use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::Socket;
 use chrono::prelude::*;
 
@@ -40,56 +40,42 @@ pub struct FileInfo {
     hash: Option<String>
 }
 
-pub trait Persistence {
-    fn insert_sftp_download(&self, source: &str, path: &str, size: i64) -> Result<i64, PersistenceError>;
-    fn delete_sftp_download_file(&self, id: i64) -> Result<(), PersistenceError>;
-    fn set_sftp_download_file(&self, id: i64, file_id: i64) -> Result<(), PersistenceError>;
-    fn insert_file(&self, source: &str, path: &str, modified: &DateTime<Utc>, size: i64, hash: Option<String>) -> Result<i64,PersistenceError>;
-    fn remove_file(&self, source: &str, path: &str) -> Result<(),PersistenceError>;
-    fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>,PersistenceError>;
-    fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError>;
-}
-
-#[derive(Clone)]
-pub struct PostgresPersistence<T>
+#[derive(Clone, Debug)]
+pub struct Persistence<T>
 where
     T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
     T::TlsConnect: Send,
-    T::Stream: Send,
+    T::Stream: Send + Sync,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    conn_pool: r2d2::Pool<PostgresConnectionManager<T>>,
+    conn_pool: bb8::Pool<PostgresConnectionManager<T>>,
 }
 
-impl<T> PostgresPersistence<T>
-where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
-    T::TlsConnect: Send,
-    T::Stream: Send,
-    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
-{
-    pub fn new(connection_manager: PostgresConnectionManager<T>) -> Result<PostgresPersistence<T>, String> {
-        let pool = r2d2::Pool::new(connection_manager)
-            .map_err(|e| format!("Error connecting to database: {}", e))?;
-
-        Ok(PostgresPersistence { conn_pool: pool })
-    }
-}
-
-impl<T> Persistence for PostgresPersistence<T>
+impl<T> Persistence<T>
 where
     T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
     T::TlsConnect: Send,
-    T::Stream: Send,
+    T::Stream: Send + Sync,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    fn insert_sftp_download(&self, source: &str, path: &str, size: i64) -> Result<i64,PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+    pub async fn new(connection_manager: bb8_postgres::PostgresConnectionManager<T>) -> Result<Persistence<T>, String> {
+        let pool = bb8::Pool::builder()
+            .build(connection_manager)
+            .await
+            .map_err(|e| format!("Error connecting to database: {}", e))?;
+
+        Ok(Persistence { conn_pool: pool })
+    }
+
+    pub async fn insert_sftp_download(&self, source: &str, path: &str, size: i64) -> Result<i64,PersistenceError> {
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let execute_result = client.query_one(
             "insert into dispatcher.sftp_download (source, path, size) values ($1, $2, $3) returning id",
             &[&source, &path, &size]
-        );
+        ).await;
 
         match execute_result {
             Ok(row) => Ok(row.get(0)),
@@ -102,13 +88,15 @@ where
         }
     }
 
-    fn set_sftp_download_file(&self, id: i64, file_id: i64) -> Result<(), PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+    pub async fn set_sftp_download_file(&self, id: i64, file_id: i64) -> Result<(), PersistenceError> {
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let execute_result = client.execute(
             "update dispatcher.sftp_download set file_id = $2 where id = $1",
             &[&id, &file_id]
-        );
+        ).await;
 
         match execute_result {
             Ok(_) => Ok(()),
@@ -121,13 +109,15 @@ where
         }
     }
 
-    fn delete_sftp_download_file(&self, id: i64) -> Result<(), PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+    pub async fn delete_sftp_download_file(&self, id: i64) -> Result<(), PersistenceError> {
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let execute_result = client.execute(
             "delete from dispatcher.sftp_download where id = $1",
             &[&id]
-        );
+        ).await;
 
         match execute_result {
             Ok(_) => Ok(()),
@@ -140,13 +130,15 @@ where
         }
     }
 
-    fn insert_file(&self, source: &str, path: &str, modified: &DateTime<Utc>, size: i64, hash: Option<String>) -> Result<i64,PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+    pub async fn insert_file(&self, source: &str, path: &str, modified: &DateTime<Utc>, size: i64, hash: Option<String>) -> Result<i64,PersistenceError> {
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let insert_result = client.query_one(
             "insert into dispatcher.file (source, path, modified, size, hash) values ($1, $2, $3, $4, $5) returning id",
             &[&source, &path, &modified, &size, &hash]
-        );
+        ).await;
 
         match insert_result {
             Ok(row) => Ok(row.get(0)),
@@ -157,13 +149,15 @@ where
         }
     }
 
-    fn remove_file(&self, source: &str, path: &str) -> Result<(),PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+    pub async fn remove_file(&self, source: &str, path: &str) -> Result<(),PersistenceError> {
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let insert_result = client.execute(
             "delete from dispatcher.file where source = $1 and path = $2",
             &[&source, &path]
-        );
+        ).await;
 
         match insert_result {
             Ok(_) => Ok(()),
@@ -174,13 +168,15 @@ where
         }
     }
 
-    fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>,PersistenceError> {
-        let mut client = self.conn_pool.get().unwrap();
+    pub async fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>,PersistenceError> {
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let query_result = client.query(
             "select source, path, modified, size, hash from dispatcher.file where source = $1 and path = $2",
             &[&source, &path]
-        );
+        ).await;
 
         match query_result {
             Ok(rows) => {
@@ -212,80 +208,12 @@ where
                 message: String::from("Error reading file record from database")
             })
         }
-
-    }
-
-    fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
-        let get_result = self.conn_pool.get_timeout(std::time::Duration::from_millis(10_000));
-
-        let mut client = match get_result {
-            Ok(c) => c,
-            Err(e) => {
-                let message = format!("Error getting PostgreSQL conection from pool: {}", &e);
-                error!("{}", &message);
-
-                return Err(PersistenceError{
-                    source: Some(Box::new(e)),
-                    message: message 
-                })
-            }
-        };
-
-        let insert_result = client.query_one(
-            "insert into dispatcher.dispatched (file_id, target, timestamp) values ($1, $2, now())",
-            &[&file_id, &dest]
-        );
-
-        match insert_result {
-            Ok(_row) => Ok(()),
-            Err(e) => Err(PersistenceError{
-                source: Some(Box::new(e)),
-                message: String::from("Error inserting dispatched record into database")
-            })
-        }
-    }
-}
-
-
-#[derive(Clone)]
-pub struct PostgresAsyncPersistence<T>
-where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
-    T::TlsConnect: Send,
-    T::Stream: Send + Sync,
-    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
-{
-    conn_pool: bb8::Pool<bb8_postgres::PostgresConnectionManager<T>>,
-}
-
-impl<T> PostgresAsyncPersistence<T>
-where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
-    T::TlsConnect: Send,
-    T::Stream: Send + Sync,
-    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
-{
-    pub async fn new(connection_manager: bb8_postgres::PostgresConnectionManager<T>) -> PostgresAsyncPersistence<T> {
-        let pool = bb8::Pool::builder().build(connection_manager).await.unwrap();
-
-        PostgresAsyncPersistence { conn_pool: pool }
     }
 
     pub async fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
-        let get_result = self.conn_pool.get().await;
-
-        let client = match get_result {
-            Ok(c) => c,
-            Err(e) => {
-                let message = format!("Error getting PostgreSQL conection from pool: {}", &e);
-                error!("{}", &message);
-
-                return Err(PersistenceError{
-                    source: Some(Box::new(e)),
-                    message: message 
-                })
-            }
-        };
+        let client = self.conn_pool.get()
+            .await
+            .map_err(|e| PersistenceError { source: Some(Box::new(e)), message: "Could not get database connection".into() } )?;
 
         let insert_result = client.execute(
             "insert into dispatcher.dispatched (file_id, target, timestamp) values ($1, $2, now())",

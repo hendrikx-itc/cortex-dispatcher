@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::convert::TryFrom;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use postgres::tls::{MakeTlsConnect, TlsConnect};
+use tokio_postgres::Socket;
+
 use chrono::{Utc, DateTime, NaiveDateTime};
 
 use crate::persistence::{Persistence, PersistenceError};
@@ -12,10 +15,13 @@ use crate::persistence::{Persistence, PersistenceError};
 #[derive(Debug, Clone)]
 pub struct LocalStorage<T> 
 where
-    T: Persistence,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
     directory: PathBuf,
-    persistence: T
+    persistence: Persistence<T>
 }
 
 #[derive(Debug, Clone)]
@@ -49,9 +55,12 @@ impl From<std::io::Error> for LocalStorageError {
 
 impl<T> LocalStorage<T>
 where
-    T: Persistence,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    pub fn new<P: AsRef<Path>>(directory: P, persistence: T) -> LocalStorage<T> {
+    pub fn new<P: AsRef<Path>>(directory: P, persistence: Persistence<T>) -> LocalStorage<T> {
         LocalStorage {
             directory: directory.as_ref().to_path_buf(),
             persistence: persistence
@@ -78,7 +87,7 @@ where
         }
     }
 
-    pub fn in_storage<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<bool, LocalStorageError>
+    pub async fn in_storage<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<bool, LocalStorageError>
     where
         P: AsRef<Path>,
     {
@@ -89,7 +98,7 @@ where
 
         let local_path_str = local_path.to_string_lossy();
 
-        let file_result = &self.persistence.get_file(source_name, &local_path_str)?;
+        let file_result = &self.persistence.get_file(source_name, &local_path_str).await?;
 
         match file_result {
             None => Ok(false),
@@ -100,7 +109,7 @@ where
     /// Store file in local storage. The file will be hardlinked from the
     /// specified file_path and will be stored in a directory with the name of
     /// the source. The prefix will be stripped from the file path.
-    pub fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<(i64, PathBuf), LocalStorageError>
+    pub async fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<(i64, PathBuf), LocalStorageError>
     where
         P: AsRef<Path>,
     {
@@ -125,7 +134,7 @@ where
                 }
             } else {
                 if local_path.is_file() {
-                    self.persistence.remove_file(source_name, &local_path_str)?;
+                    self.persistence.remove_file(source_name, &local_path_str).await?;
     
                     // Remove existing file before creating new hardlink
                     std::fs::remove_file(&local_path)?;
@@ -144,7 +153,7 @@ where
                     Err(e) => return Err(LocalStorageError{ message: format!("Error converting file size to i64: {}", e) })
                 };
 
-                let file_id = self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
+                let file_id = self.persistence.insert_file(source_name, &local_path_str, &modified, size, None).await?;
 
                 debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
 

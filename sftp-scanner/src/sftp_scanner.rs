@@ -66,7 +66,7 @@ pub fn start_scanner(
             compress: false,
         };
 
-        let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
+        let connect_result = SftpConnection::connect_loop(sftp_config.clone());
 
         let sftp_connection = match connect_result {
             Ok(c) => Arc::new(RefCell::new(c)),
@@ -94,7 +94,7 @@ pub fn start_scanner(
                         Err(e) => {
                             match e {
                                 Error(ErrorKind::DisconnectedError, _) => {
-                                    let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
+                                    let connect_result = SftpConnection::connect_loop(sftp_config.clone());
 
                                     match connect_result {
                                         Ok(c) => {

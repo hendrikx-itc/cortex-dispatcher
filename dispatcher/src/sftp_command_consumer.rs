@@ -7,8 +7,6 @@ use futures::StreamExt;
 use lapin::options::{BasicConsumeOptions, QueueBindOptions, QueueDeclareOptions, BasicNackOptions, BasicAckOptions};
 use lapin::types::FieldTable;
 
-use crossbeam_channel::{Sender, TrySendError};
-
 use crate::base_types::MessageResponse;
 use crate::metrics;
 
@@ -18,6 +16,7 @@ use cortex_core::SftpDownload;
 pub enum ConsumeError {
     ChannelFull,
     ChannelDisconnected,
+	ChannelError,
     DeserializeError,
 	RabbitMQError(lapin::Error)
 }
@@ -58,7 +57,7 @@ pub async fn start(
     amqp_channel: lapin::Channel,
     sftp_source_name: String,
 	ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
-    command_sender: Sender<(u64, SftpDownload)>
+    command_sender: tokio::sync::mpsc::Sender<(u64, SftpDownload)>
 ) -> Result<(), ConsumeError> {
 	let sftp_source_name_2 = sftp_source_name.clone();
 	
@@ -107,15 +106,12 @@ pub async fn start(
 
 		let result = match deserialize_result {
 			Ok(sftp_download) => {
-				let send_result = action_command_sender.try_send((delivery.delivery_tag, sftp_download));
+				let send_result = action_command_sender.send((delivery.delivery_tag, sftp_download)).await;
 				
 				match send_result {
 					Ok(_) => Ok(()),
 					Err(e) => {
-						match e {
-							TrySendError::Disconnected(_) => Err(ConsumeError::ChannelDisconnected),
-							TrySendError::Full(_) => Err(ConsumeError::ChannelFull)
-						}
+						Err(ConsumeError::ChannelError)
 					}
 				}
 			},

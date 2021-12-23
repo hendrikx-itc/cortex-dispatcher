@@ -7,16 +7,11 @@ extern crate serde_derive;
 extern crate chrono;
 use chrono::prelude::*;
 
-#[macro_use]
 extern crate error_chain;
 
 extern crate log;
 
 use log::{info, error};
-
-pub mod sftp_connection;
-
-pub use self::sftp_connection::SftpConnection;
 
 
 /// The set of commands that can be sent over the command queue

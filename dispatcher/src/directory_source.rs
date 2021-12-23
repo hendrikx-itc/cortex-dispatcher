@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::sync::mpsc::{Sender, Receiver};
+use postgres::tls::{MakeTlsConnect, TlsConnect};
+use tokio_postgres::Socket;
 
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
@@ -23,7 +25,6 @@ use cortex_core::StopCmd;
 
 use crate::event::{FileEvent, EventDispatcher};
 use crate::local_storage::LocalStorage;
-use crate::persistence::Persistence;
 use crate::settings;
 
 
@@ -352,79 +353,66 @@ fn start_inotify_event_thread(
     (join_handle, stop_cmd)
 }
 
-pub fn start_local_intake_thread<T>(
+pub async fn start_local_intake_loop<T>(
     receiver: Receiver<LocalFileEvent>,
     mut event_dispatcher: EventDispatcher,
     local_storage: LocalStorage<T>
-) -> (thread::JoinHandle<()>, StopCmd)
+)
 where
-    T: Persistence,
-    T: Send,
-    T: Clone,
-    T: 'static,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let stop_clone = stop_flag.clone();
+    let timeout = Duration::from_millis(500);
 
-    let stop_cmd = Box::new(move || {
-        stop_clone.swap(true, Ordering::Relaxed);
-    });
+    loop {
+        let receive_result = receiver.recv_timeout(timeout);
 
-    let join_handle = thread::spawn(move || {
-        let timeout = Duration::from_millis(500);
+        if let Ok(file_event) = receive_result {
+            let request_result = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix).await;
 
-        while !stop_flag.load(Ordering::Relaxed) {
-            let receive_result = receiver.recv_timeout(timeout);
-
-            if let Ok(file_event) = receive_result {
-                let request_result = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix);
-
-                match request_result {
-                    Ok(in_storage) => {
-                        if !in_storage {
-                            debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
-                            let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
+            match request_result {
+                Ok(in_storage) => {
+                    if !in_storage {
+                        debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
+                        let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix).await;
+        
+                        let source_path_str = file_event.path.to_string_lossy();
             
-                            let source_path_str = file_event.path.to_string_lossy();
-                
-                            match store_result {
-                                Ok((file_id, target_path)) => {
-                                    let source_file_event = FileEvent {
-                                        file_id: file_id,
-                                        source_name: file_event.source_name.clone(),
-                                        path: target_path.clone(),
-                                    };
-                
-                                    info!(
-                                        "New file for <{}>: '{}'",
-                                        &file_event.source_name, &source_path_str
-                                    );
-                
-                                    let send_result = event_dispatcher.dispatch_event(&source_file_event);
-                
-                                    match send_result {
-                                        Ok(_) => {
-                                            debug!("File event from inotify sent on local channel");
-                                        },
-                                        Err(e) => error!(
-                                            "[E02001] Error sending file event on local channel: {}",
-                                            e
-                                        )
-                                    }
+                        match store_result {
+                            Ok((file_id, target_path)) => {
+                                let source_file_event = FileEvent {
+                                    file_id: file_id,
+                                    source_name: file_event.source_name.clone(),
+                                    path: target_path.clone(),
+                                };
+            
+                                info!(
+                                    "New file for <{}>: '{}'",
+                                    &file_event.source_name, &source_path_str
+                                );
+            
+                                let send_result = event_dispatcher.dispatch_event(&source_file_event);
+            
+                                match send_result {
+                                    Ok(_) => {
+                                        debug!("File event from inotify sent on local channel");
+                                    },
+                                    Err(e) => error!(
+                                        "[E02001] Error sending file event on local channel: {}",
+                                        e
+                                    )
                                 }
-                                Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
                             }
+                            Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
                         }
-                    },
-                    Err(e) => {
-                        error!("Error querying storage: {}", e)
                     }
+                },
+                Err(e) => {
+                    error!("Error querying storage: {}", e)
                 }
             }
         }
-
-        debug!("Local intake thread ended")
-    });
-
-    (join_handle, stop_cmd)
+    }
 }

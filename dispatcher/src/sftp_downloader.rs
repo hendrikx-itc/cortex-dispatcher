@@ -1,17 +1,13 @@
 use std::convert::TryFrom;
-use std::fs::File;
-use std::io;
-use std::cell::RefCell;
 use std::path::Path;
-use std::{thread, time};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{time};
+use std::net::{TcpStream, ToSocketAddrs};
+
+use postgres::tls::{MakeTlsConnect, TlsConnect};
+use tokio::fs::File;
+use tokio_postgres::Socket;
 
 extern crate failure;
-
-use crossbeam_channel::{Receiver, RecvTimeoutError};
-
-use retry::{retry, OperationResult, delay::Fixed};
 
 use crate::event::FileEvent;
 use crate::metrics;
@@ -20,11 +16,13 @@ use crate::settings;
 use crate::base_types::MessageResponse;
 use crate::local_storage::LocalStorage;
 
-use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
 use cortex_core::SftpDownload;
 
 use sha2::{Digest, Sha256};
-use tee::TeeReader;
+//use tee::TeeReader;
+
+use async_io::Async;
+use async_ssh2_lite::{AsyncSession};
 
 use chrono::{Utc, DateTime, NaiveDateTime};
 
@@ -37,175 +35,136 @@ error_chain! {
     }
 }
 
+#[derive(Clone)]
 pub struct SftpDownloader<T>
 where
-    T: Persistence,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
     pub sftp_source: settings::SftpSource,
-    pub persistence: T,
+    pub persistence: Persistence<T>,
     pub local_storage: LocalStorage<T>,
 }
 
 impl<T> SftpDownloader<T>
 where
-    T: Persistence,
-    T: Send,
-    T: Clone,
-    T: 'static,
+    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T::TlsConnect: Send,
+    T::Stream: Send + Sync,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    pub fn start(
-        stop: Arc<AtomicBool>,
-        receiver: Receiver<(u64, SftpDownload)>,
-        mut ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
+    pub async fn start(
+        mut receiver: tokio::sync::mpsc::Receiver<(u64, SftpDownload)>,
+        ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
         config: settings::SftpSource,
         sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         local_storage: LocalStorage<T>,
-        persistence: T,
-    ) -> thread::JoinHandle<Result<()>> {
-        thread::spawn(move || -> Result<()> {
-            proctitle::set_title("sftp_dl");
+        persistence: Persistence<T>,
+    ) {
+        let addr = ToSocketAddrs::to_socket_addrs(&config.address).unwrap().next().unwrap();
 
-            let sftp_config = SftpConfig {
-                address: config.address.clone(),
-                username: config.username.clone(),
-                password: config.password.clone(),
-                key_file: config.key_file.clone(),
-                compress: config.compress
-            };
+        let stream = match Async::<TcpStream>::connect(addr).await {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Could not connect to SFTP server at {}: {}", &addr, e);
+                return
+            }
+        };
 
-            let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
+        let mut session = match AsyncSession::new(stream, None) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Could not setup session to SFTP server at {}: {}", &addr, e);
+                return
+            }
+        };
+    
+        match session.handshake().await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Error during handshake with {}: {}", &addr, e);
+                return
+            }
+        }
+    
+        match session.userauth_agent(&config.username).await {
+            Ok(_) => {},
+            Err(e) => {
+                error!("Error authenticating with {}: {}", &addr, e);
+                return
+            }
+        }
+    
+        if !session.authenticated() {
+            error!("Unknown error authenticating with {}", &addr);
+            return
+        }
 
-            let sftp_connection = match connect_result {
-                Ok(c) => {
-                    debug!("SFTP connection to {} established", sftp_config.address);
-                    Arc::new(RefCell::new(c))
-                },
-                Err(e) => return Err(Error::with_chain(e, "SFTP connect failed"))
-            };
+        let sftp_downloader = SftpDownloader {
+            sftp_source: config.clone(),
+            persistence: persistence,
+            local_storage: local_storage.clone(),
+        };
 
-            let mut sftp_downloader = SftpDownloader {
-                sftp_source: config.clone(),
-                persistence: persistence,
-                local_storage: local_storage.clone(),
-            };
+        let timeout = time::Duration::from_millis(500);
 
-            let timeout = time::Duration::from_millis(500);
+        // Take SFTP download commands from the channel until it is closed
+        while let Some((delivery_tag, command)) = receiver.recv().await {
+            let download_result = sftp_downloader.handle(&session, &command).await;
 
-            // Take SFTP download commands from the queue until the stop flag is set and
-            // the command channel is empty.
-            while !(stop.load(Ordering::Relaxed) && receiver.is_empty()) {
-                let receive_result = receiver.recv_timeout(timeout);
+            match download_result {
+                Ok(file_event) => {
+                    let send_result = ack_sender.try_send(MessageResponse::Ack{delivery_tag});
 
-                match receive_result {
-                    Ok((delivery_tag, command)) => {
-                        let download_result = retry(Fixed::from_millis(1000), || {
-                            match sftp_downloader.handle(sftp_connection.clone(), &command) {
-                                Ok(file_event) => OperationResult::Ok(file_event),
-                                Err(e) => {
-                                    match e {
-                                        Error(ErrorKind::DisconnectedError, _) => {
-                                            info!("Sftp connection disconnected, reconnecting");
-                                            let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
-
-                                            match connect_result {
-                                                Ok(c) => {
-                                                    sftp_connection.replace(c);
-                                                    info!("Sftp connection reconnected");
-                                                    OperationResult::Retry(e)
-                                                },
-                                                Err(er) => {
-                                                    OperationResult::Err(Error::with_chain(er, "Error reconnecting SFTP"))
-                                                }
-                                            }
-                                        },
-                                        _ => OperationResult::Err(e)
-                                    }
-                                }
-                            }
-                        });
-
-                        match download_result {
-                            Ok(file_event) => {
-                                let send_result = ack_sender.try_send(MessageResponse::Ack{delivery_tag});
-
-                                match send_result {
-                                    Ok(_) => {
-                                        debug!("Sent message ack to channel");
-                                    },
-                                    Err(e) => {
-                                        error!("Error sending message ack to channel: {}", e);
-                                    }
-
-                                }
-
-                                // Notify about new data from this SFTP source
-                                let send_result = sender.send(file_event);
-
-                                match send_result {
-                                    Ok(_) => {
-                                        debug!("Sent SFTP FileEvent to channel");
-                                    },
-                                    Err(e) => {
-                                        error!("Error notifying consumers of new file: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                let send_result = ack_sender.try_send(MessageResponse::Nack{delivery_tag});
-
-                                match send_result {
-                                    Ok(_) => {
-                                        debug!("Sent message nack to channel");
-                                    },
-                                    Err(e) => {
-                                        error!("Error sending message nack to channel: {}", e);
-                                    }
-
-                                }
-
-                                let msg = match e {
-                                    retry::Error::<Error>::Operation { error, total_delay: _, tries: _ } => {
-                                        let msg_list: Vec<String> = error.iter().map(|sub_err| sub_err.to_string()).collect();
-                                        msg_list.join(": ").to_string()
-                                    },
-                                    retry::Error::Internal(int) => {
-                                        int
-                                    },
-                                };
-
-                                error!(
-                                    "[E01003] Error downloading '{}': {}",
-                                    &command.path, msg
-                                );
-                            }
+                    match send_result {
+                        Ok(_) => {
+                            debug!("Sent message ack to channel");
+                        },
+                        Err(e) => {
+                            error!("Error sending message ack to channel: {}", e);
                         }
-                    },
-                    Err(e) => {
-                        match e {
-                            RecvTimeoutError::Timeout => (),
-                            RecvTimeoutError::Disconnected => {
-                                // If the stop flag was set, the other side of the channel was dropped because of that, otherwise return an error
-                                if stop.load(Ordering::Relaxed) {
-                                    return Ok(())
-                                } else {
-                                    error!("[E02005] SFTP download command channel receiver disconnected");
 
-                                    return Err(Error::with_chain(e, "[E02005] SFTP download command channel receiver disconnected"));
-                                }
-                            }
+                    }
+
+                    // Notify about new data from this SFTP source
+                    let send_result = sender.send(file_event);
+
+                    match send_result {
+                        Ok(_) => {
+                            debug!("Sent SFTP FileEvent to channel");
+                        },
+                        Err(e) => {
+                            error!("Error notifying consumers of new file: {}", e);
                         }
                     }
                 }
+                Err(e) => {
+                    let send_result = ack_sender.send(MessageResponse::Nack{delivery_tag}).await;
+
+                    match send_result {
+                        Ok(_) => {
+                            debug!("Sent message nack to channel");
+                        },
+                        Err(e) => {
+                            error!("Error sending message nack to channel: {}", e);
+                        }
+                    }
+
+                    error!(
+                        "[E01003] Error downloading '{}': {}",
+                        &command.path, e
+                    );
+                }
             }
-
-            debug!("SFTP source stream '{}' ended", config.name);
-
-            Ok(())
-        })
+        }
     }
 
-    pub fn handle(&mut self, sftp_connection: Arc<RefCell<SftpConnection>>, msg: &SftpDownload) -> Result<FileEvent> {
+    pub async fn handle<S>(&self, session: &AsyncSession<S>, msg: &SftpDownload) -> Result<FileEvent> {
         let remote_path = Path::new(&msg.path);
+
+        let sftp = session.sftp().await.unwrap();
 
         let localize_result = self.local_storage.local_path(&self.sftp_source.name, &remote_path, &Path::new("/"));
 
@@ -235,51 +194,36 @@ where
         }
 
         let (copy_result, hash, stat) = {
-            let borrow = sftp_connection.borrow();
-            
-            let open_result = borrow.sftp.open(&remote_path);
+            let open_result = sftp.open(&remote_path).await;
 
             let mut remote_file = match open_result {
                 Ok(remote_file) => remote_file,
                 Err(e) => {
-                    match e.code() {
-                        0 => {
+                    match e.kind() {
+                        std::io::ErrorKind::BrokenPipe => {
                             // unknown error, probably a fault in the SFTP connection
                             return Err(ErrorKind::DisconnectedError.into())
                         },
-                        2 => {
-                            let delete_result = self.persistence.delete_sftp_download_file(msg.id);
+                        std::io::ErrorKind::NotFound => {
+                            let delete_result = self.persistence.delete_sftp_download_file(msg.id).await;
 
                             match delete_result {
                                 Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
                                 Err(e) => return Err(Error::with_chain(e, "Error removing record of non-existent remote file"))
                             }
                         },
-                        -31 => {
-                            let delete_result = self.persistence.delete_sftp_download_file(msg.id);
-
-                            match delete_result {
-                                Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
-                                Err(e) => return Err(Error::with_chain(e, "Error removing record of non-existent remote file"))
-                            }
-                        },
-                        _ => return Err(Error::with_chain(e, "Error opening remote file"))
                     }
                 }
             };
 
-            let stat_result = remote_file.stat();
+            let stat_result = sftp.stat(&remote_path).await;
 
             let stat = match stat_result {
                 Ok(s) => s,
                 Err(e) => {
-                    match e.code() {
-                        0 => {
+                    match e.kind() {
+                        std::io::ErrorKind::BrokenPipe => {
                             // unknown error, probably a fault in the SFTP connection
-                            return Err(ErrorKind::DisconnectedError.into())
-                        },
-                        -31 => {
-                            // SFTP protocol error
                             return Err(ErrorKind::DisconnectedError.into())
                         },
                         _ => return Err(Error::with_chain(e, "Error retrieving stat for remote file"))
@@ -296,15 +240,18 @@ where
                 }    
             }
 
-            let mut local_file = File::create(&local_path)
-                .chain_err(|| format!("Error creating local file '{}'", local_path.to_string_lossy()))?;
+            let mut local_file = File::create(&local_path).await
+                .map_err(|e| format!("Error creating local file '{}': {}", local_path.to_string_lossy(), e))?;
 
             let mut sha256 = Sha256::new();
 
-            let mut tee_reader = TeeReader::new(&mut remote_file, &mut sha256);
+            //let mut tee_reader = TeeReader::new(&mut remote_file, &mut sha256);
+
+            let bytes_copied: u64 = 0;
+            let copy_result: std::io::Result<u64> = Ok(0);
 
             (
-                io::copy(&mut tee_reader, &mut local_file),
+                copy_result, //futures_util::io::copy(&mut remote_file, &mut local_file).await;
                 format!("{:x}", sha256.finalize()),
                 stat
             )
@@ -337,16 +284,15 @@ where
 
                 let file_id = match self.persistence.insert_file(
                     &self.sftp_source.name, &local_path.to_string_lossy(), &modified, file_size, Some(hash)
-                ) {
+                ).await {
                     Ok(id) => id,
                     Err(e) => return Err(ErrorKind::PersistenceError.into())
                 };
 
-                let set_result = self.persistence.set_sftp_download_file(msg.id, file_id);
+                let set_result = self.persistence.set_sftp_download_file(msg.id, file_id).await;
 
-                match set_result {
-                    Ok(_) => {},
-                    Err(_) => return Err(ErrorKind::PersistenceError.into()),
+                if let Err(_) = set_result {
+                    return Err(ErrorKind::PersistenceError.into())
                 }
 
                 metrics::FILE_DOWNLOAD_COUNTER_VEC
@@ -357,7 +303,7 @@ where
                     .inc_by(bytes_copied as u64);
 
                 if msg.remove {
-                    let unlink_result = sftp_connection.borrow().sftp.unlink(&remote_path);
+                    let unlink_result = sftp.unlink(&remote_path).await;
 
                     match unlink_result {
                         Ok(_) => {

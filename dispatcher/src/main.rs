@@ -44,6 +44,8 @@ extern crate prometheus;
 #[macro_use]
 extern crate lazy_static;
 
+extern crate tokio_retry;
+
 extern crate cortex_core;
 
 #[tokio::main]

@@ -20,23 +20,20 @@ use tokio::sync::oneshot;
 use futures::stream::StreamExt;
 
 use postgres::NoTls;
-use r2d2_postgres::PostgresConnectionManager;
 
 use signal_hook_tokio::Signals;
-
-use crossbeam_channel::{bounded, Sender, Receiver};
 
 use cortex_core::{wait_for, SftpDownload, StopCmd};
 
 use crate::base_types::{Connection, RabbitMQNotify, Target, Source};
 
-use crate::directory_source::{start_directory_sweep, start_local_intake_thread};
+use crate::directory_source::{start_directory_sweep, start_local_intake_loop};
 #[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
 
 use crate::directory_target::handle_file_event;
 use crate::event::{FileEvent, EventDispatcher};
-use crate::persistence::{PostgresPersistence, PostgresAsyncPersistence};
+use crate::persistence::{Persistence};
 use crate::settings;
 use crate::sftp_downloader;
 use crate::sftp_command_consumer;
@@ -84,10 +81,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
 
     let connection_manager =
-        PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
-
-    let tokio_connection_manager = 
-        bb8_postgres::PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), tokio_postgres::NoTls);
+        bb8_postgres::PostgresConnectionManager::new(settings.postgresql.url.parse().unwrap(), NoTls);
 
     let t_settings = settings.clone();
 
@@ -95,11 +89,15 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let directory_target_targets = targets.clone();
 
+    let persistence = Persistence::new(connection_manager)
+        .await
+        .map_err(|e| err_msg(format!("Error initializing persistence: {}", e)) )?;
+
     tokio::spawn(async move {
-        let tokio_persistence = PostgresAsyncPersistence::new(tokio_connection_manager).await;
+        let persistence = persistence.clone();
 
         t_settings.directory_targets.iter().for_each(|target_conf| {
-            let persistence = tokio_persistence.clone();
+            let persistence = persistence.clone();
             let (sender, mut receiver) = unbounded_channel();
 
             let c_target_conf = target_conf.clone();
@@ -207,8 +205,6 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         });
     });
 
-    let persistence = PostgresPersistence::new(connection_manager).map_err(|e| err_msg(e))?;
-
     let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
 
     let (local_intake_sender, local_intake_receiver) = std::sync::mpsc::channel();
@@ -232,9 +228,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         senders: senders
     };
 
-    let (local_intake_handle, local_intake_stop_cmd) = start_local_intake_thread(local_intake_receiver, event_dispatcher, local_storage.clone());
-
-    stop.lock().unwrap().add_command(local_intake_stop_cmd);
+    tokio::spawn(start_local_intake_loop(local_intake_receiver, event_dispatcher, local_storage.clone()));
 
     #[cfg(target_os = "linux")]
     let (directory_sources_join_handle, inotify_stop_cmd) =
@@ -279,14 +273,14 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     struct SftpSourceSend {
         pub sftp_source: settings::SftpSource,
-        pub cmd_sender: Sender<(u64, SftpDownload)>,
-        pub cmd_receiver: Receiver<(u64, SftpDownload)>,
+        pub cmd_sender: tokio::sync::mpsc::Sender<(u64, SftpDownload)>,
+        pub cmd_receiver: tokio::sync::mpsc::Receiver<(u64, SftpDownload)>,
         pub file_event_sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         pub stop_receiver: oneshot::Receiver<()>
     }
 
     let (sftp_source_senders, mut sftp_sources): (Vec<SftpSourceSend>, Vec<Source>) = settings.sftp_sources.iter().map(|sftp_source| {
-        let (cmd_sender, cmd_receiver) = bounded::<(u64, SftpDownload)>(10);
+        let (cmd_sender, cmd_receiver) = tokio::sync::mpsc::channel::<(u64, SftpDownload)>(10);
         let (file_event_sender, file_event_receiver) = unbounded_channel();
         let (stop_sender, stop_receiver) = oneshot::channel::<()>();
 
@@ -337,9 +331,8 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
             for n in 0..channels.sftp_source.thread_count {
                 debug!("Starting SFTP download thread '{}'", &channels.sftp_source.name);
 
-                let join_handle = sftp_downloader::SftpDownloader::start(
-                    stop_flag.clone(),
-                    channels.cmd_receiver.clone(),
+                let downloader = sftp_downloader::SftpDownloader::start(
+                    channels.cmd_receiver,
                     ack_sender.clone(),
                     channels.sftp_source.clone(),
                     channels.file_event_sender.clone(),
@@ -347,9 +340,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
                     persistence.clone(),
                 );
 
-                let guard = jhs.lock();
-
-                guard.unwrap().push(join_handle);
+                tokio::spawn(downloader);
 
                 info!("Started SFTP download thread '{}' ({})", &channels.sftp_source.name, n + 1);
             }
@@ -428,8 +419,6 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     #[cfg(target_os = "linux")]
     wait_for(directory_sources_join_handle, "directory sources");
-
-    wait_for(local_intake_handle, "local intake");
 
     wait_for(directory_sweep_join_handle, "directory sweep");
 
