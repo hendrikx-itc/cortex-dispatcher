@@ -1,13 +1,15 @@
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
 use tera::{Context, Tera};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+use chrono::prelude::{DateTime, Utc};
 
 use crate::event::FileEvent;
 use crate::settings;
 use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
-
 
 pub struct RabbitMQNotify {
     pub message_template: String,
@@ -34,19 +36,21 @@ impl RabbitMQNotify {
 
         match render_result {
             Ok(message_str) => {
-                let publish_result = channel.basic_publish(
-                    &exchange,
-                    &routing_key,
-                    BasicPublishOptions::default(),
-                    message_str.as_bytes().to_vec(),
-                    BasicProperties::default()
-                ).await;
+                let publish_result = channel
+                    .basic_publish(
+                        &exchange,
+                        &routing_key,
+                        BasicPublishOptions::default(),
+                        message_str.as_bytes().to_vec(),
+                        BasicProperties::default(),
+                    )
+                    .await;
 
                 match publish_result {
                     Ok(_) => debug!("published"),
-                    Err(e) => error!("Error publishing notification: {}", e)
+                    Err(e) => error!("Error publishing notification: {}", e),
                 }
-            },
+            }
             Err(e) => {
                 error!("Error rendering template: {}", e);
             }
@@ -83,5 +87,13 @@ pub struct CortexConfig {
 #[derive(Debug, Clone)]
 pub enum MessageResponse {
     Ack { delivery_tag: u64 },
-    Nack { delivery_tag: u64 }
+    Nack { delivery_tag: u64 },
+}
+
+pub struct FileInfo {
+    pub source: String,
+    pub path: PathBuf,
+    pub modified: DateTime<Utc>,
+    pub size: i64,
+    pub hash: Option<String>,
 }

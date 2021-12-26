@@ -2,10 +2,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use std::sync::mpsc::{Sender, Receiver};
 
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
@@ -19,19 +19,20 @@ use inotify::{Inotify, WatchMask};
 extern crate failure;
 extern crate lapin;
 
+use sha2::{Digest, Sha256};
+
 use cortex_core::StopCmd;
 
-use crate::event::{FileEvent, EventDispatcher};
+use crate::event::{EventDispatcher, FileEvent};
 use crate::local_storage::LocalStorage;
 use crate::persistence::Persistence;
 use crate::settings;
-
 
 #[derive(Debug, Clone)]
 pub struct LocalFileEvent {
     pub source_name: String,
     pub path: PathBuf,
-    pub prefix: PathBuf
+    pub prefix: PathBuf,
 }
 
 #[cfg(target_os = "linux")]
@@ -98,9 +99,8 @@ struct InotifyEventContext {
 pub fn start_directory_sweep(
     directory_sources: Vec<settings::DirectorySource>,
     local_intake_sender: Sender<LocalFileEvent>,
-    scan_interval: u64
-) -> (thread::JoinHandle<()>, StopCmd)
-{
+    scan_interval: u64,
+) -> (thread::JoinHandle<()>, StopCmd) {
     let timeout = std::time::Duration::from_millis(scan_interval);
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -125,14 +125,16 @@ pub fn start_directory_sweep(
                         let local_file_event = LocalFileEvent {
                             source_name: directory_source.name.clone(),
                             path: PathBuf::from(path),
-                            prefix: directory_source.directory.clone()
+                            prefix: directory_source.directory.clone(),
                         };
 
                         let send_result = local_intake_sender.send(local_file_event);
 
                         match send_result {
-                            Ok(_) => {},
-                            Err(e) => error!("Could not send local file event on intake channel: {}", e)
+                            Ok(_) => {}
+                            Err(e) => {
+                                error!("Could not send local file event on intake channel: {}", e)
+                            }
                         }
                     }
                 };
@@ -166,8 +168,7 @@ pub fn start_directory_sweep(
 pub fn start_directory_sources(
     directory_sources: Vec<settings::DirectorySource>,
     local_intake_sender: Sender<LocalFileEvent>,
-) -> (thread::JoinHandle<()>, StopCmd)
-{
+) -> (thread::JoinHandle<()>, StopCmd) {
     let init_result = Inotify::init();
 
     let mut inotify = match init_result {
@@ -231,13 +232,16 @@ pub fn start_directory_sources(
     start_inotify_event_thread(inotify, watch_mapping, local_intake_sender)
 }
 
+/// Start thread for monitoring for new files using inotify
+///
+/// When a new file is detected, an event is sent to the
+/// local_intake_sender channel.
 #[cfg(target_os = "linux")]
 fn start_inotify_event_thread(
     mut inotify: Inotify,
     mut watch_mapping: HashMap<inotify::WatchDescriptor, InotifyEventContext>,
     local_intake_sender: Sender<LocalFileEvent>,
-) -> (thread::JoinHandle<()>, StopCmd)
-{
+) -> (thread::JoinHandle<()>, StopCmd) {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();
 
@@ -257,7 +261,7 @@ fn start_inotify_event_thread(
                 Err(e) => {
                     error!("Could not read inotify events: {}", e);
                     std::thread::sleep(timeout);
-                    continue
+                    continue;
                 }
             };
 
@@ -276,7 +280,7 @@ fn start_inotify_event_thread(
                     Some(name_str) => name_str,
                     None => {
                         debug!("Could not decode string from inotify event name");
-                        continue
+                        continue;
                     }
                 };
 
@@ -286,19 +290,20 @@ fn start_inotify_event_thread(
                     Some(event_context) => {
                         let source_path = event_context.directory.join(&file_name);
                         let source_path_str = source_path.to_string_lossy();
-                
+
                         if source_path.is_dir() {
                             if event_context.recursive {
-                                let watch_result = inotify.add_watch(&source_path, event_context.watch_mask);
+                                let watch_result =
+                                    inotify.add_watch(&source_path, event_context.watch_mask);
 
                                 let wd = match watch_result {
                                     Ok(w) => w,
                                     Err(e) => {
                                         error!("Could not add inotify watch for new directory '{}': {}", source_path_str, e);
-                                        continue
+                                        continue;
                                     }
                                 };
-        
+
                                 let sub_event_context = InotifyEventContext {
                                     recursive: event_context.recursive,
                                     watch_mask: event_context.watch_mask,
@@ -307,9 +312,9 @@ fn start_inotify_event_thread(
                                     prefix: event_context.prefix.clone(),
                                     filter: event_context.filter.clone(),
                                 };
-        
+
                                 watch_mapping.insert(wd, sub_event_context);
-        
+
                                 info!("Registered extra watch on {}", &source_path_str);
                             }
                         } else {
@@ -317,18 +322,18 @@ fn start_inotify_event_thread(
                                 Some(f) => f.file_matches(&source_path),
                                 None => true,
                             };
-                    
+
                             if file_matches {
                                 debug!("Event for {} matches filter", &source_path_str);
-                    
+
                                 let file_event = LocalFileEvent {
                                     source_name: event_context.source_name.clone(),
                                     path: source_path,
-                                    prefix: event_context.prefix.clone()
+                                    prefix: event_context.prefix.clone(),
                                 };
-                    
+
                                 let send_result = local_intake_sender.send(file_event);
-                    
+
                                 match send_result {
                                     Ok(_) => (),
                                     Err(e) => {
@@ -337,8 +342,7 @@ fn start_inotify_event_thread(
                                 }
                             }
                         }
-        
-                    },
+                    }
                     None => {
                         error!("Could not find matching event context for {}", file_name);
                     }
@@ -352,10 +356,15 @@ fn start_inotify_event_thread(
     (join_handle, stop_cmd)
 }
 
+/// Start the local file intake thread
+///
+/// Events of available files from a local directory source are taken from the
+/// receiver channel and the file are ingested by Cortex for further
+/// dispatching.
 pub fn start_local_intake_thread<T>(
     receiver: Receiver<LocalFileEvent>,
     mut event_dispatcher: EventDispatcher,
-    local_storage: LocalStorage<T>
+    local_storage: LocalStorage<T>,
 ) -> (thread::JoinHandle<()>, StopCmd)
 where
     T: Persistence,
@@ -377,48 +386,10 @@ where
             let receive_result = receiver.recv_timeout(timeout);
 
             if let Ok(file_event) = receive_result {
-                let request_result = local_storage.in_storage(&file_event.source_name, &file_event.path, &file_event.prefix);
-
-                match request_result {
-                    Ok(in_storage) => {
-                        if !in_storage {
-                            debug!("Not in storage yet: {}", &file_event.path.to_string_lossy());
-                            let store_result = local_storage.hard_link(&file_event.source_name, &file_event.path, &file_event.prefix);
-            
-                            let source_path_str = file_event.path.to_string_lossy();
-                
-                            match store_result {
-                                Ok((file_id, target_path)) => {
-                                    let source_file_event = FileEvent {
-                                        file_id: file_id,
-                                        source_name: file_event.source_name.clone(),
-                                        path: target_path.clone(),
-                                    };
-                
-                                    info!(
-                                        "New file for <{}>: '{}'",
-                                        &file_event.source_name, &source_path_str
-                                    );
-                
-                                    let send_result = event_dispatcher.dispatch_event(&source_file_event);
-                
-                                    match send_result {
-                                        Ok(_) => {
-                                            debug!("File event from inotify sent on local channel");
-                                        },
-                                        Err(e) => error!(
-                                            "[E02001] Error sending file event on local channel: {}",
-                                            e
-                                        )
-                                    }
-                                }
-                                Err(e) => error!("Error storing file '{}': {}", &source_path_str, &e),
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        error!("Error querying storage: {}", e)
-                    }
+                if let Err(e) =
+                    process_file_event(file_event, &mut event_dispatcher, &local_storage)
+                {
+                    error!("Error processing file event: {}", e);
                 }
             }
         }
@@ -427,4 +398,100 @@ where
     });
 
     (join_handle, stop_cmd)
+}
+
+/// Calculate a SHA265 hash over a 'reader'
+///
+/// The reader is read until the end and the SHA265 hash is returned in the form
+/// of its hexadecimal representation string.
+fn sha256_hash<R: std::io::Read>(mut reader: R) -> Result<String, std::io::Error> {
+    let mut sha256 = Sha256::new();
+    let mut buffer = [0; 8192];
+
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        sha256.update(&buffer[..count]);
+    }
+
+    let hash = format!("{:x}", sha256.finalize());
+
+    Ok(hash)
+}
+
+/// Calculate a SHA265 hash over a file
+///
+/// The file is read until the end and the SHA265 hash is returned in the form
+/// of its hexadecimal representation string.
+fn sha256_hash_file(path: &PathBuf) -> Result<String, std::io::Error> {
+    let file = std::fs::File::open(&path)?;
+
+    sha256_hash(file)
+}
+
+fn process_file_event<T>(
+    file_event: LocalFileEvent,
+    event_dispatcher: &mut EventDispatcher,
+    local_storage: &LocalStorage<T>,
+) -> Result<(), String>
+where
+    T: Persistence,
+    T: Send,
+    T: Clone,
+    T: 'static,
+{
+    let file_hash = sha256_hash_file(&file_event.path)
+        .map_err(|e| format!("Error calculating file hash: {}", e))?;
+
+    let file_info_result = local_storage.get_file_info(
+        &file_event.source_name,
+        &file_event.path,
+        &file_event.prefix,
+    )
+    .map_err(|e| format!("Error querying storage: {}", e))?;
+
+    // Check if the file has been seen before
+    if let Some(file_info) = file_info_result {
+        if let Some(hash) = file_info.hash {
+            if hash == file_hash {
+                debug!(
+                    "Already in local file storage, so skipping '{}'",
+                    &file_event.path.to_string_lossy()
+                );
+
+                return Ok(());
+            }
+        }
+    }
+
+    let source_path_str = file_event.path.to_string_lossy();
+
+    let (file_id, target_path) = local_storage
+        .ingest(
+            &file_event.source_name,
+            &file_event.path,
+            &file_event.prefix,
+            Some(file_hash.clone()),
+        )
+        .map_err(|e| format!("Error storing file '{}': {}", &source_path_str, &e))?;
+
+    let source_file_event = FileEvent {
+        file_id: file_id,
+        source_name: file_event.source_name.clone(),
+        path: target_path.clone(),
+        hash: file_hash,
+    };
+
+    info!(
+        "New file for <{}>: '{}'",
+        &file_event.source_name, &source_path_str
+    );
+
+    event_dispatcher
+        .dispatch_event(&source_file_event)
+        .map_err(|e| format!("[E02001] Error sending file event on local channel: {}", e))?;
+
+    Ok(())
 }

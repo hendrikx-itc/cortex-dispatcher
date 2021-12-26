@@ -12,12 +12,11 @@ extern crate error_chain;
 
 extern crate log;
 
-use log::{info, error};
+use log::{error, info};
 
 pub mod sftp_connection;
 
 pub use self::sftp_connection::SftpConnection;
-
 
 /// The set of commands that can be sent over the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
@@ -27,26 +26,32 @@ pub struct SftpDownload {
     pub size: Option<u64>,
     pub sftp_source: String,
     pub path: String,
-    pub remove: bool
+    pub remove: bool,
 }
 
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct HttpDownload {
     pub created: DateTime<Utc>,
     pub size: Option<u64>,
-    pub url: String
+    pub url: String,
 }
-
 
 impl fmt::Display for SftpDownload {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.size {
-            Some(s) => write!(f, "SftpDownload({}, {}, {}, {})", self.created, s, self.sftp_source, self.path),
-            None => write!(f, "SftpDownload({}, {}, {})", self.created, self.sftp_source, self.path)
+            Some(s) => write!(
+                f,
+                "SftpDownload({}, {}, {}, {})",
+                self.created, s, self.sftp_source, self.path
+            ),
+            None => write!(
+                f,
+                "SftpDownload({}, {}, {})",
+                self.created, self.sftp_source, self.path
+            ),
         }
     }
 }
-
 
 impl fmt::Display for HttpDownload {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -56,7 +61,6 @@ impl fmt::Display for HttpDownload {
         }
     }
 }
-
 
 /// Wait for a thread to finish, log error or success, ignoring the success value.
 pub fn wait_for<T>(join_handle: thread::JoinHandle<T>, thread_name: &str) {

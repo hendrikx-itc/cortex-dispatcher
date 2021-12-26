@@ -1,16 +1,18 @@
-use std::fmt;
 use std::error;
+use std::fmt;
 use std::path::PathBuf;
 
+use chrono::prelude::*;
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use r2d2_postgres::PostgresConnectionManager;
 use tokio_postgres::Socket;
-use chrono::prelude::*;
+
+use crate::base_types::FileInfo;
 
 #[derive(Debug)]
 pub struct PersistenceError {
     pub source: Option<Box<dyn error::Error + 'static + Send + Sync>>,
-    pub message: String
+    pub message: String,
 }
 
 impl fmt::Display for PersistenceError {
@@ -27,33 +29,42 @@ impl error::Error for PersistenceError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.source {
             Some(s) => Some(s.as_ref()),
-            None => None
+            None => None,
         }
     }
 }
 
-pub struct FileInfo {
-    source: String,
-    path: PathBuf,
-    modified: DateTime<Utc>,
-    size: i64,
-    hash: Option<String>
-}
-
 pub trait Persistence {
-    fn insert_sftp_download(&self, source: &str, path: &str, size: i64) -> Result<i64, PersistenceError>;
+    fn insert_sftp_download(
+        &self,
+        source: &str,
+        path: &str,
+        size: i64,
+    ) -> Result<i64, PersistenceError>;
     fn delete_sftp_download_file(&self, id: i64) -> Result<(), PersistenceError>;
     fn set_sftp_download_file(&self, id: i64, file_id: i64) -> Result<(), PersistenceError>;
-    fn insert_file(&self, source: &str, path: &str, modified: &DateTime<Utc>, size: i64, hash: Option<String>) -> Result<i64,PersistenceError>;
-    fn remove_file(&self, source: &str, path: &str) -> Result<(),PersistenceError>;
-    fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>,PersistenceError>;
+    fn insert_file(
+        &self,
+        source: &str,
+        path: &str,
+        modified: &DateTime<Utc>,
+        size: i64,
+        hash: Option<String>,
+    ) -> Result<i64, PersistenceError>;
+    fn remove_file(&self, source: &str, path: &str) -> Result<(), PersistenceError>;
+    fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>, PersistenceError>;
     fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError>;
 }
 
 #[derive(Clone)]
 pub struct PostgresPersistence<T>
 where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T: MakeTlsConnect<Socket>
+        + Clone
+        + 'static
+        + Sync
+        + Send
+        + postgres::tls::MakeTlsConnect<postgres::Socket>,
     T::TlsConnect: Send,
     T::Stream: Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
@@ -63,12 +74,19 @@ where
 
 impl<T> PostgresPersistence<T>
 where
-    T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send + postgres::tls::MakeTlsConnect<postgres::Socket>,
+    T: MakeTlsConnect<Socket>
+        + Clone
+        + 'static
+        + Sync
+        + Send
+        + postgres::tls::MakeTlsConnect<postgres::Socket>,
     T::TlsConnect: Send,
     T::Stream: Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    pub fn new(connection_manager: PostgresConnectionManager<T>) -> Result<PostgresPersistence<T>, String> {
+    pub fn new(
+        connection_manager: PostgresConnectionManager<T>,
+    ) -> Result<PostgresPersistence<T>, String> {
         let pool = r2d2::Pool::new(connection_manager)
             .map_err(|e| format!("Error connecting to database: {}", e))?;
 
@@ -83,7 +101,12 @@ where
     T::Stream: Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    fn insert_sftp_download(&self, source: &str, path: &str, size: i64) -> Result<i64,PersistenceError> {
+    fn insert_sftp_download(
+        &self,
+        source: &str,
+        path: &str,
+        size: i64,
+    ) -> Result<i64, PersistenceError> {
         let mut client = self.conn_pool.get().unwrap();
 
         let execute_result = client.query_one(
@@ -93,12 +116,10 @@ where
 
         match execute_result {
             Ok(row) => Ok(row.get(0)),
-            Err(e) => {
-                Err(PersistenceError {
-                    source: Some(Box::new(e)),
-                    message: String::from("Error inserting download record into database")
-                })
-            }
+            Err(e) => Err(PersistenceError {
+                source: Some(Box::new(e)),
+                message: String::from("Error inserting download record into database"),
+            }),
         }
     }
 
@@ -107,40 +128,41 @@ where
 
         let execute_result = client.execute(
             "update dispatcher.sftp_download set file_id = $2 where id = $1",
-            &[&id, &file_id]
+            &[&id, &file_id],
         );
 
         match execute_result {
             Ok(_) => Ok(()),
-            Err(e) => {
-                Err(PersistenceError{
-                    source: Some(Box::new(e)),
-                    message: String::from("Error updating sftp_download record into database")
-                })
-            }
+            Err(e) => Err(PersistenceError {
+                source: Some(Box::new(e)),
+                message: String::from("Error updating sftp_download record into database"),
+            }),
         }
     }
 
     fn delete_sftp_download_file(&self, id: i64) -> Result<(), PersistenceError> {
         let mut client = self.conn_pool.get().unwrap();
 
-        let execute_result = client.execute(
-            "delete from dispatcher.sftp_download where id = $1",
-            &[&id]
-        );
+        let execute_result =
+            client.execute("delete from dispatcher.sftp_download where id = $1", &[&id]);
 
         match execute_result {
             Ok(_) => Ok(()),
-            Err(e) => {
-                Err(PersistenceError{
-                    source: Some(Box::new(e)),
-                    message: String::from("Error deleting sftp_download record from database")
-                })
-            }
+            Err(e) => Err(PersistenceError {
+                source: Some(Box::new(e)),
+                message: String::from("Error deleting sftp_download record from database"),
+            }),
         }
     }
 
-    fn insert_file(&self, source: &str, path: &str, modified: &DateTime<Utc>, size: i64, hash: Option<String>) -> Result<i64,PersistenceError> {
+    fn insert_file(
+        &self,
+        source: &str,
+        path: &str,
+        modified: &DateTime<Utc>,
+        size: i64,
+        hash: Option<String>,
+    ) -> Result<i64, PersistenceError> {
         let mut client = self.conn_pool.get().unwrap();
 
         let insert_result = client.query_one(
@@ -150,73 +172,67 @@ where
 
         match insert_result {
             Ok(row) => Ok(row.get(0)),
-            Err(e) => Err(PersistenceError{
+            Err(e) => Err(PersistenceError {
                 source: Some(Box::new(e)),
-                message: String::from("Error inserting file record into database")
-            })
+                message: String::from("Error inserting file record into database"),
+            }),
         }
     }
 
-    fn remove_file(&self, source: &str, path: &str) -> Result<(),PersistenceError> {
+    fn remove_file(&self, source: &str, path: &str) -> Result<(), PersistenceError> {
         let mut client = self.conn_pool.get().unwrap();
 
         let insert_result = client.execute(
             "delete from dispatcher.file where source = $1 and path = $2",
-            &[&source, &path]
+            &[&source, &path],
         );
 
         match insert_result {
             Ok(_) => Ok(()),
-            Err(e) => Err(PersistenceError{
+            Err(e) => Err(PersistenceError {
                 source: Some(Box::new(e)),
-                message: String::from("Error deleting file record from database")
-            })
+                message: String::from("Error deleting file record from database"),
+            }),
         }
     }
 
-    fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>,PersistenceError> {
+    fn get_file(&self, source: &str, path: &str) -> Result<Option<FileInfo>, PersistenceError> {
         let mut client = self.conn_pool.get().unwrap();
 
-        let query_result = client.query(
+        let rows = client.query(
             "select source, path, modified, size, hash from dispatcher.file where source = $1 and path = $2",
             &[&source, &path]
-        );
+        ).map_err(|e| PersistenceError {
+            source: Some(Box::new(e)),
+            message: String::from("Error reading file record from database"),
+        })?;
 
-        match query_result {
-            Ok(rows) => {
-                if rows.is_empty() {
-                    Ok(None)
-                } else if rows.len() == 1 {
-                    let row = &rows[0];
-                    let ps: String = row.get(1);
-                    let p = PathBuf::from(ps);
-    
-                    Ok(Some(
-                        FileInfo {
-                            source: row.get(0),
-                            path: p,
-                            modified: row.get(2),
-                            size: row.get(3),
-                            hash: row.get(4)
-                        }
-                    ))
-                } else {
-                    Err(PersistenceError{
-                        source: None,
-                        message: String::from("More than one file matching criteria")
-                    })
-                }
-            },
-            Err(e) => Err(PersistenceError{
-                source: Some(Box::new(e)),
-                message: String::from("Error reading file record from database")
+        if rows.is_empty() {
+            Ok(None)
+        } else if rows.len() == 1 {
+            let row = &rows[0];
+            let ps: String = row.get(1);
+            let p = PathBuf::from(ps);
+
+            Ok(Some(FileInfo {
+                source: row.get(0),
+                path: p,
+                modified: row.get(2),
+                size: row.get(3),
+                hash: row.get(4),
+            }))
+        } else {
+            Err(PersistenceError {
+                source: None,
+                message: String::from("More than one file matching criteria"),
             })
         }
-
     }
 
     fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
-        let get_result = self.conn_pool.get_timeout(std::time::Duration::from_millis(10_000));
+        let get_result = self
+            .conn_pool
+            .get_timeout(std::time::Duration::from_millis(10_000));
 
         let mut client = match get_result {
             Ok(c) => c,
@@ -224,28 +240,27 @@ where
                 let message = format!("Error getting PostgreSQL conection from pool: {}", &e);
                 error!("{}", &message);
 
-                return Err(PersistenceError{
+                return Err(PersistenceError {
                     source: Some(Box::new(e)),
-                    message: message 
-                })
+                    message: message,
+                });
             }
         };
 
         let insert_result = client.query_one(
             "insert into dispatcher.dispatched (file_id, target, timestamp) values ($1, $2, now())",
-            &[&file_id, &dest]
+            &[&file_id, &dest],
         );
 
         match insert_result {
             Ok(_row) => Ok(()),
-            Err(e) => Err(PersistenceError{
+            Err(e) => Err(PersistenceError {
                 source: Some(Box::new(e)),
-                message: String::from("Error inserting dispatched record into database")
-            })
+                message: String::from("Error inserting dispatched record into database"),
+            }),
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct PostgresAsyncPersistence<T>
@@ -265,13 +280,22 @@ where
     T::Stream: Send + Sync,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    pub async fn new(connection_manager: bb8_postgres::PostgresConnectionManager<T>) -> PostgresAsyncPersistence<T> {
-        let pool = bb8::Pool::builder().build(connection_manager).await.unwrap();
+    pub async fn new(
+        connection_manager: bb8_postgres::PostgresConnectionManager<T>,
+    ) -> PostgresAsyncPersistence<T> {
+        let pool = bb8::Pool::builder()
+            .build(connection_manager)
+            .await
+            .unwrap();
 
         PostgresAsyncPersistence { conn_pool: pool }
     }
 
-    pub async fn insert_dispatched(&self, dest: &str, file_id: i64) -> Result<(), PersistenceError> {
+    pub async fn insert_dispatched(
+        &self,
+        dest: &str,
+        file_id: i64,
+    ) -> Result<(), PersistenceError> {
         let get_result = self.conn_pool.get().await;
 
         let client = match get_result {
@@ -280,10 +304,10 @@ where
                 let message = format!("Error getting PostgreSQL conection from pool: {}", &e);
                 error!("{}", &message);
 
-                return Err(PersistenceError{
+                return Err(PersistenceError {
                     source: Some(Box::new(e)),
-                    message: message 
-                })
+                    message: message,
+                });
             }
         };
 
@@ -294,10 +318,10 @@ where
 
         match insert_result {
             Ok(_) => Ok(()),
-            Err(e) => Err(PersistenceError{
+            Err(e) => Err(PersistenceError {
                 source: Some(Box::new(e)),
-                message: String::from("Error inserting dispatched record into database")
-            })
+                message: String::from("Error inserting dispatched record into database"),
+            }),
         }
     }
 }

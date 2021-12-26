@@ -8,6 +8,15 @@ use inotify::WatchMask;
 extern crate regex;
 extern crate serde_regex;
 
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_true() -> bool {
+    true
+}
+
 trait FileFilter {
     fn file_matches<P: AsRef<Path>>(&self, path: P) -> bool;
 }
@@ -65,7 +74,7 @@ pub enum FileSystemEvent {
     MovedFrom,
     MovedTo,
     Open,
-    AllEvents
+    AllEvents,
 }
 
 #[cfg(target_os = "linux")]
@@ -84,18 +93,31 @@ impl FileSystemEvent {
             Self::MovedFrom => WatchMask::MOVED_FROM,
             Self::MovedTo => WatchMask::MOVED_TO,
             Self::Open => WatchMask::OPEN,
-            Self::AllEvents => WatchMask::ALL_EVENTS
+            Self::AllEvents => WatchMask::ALL_EVENTS,
         }
     }
 }
 
+/// A local directory where files can be placed that will be picked up for
+/// dispatching.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DirectorySource {
+    /// The name of this source
     pub name: String,
+    /// The directory to monitor for new files.
     pub directory: PathBuf,
+    /// Set to true to recursively descend in subdirectories.
+    #[serde(default = "default_true")]
     pub recursive: bool,
+    /// A list of file system events that can trigger the intake of files in
+    /// this source.
     pub events: Vec<FileSystemEvent>,
+    /// A filter to ingest only certain files in the source directory.
     pub filter: Option<Filter>,
+    /// Set to true to prevent the same file from being dispatched multiple
+    /// times, based on its contents.
+    #[serde(default = "default_false")]
+    pub deduplicate: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -116,7 +138,7 @@ pub enum Notify {
 pub enum LocalTargetMethod {
     Copy,
     Symlink,
-    Hardlink
+    Hardlink,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -127,7 +149,7 @@ pub struct DirectoryTarget {
     pub method: LocalTargetMethod,
     pub overwrite: bool,
     pub notify: Option<Notify>,
-    pub permissions: u32
+    pub permissions: u32,
 }
 
 fn default_local_target_method() -> LocalTargetMethod {
@@ -150,10 +172,6 @@ pub struct SftpSource {
 /// Default Sftp downloader thread count
 fn default_thread_count() -> usize {
     1
-}
-
-fn default_false() -> bool {
-    false
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -189,7 +207,7 @@ pub struct Settings {
     pub postgresql: Postgresql,
     pub http_server: HttpServer,
     #[serde(default = "default_scan_interval")]
-    pub scan_interval: u64
+    pub scan_interval: u64,
 }
 
 /// Default directory scan (sweep) interval
@@ -212,14 +230,15 @@ impl Default for Settings {
                 directory: PathBuf::from("/cortex/storage"),
             },
             command_queue: CommandQueue {
-                address: "127.0.0.1:5672".parse().unwrap()
+                address: "127.0.0.1:5672".parse().unwrap(),
             },
             directory_sources: vec![DirectorySource {
                 name: "mixed-directory".to_string(),
                 directory: PathBuf::from("/cortex/incoming"),
                 events: vec![FileSystemEvent::MovedTo, FileSystemEvent::CloseWrite],
                 filter: None,
-                recursive: true
+                recursive: true,
+                deduplicate: false,
             }],
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),
@@ -232,7 +251,7 @@ impl Default for Settings {
                     exchange: "".to_string(),
                     routing_key: "red-consumer".to_string(),
                 })),
-                permissions: 100
+                permissions: 100,
             }],
             sftp_sources: vec![
                 SftpSource {
@@ -261,7 +280,7 @@ impl Default for Settings {
             http_server: HttpServer {
                 address: "0.0.0.0:56008".parse().unwrap(),
             },
-            scan_interval: 60_000
+            scan_interval: 60_000,
         }
     }
 }

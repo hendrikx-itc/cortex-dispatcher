@@ -9,24 +9,24 @@ extern crate env_logger;
 
 mod base_types;
 mod cmd;
-mod dispatcher;
 mod directory_source;
 mod directory_target;
+mod dispatcher;
 mod event;
+mod local_storage;
 mod metrics;
 mod persistence;
 mod settings;
-mod sftp_downloader;
 mod sftp_command_consumer;
-mod local_storage;
+mod sftp_downloader;
 
 use settings::Settings;
 
 #[macro_use]
 extern crate serde_derive;
 
-extern crate failure_derive;
 extern crate failure;
+extern crate failure_derive;
 
 extern crate postgres;
 
@@ -53,9 +53,8 @@ async fn main() {
     let mut env_logger_builder = env_logger::builder();
 
     if matches.is_present("service") {
-        env_logger_builder.format(|buf, record| {
-            writeln!(buf, "{}  {}", record.level(), record.args())
-        });
+        env_logger_builder
+            .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
     }
 
     env_logger_builder.init();
@@ -102,6 +101,6 @@ async fn main() {
 
     match dispatcher::run(settings).await {
         Ok(_) => (),
-        Err(e) => error!("{}", e)
+        Err(e) => error!("{}", e),
     }
 }

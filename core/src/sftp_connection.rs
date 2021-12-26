@@ -1,7 +1,7 @@
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time;
 
@@ -9,7 +9,7 @@ use ssh2::{Session, Sftp};
 
 use owning_ref::OwningHandle;
 
-use log::{info, debug, error};
+use log::{debug, error, info};
 
 error_chain! {
     errors {
@@ -29,7 +29,7 @@ pub struct SftpConfig {
     pub username: String,
     pub password: Option<String>,
     pub key_file: Option<PathBuf>,
-    pub compress: bool
+    pub compress: bool,
 }
 
 impl SftpConnection {
@@ -38,12 +38,12 @@ impl SftpConnection {
 
         let tcp = match tcp_connect_result {
             Ok(v) => v,
-            Err(e) => return Err(Error::with_chain(e, "TCP connect failed"))
+            Err(e) => return Err(Error::with_chain(e, "TCP connect failed")),
         };
 
         let mut session = match Session::new() {
             Ok(s) => Box::new(s),
-            Err(e) => return Err(Error::with_chain(e, "Session setup failed"))
+            Err(e) => return Err(Error::with_chain(e, "Session setup failed")),
         };
 
         session.set_compress(config.compress);
@@ -54,7 +54,7 @@ impl SftpConnection {
             Ok(()) => debug!("SSH handshake succeeded"),
             Err(e) => {
                 let msg = format!("SSH handshake failed: {}", &e);
-                return Err(Error::with_chain(e, msg))
+                return Err(Error::with_chain(e, msg));
             }
         }
 
@@ -62,28 +62,29 @@ impl SftpConnection {
             Some(key_file_path) => {
                 info!("Authorizing using key {}", &key_file_path.to_string_lossy());
                 session.userauth_pubkey_file(&config.username, None, key_file_path.as_path(), None)
-            },
+            }
             None => match config.password {
                 Some(pw) => {
                     info!("Authorizing using password");
                     session.userauth_password(&config.username, &pw)
-                },
+                }
                 None => {
                     info!("Authorizing using ssh agent");
                     session.userauth_agent(&config.username)
                 }
-            }
+            },
         };
 
         match auth_result {
             Ok(()) => debug!("SSH authorization succeeded"),
-            Err(e) => return Err(Error::with_chain(e, "SSH authorization failed"))
+            Err(e) => return Err(Error::with_chain(e, "SSH authorization failed")),
         }
 
         // OwningHandle is needed to store a value and a reference to that value in the same struct
-        let sftp = OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
+        let sftp =
+            OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
 
-        Ok(SftpConnection {sftp})
+        Ok(SftpConnection { sftp })
     }
 
     pub fn connect_loop(config: SftpConfig, stop: Arc<AtomicBool>) -> Result<SftpConnection> {

@@ -2,11 +2,17 @@ use std::thread;
 
 use log::{error, info};
 
-use actix_web::{middleware, web, App, HttpServer, Responder, HttpResponse};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder};
 
 use prometheus::{Encoder, TextEncoder};
 
-pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>, actix_rt::System, actix_web::dev::Server) {
+pub fn start_http_server(
+    addr: std::net::SocketAddr,
+) -> (
+    thread::JoinHandle<()>,
+    actix_rt::System,
+    actix_web::dev::Server,
+) {
     let (tx, rx) = std::sync::mpsc::channel();
     let (tx_http, rx_http) = std::sync::mpsc::channel();
 
@@ -24,7 +30,7 @@ pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>,
             Ok(http_server) => {
                 info!("Web server bound to address: {}", addr);
                 Some(http_server.run())
-            },
+            }
             Err(e) => {
                 error!("Could not bind to address {}: {}", addr, e);
                 None
@@ -35,8 +41,8 @@ pub fn start_http_server(addr: std::net::SocketAddr) -> (thread::JoinHandle<()>,
 
         match server {
             Some(s) => tx_http.send(s).unwrap(),
-            None => ()
-        }        
+            None => (),
+        }
 
         system.run().unwrap();
     });

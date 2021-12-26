@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -8,14 +8,15 @@ pub struct FileEvent {
     pub file_id: i64,
     pub source_name: String,
     pub path: PathBuf,
+    pub hash: String,
 }
 
-
 pub struct EventDispatcher {
-    pub senders: HashMap<String, UnboundedSender<FileEvent>>
+    pub senders: HashMap<String, UnboundedSender<FileEvent>>,
 }
 
 impl EventDispatcher {
+    /// Send the file_event to the channel for the corresponding source
     pub fn dispatch_event(&mut self, file_event: &FileEvent) -> Result<(), String> {
         let sender = self.senders.get_mut(&file_event.source_name).unwrap();
 

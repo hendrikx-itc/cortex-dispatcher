@@ -26,7 +26,7 @@ pub struct SftpSource {
     pub remove: bool,
     pub scan_interval: u64,
     #[serde(default = "default_false")]
-    pub recurse: bool
+    pub recurse: bool,
 }
 
 fn default_false() -> bool {
@@ -51,13 +51,12 @@ pub struct Settings {
     pub http_server: HttpServer,
 }
 
-
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             command_queue: CommandQueue {
                 address: "127.0.0.1:5672".parse().unwrap(),
-                queue_name: "cortex-dispatcher".to_string()
+                queue_name: "cortex-dispatcher".to_string(),
             },
             sftp_sources: vec![
                 SftpSource {

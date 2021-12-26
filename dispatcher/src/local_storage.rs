@@ -1,26 +1,27 @@
+use std::convert::TryFrom;
 use std::error;
 use std::fmt;
-use std::fs::hard_link;
+use std::fs::{hard_link, remove_file};
 use std::path::{Path, PathBuf};
-use std::convert::TryFrom;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{Utc, DateTime, NaiveDateTime};
+use chrono::{DateTime, NaiveDateTime, Utc};
 
+use crate::base_types::FileInfo;
 use crate::persistence::{Persistence, PersistenceError};
 
 #[derive(Debug, Clone)]
-pub struct LocalStorage<T> 
+pub struct LocalStorage<T>
 where
     T: Persistence,
 {
     directory: PathBuf,
-    persistence: T
+    persistence: T,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalStorageError {
-    message: String
+    message: String,
 }
 
 impl fmt::Display for LocalStorageError {
@@ -37,13 +38,17 @@ impl error::Error for LocalStorageError {
 
 impl From<PersistenceError> for LocalStorageError {
     fn from(e: PersistenceError) -> Self {
-        LocalStorageError { message: format!("{}", e) }
+        LocalStorageError {
+            message: format!("{}", e),
+        }
     }
 }
 
 impl From<std::io::Error> for LocalStorageError {
     fn from(e: std::io::Error) -> Self {
-        LocalStorageError { message: format!("{}", e) }
+        LocalStorageError {
+            message: format!("{}", e),
+        }
     }
 }
 
@@ -54,7 +59,7 @@ where
     pub fn new<P: AsRef<Path>>(directory: P, persistence: T) -> LocalStorage<T> {
         LocalStorage {
             directory: directory.as_ref().to_path_buf(),
-            persistence: persistence
+            persistence: persistence,
         }
     }
 
@@ -69,92 +74,117 @@ where
 
             let relative_file_path = match strip_result {
                 Ok(path) => path,
-                Err(e) => return Err(LocalStorageError { message: format!("Error stripping file path: {}", e) }),
+                Err(e) => {
+                    return Err(LocalStorageError {
+                        message: format!("Error stripping file path: {}", e),
+                    })
+                }
             };
-    
+
             Ok(self.directory.join(source_name).join(relative_file_path))
         } else {
             Ok(self.directory.join(source_name).join(file_path))
         }
     }
 
-    pub fn in_storage<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<bool, LocalStorageError>
+    /// Return information of the specified file if it has been previously ingested.
+    pub fn get_file_info<P>(
+        &self,
+        source_name: &str,
+        file_path: P,
+        prefix: P,
+    ) -> Result<Option<FileInfo>, LocalStorageError>
     where
         P: AsRef<Path>,
     {
-        let local_path = match self.local_path(source_name, &file_path, &prefix) {
-            Ok(path) => path,
-            Err(e) => return Err(e)
-        };
+        let local_path = self.local_path(source_name, &file_path, &prefix)?;
 
         let local_path_str = local_path.to_string_lossy();
 
-        let file_result = &self.persistence.get_file(source_name, &local_path_str)?;
-
-        match file_result {
-            None => Ok(false),
-            Some(_f) => Ok(true)
-        }
+        self.persistence
+            .get_file(source_name, &local_path_str)
+            .map_err(|e| LocalStorageError {
+                message: format!("Error retrieving file information: {}", e),
+            })
     }
 
     /// Store file in local storage. The file will be hardlinked from the
     /// specified file_path and will be stored in a directory with the name of
     /// the source. The prefix will be stripped from the file path.
-    pub fn hard_link<P>(&self, source_name: &str, file_path: P, prefix: P) -> Result<(i64, PathBuf), LocalStorageError>
+    /// Finally, the source will be removed.
+    pub fn ingest<P>(
+        &self,
+        source_name: &str,
+        file_path: P,
+        prefix: P,
+        hash: Option<String>,
+    ) -> Result<(i64, PathBuf), LocalStorageError>
     where
         P: AsRef<Path>,
     {
         debug!("Hard link prefix: {}", prefix.as_ref().to_string_lossy());
         let source_path_str = file_path.as_ref().to_string_lossy();
-        let local_path = match self.local_path(source_name, &file_path, &prefix) {
-            Ok(path) => path,
-            Err(e) => return Err(e)
-        };
+        let local_path = self.local_path(source_name, &file_path, &prefix)?;
+
         let local_path_str = local_path.to_string_lossy();
 
         if let Some(local_path_parent) = local_path.parent() {
             if !local_path_parent.exists() {
                 let local_path_parent_str = local_path_parent.to_string_lossy();
                 let create_dir_result = std::fs::create_dir_all(local_path_parent);
-    
+
                 match create_dir_result {
                     Ok(_) => info!("Created containing directory '{}'", local_path_parent_str),
                     Err(e) => {
-                        return Err(LocalStorageError { message: format!("Error creating containing directory '{}': {}", local_path_parent_str, e) })
+                        return Err(LocalStorageError {
+                            message: format!(
+                                "Error creating containing directory '{}': {}",
+                                local_path_parent_str, e
+                            ),
+                        })
                     }
                 }
             } else {
                 if local_path.is_file() {
-                    self.persistence.remove_file(source_name, &local_path_str)?;
-    
                     // Remove existing file before creating new hardlink
                     std::fs::remove_file(&local_path)?;
                 }
-            }        
+            }
         };
 
-        let link_result = hard_link(&file_path, &local_path);
-
-        match link_result {
-            Ok(()) => {
-                let metadata = std::fs::metadata(&local_path)?;
-                let modified = system_time_to_date_time(metadata.modified()?);
-                let size = match i64::try_from(metadata.len()) {
-                    Ok(s) => s,
-                    Err(e) => return Err(LocalStorageError{ message: format!("Error converting file size to i64: {}", e) })
-                };
-
-                let file_id = self.persistence.insert_file(source_name, &local_path_str, &modified, size, None)?;
-
-                debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
-
-                Ok((file_id, local_path))
-            }
-            Err(e) => Err(LocalStorageError{ message: format!(
+        hard_link(&file_path, &local_path).map_err(|e| LocalStorageError {
+            message: format!(
                 "[E?????] Error hardlinking '{}' to '{}': {}",
                 &source_path_str, &local_path_str, &e
-            )}),
-        }
+            ),
+        })?;
+
+        let metadata = std::fs::metadata(&local_path)?;
+        let modified = system_time_to_date_time(metadata.modified()?);
+        let size = match i64::try_from(metadata.len()) {
+            Ok(s) => s,
+            Err(e) => {
+                return Err(LocalStorageError {
+                    message: format!("Error converting file size to i64: {}", e),
+                })
+            }
+        };
+
+        let file_id = self.persistence.insert_file(
+            source_name,
+            &local_path_str,
+            &modified,
+            size,
+            hash,
+        )?;
+
+        debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
+
+        remove_file(&file_path)?;
+
+        debug!("Removed '{}'", &source_path_str);
+
+        Ok((file_id, local_path))
     }
 }
 
@@ -169,9 +199,8 @@ fn system_time_to_date_time(t: SystemTime) -> DateTime<Utc> {
             } else {
                 (-sec - 1, 1_000_000_000 - nsec)
             }
-        },
+        }
     };
 
-	DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc)
+    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc)
 }
-

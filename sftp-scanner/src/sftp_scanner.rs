@@ -1,15 +1,15 @@
-use std::fmt;
-use std::convert::TryFrom;
-use std::path::{Path, PathBuf};
-use std::{thread, time};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::cell::RefCell;
+use std::convert::TryFrom;
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::{thread, time};
 
-use crossbeam_channel::{Sender, SendTimeoutError};
+use crossbeam_channel::{SendTimeoutError, Sender};
 use log::{debug, error, info};
 
-use retry::{retry, delay::Fixed, OperationResult};
+use retry::{delay::Fixed, retry, OperationResult};
 
 extern crate chrono;
 use chrono::prelude::*;
@@ -20,14 +20,12 @@ use cortex_core::SftpDownload;
 use crate::metrics;
 use crate::settings::SftpSource;
 
-
 error_chain! {
     errors {
         DisconnectedError
         ConnectInterrupted
     }
 }
-
 
 /// Starts a new thread with an SFTP scanner for the specified source.
 ///
@@ -70,7 +68,7 @@ pub fn start_scanner(
 
         let sftp_connection = match connect_result {
             Ok(c) => Arc::new(RefCell::new(c)),
-            Err(e) => return Err(Error::with_chain(e, "Error reconnecting SFTP"))
+            Err(e) => return Err(Error::with_chain(e, "Error reconnecting SFTP")),
         };
 
         let scan_interval = time::Duration::from_millis(sftp_source.scan_interval);
@@ -89,30 +87,39 @@ pub fn start_scanner(
                 info!("Started scanning {}", &sftp_source.name);
 
                 let scan_result = retry(Fixed::from_millis(1000), || {
-                    match scan_source(&stop, &sftp_source, sftp_connection.clone(), &mut conn, &mut sender) {
+                    match scan_source(
+                        &stop,
+                        &sftp_source,
+                        sftp_connection.clone(),
+                        &mut conn,
+                        &mut sender,
+                    ) {
                         Ok(v) => OperationResult::Ok(v),
-                        Err(e) => {
-                            match e {
-                                Error(ErrorKind::DisconnectedError, _) => {
-                                    let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
+                        Err(e) => match e {
+                            Error(ErrorKind::DisconnectedError, _) => {
+                                let connect_result =
+                                    SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
 
-                                    match connect_result {
-                                        Ok(c) => {
-                                            sftp_connection.replace(c);
-                                            OperationResult::Retry(Error::with_chain(e, "Reconnected SFTP"))
-                                        },
-                                        Err(er) => {
-                                            OperationResult::Err(Error::with_chain(er, "Error reconnecting SFTP"))
-                                        }
+                                match connect_result {
+                                    Ok(c) => {
+                                        sftp_connection.replace(c);
+                                        OperationResult::Retry(Error::with_chain(
+                                            e,
+                                            "Reconnected SFTP",
+                                        ))
                                     }
-                                },
-                                _ => {
-                                    let msg = format!("Unexpected error: {}", &e);
-                                    error!("{}", &msg);
-                                    OperationResult::Err(Error::with_chain(e, msg))
+                                    Err(er) => OperationResult::Err(Error::with_chain(
+                                        er,
+                                        "Error reconnecting SFTP",
+                                    )),
                                 }
                             }
-                        }
+                            _ => {
+                                let msg = format!("Unexpected error: {}", &e);
+                                error!("{}", &msg);
+                                OperationResult::Err(Error::with_chain(e, msg))
+                            }
+                        },
                     }
                 });
 
@@ -135,19 +142,15 @@ pub fn start_scanner(
                         metrics::DIR_SCAN_DURATION
                             .with_label_values(&[&sftp_source.name])
                             .inc_by(scan_duration.as_millis() as i64);
-                    },
+                    }
                     Err(e) => {
-                        error!(
-                            "Error scanning {}: {}",
-                            &sftp_source.name, e
-                        );
+                        error!("Error scanning {}: {}", &sftp_source.name, e);
                     }
                 }
-
             } else {
                 thread::sleep(time::Duration::from_millis(200));
             }
-        };
+        }
 
         Ok(())
     })
@@ -159,7 +162,7 @@ struct ScanResult {
     /// Number of files that matched the criteria of the source
     pub matching_files: u64,
     /// Number of files dispatched on the channel
-    pub dispatched_files: u64
+    pub dispatched_files: u64,
 }
 
 impl ScanResult {
@@ -167,7 +170,7 @@ impl ScanResult {
         ScanResult {
             encountered_files: 0,
             matching_files: 0,
-            dispatched_files: 0
+            dispatched_files: 0,
         }
     }
 
@@ -180,21 +183,46 @@ impl ScanResult {
 
 impl fmt::Display for ScanResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "encountered: {}, matching: {}, dispatched: {}", self.encountered_files, self.matching_files, self.dispatched_files)
+        write!(
+            f,
+            "encountered: {}, matching: {}, dispatched: {}",
+            self.encountered_files, self.matching_files, self.dispatched_files
+        )
     }
 }
 
-fn scan_source(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &mut postgres::Client, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
-    scan_directory(stop, sftp_source, &Path::new(&sftp_source.directory), sftp_connection, conn, sender)
+fn scan_source(
+    stop: &Arc<AtomicBool>,
+    sftp_source: &SftpSource,
+    sftp_connection: Arc<RefCell<SftpConnection>>,
+    conn: &mut postgres::Client,
+    sender: &mut Sender<SftpDownload>,
+) -> Result<ScanResult> {
+    scan_directory(
+        stop,
+        sftp_source,
+        &Path::new(&sftp_source.directory),
+        sftp_connection,
+        conn,
+        sender,
+    )
 }
 
-fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &Path, sftp_connection: Arc<RefCell<SftpConnection>>, conn: &mut postgres::Client, sender: &mut Sender<SftpDownload>) -> Result<ScanResult> {
-    debug!("Directory scan started for {}", &directory.to_str().unwrap());
+fn scan_directory(
+    stop: &Arc<AtomicBool>,
+    sftp_source: &SftpSource,
+    directory: &Path,
+    sftp_connection: Arc<RefCell<SftpConnection>>,
+    conn: &mut postgres::Client,
+    sender: &mut Sender<SftpDownload>,
+) -> Result<ScanResult> {
+    debug!(
+        "Directory scan started for {}",
+        &directory.to_str().unwrap()
+    );
     let mut scan_result = ScanResult::new();
 
-    let read_result = sftp_connection.borrow()
-        .sftp
-        .readdir(directory);
+    let read_result = sftp_connection.borrow().sftp.readdir(directory);
 
     let paths = match read_result {
         Ok(paths) => paths,
@@ -217,18 +245,23 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
         if stat.is_dir() && sftp_source.recurse {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
-            let result = scan_directory(stop, sftp_source, &dir, sftp_connection.clone(), conn, sender);
+            let result = scan_directory(
+                stop,
+                sftp_source,
+                &dir,
+                sftp_connection.clone(),
+                conn,
+                sender,
+            );
 
             match result {
                 Ok(sr) => {
                     scan_result.add(&sr);
-                },
-                Err(e) => {
-                    match e {
-                        Error(ErrorKind::DisconnectedError, _) => return Err(e),
-                        _ => ()
-                    }
                 }
+                Err(e) => match e {
+                    Error(ErrorKind::DisconnectedError, _) => return Err(e),
+                    _ => (),
+                },
             }
         } else {
             scan_result.encountered_files += 1;
@@ -240,7 +273,10 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
             let file_size_db: i64 = match cast_result {
                 Ok(size) => size,
                 Err(e) => {
-                    error!("Could not convert file size to type that can be stored in database: {}", e);
+                    error!(
+                        "Could not convert file size to type that can be stored in database: {}",
+                        e
+                    );
                     continue;
                 }
             };
@@ -261,7 +297,7 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                         Ok(row) => {
                             let count: i64 = row.get(0);
                             count == 0
-                        },
+                        }
                         Err(e) => {
                             let msg = format!("Error querying database: {}", &e);
                             return Err(Error::with_chain(e, msg));
@@ -276,23 +312,21 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                         "insert into dispatcher.sftp_download (source, path, size) values ($1, $2, $3) returning id",
                         &[&sftp_source.name, &path_str, &file_size_db]
                     );
-    
+
                     let sftp_download_id = match insert_result {
-                        Ok(row) => {
-                            row.get(0)
-                        }
+                        Ok(row) => row.get(0),
                         Err(e) => {
                             return Err(Error::with_chain(e, "Error inserting record"));
                         }
                     };
-    
+
                     let command = SftpDownload {
                         id: sftp_download_id,
                         created: Utc::now(),
                         size: stat.size,
                         sftp_source: sftp_source.name.clone(),
                         path: path_str.clone(),
-                        remove: sftp_source.remove
+                        remove: sftp_source.remove,
                     };
 
                     let retry_policy = Fixed::from_millis(100);
@@ -306,19 +340,21 @@ fn scan_directory(stop: &Arc<AtomicBool>, sftp_source: &SftpSource, directory: &
                                 scan_result.dispatched_files += 1;
                                 debug!("Sent message {} on channel", command);
                                 OperationResult::Ok(())
-                            },
-                            Err(e) => {
-                                match e {
-                                    SendTimeoutError::Timeout(timeout) => OperationResult::Retry(timeout),
-                                    SendTimeoutError::Disconnected(timeout) => OperationResult::Err(timeout)
-                                }
                             }
+                            Err(e) => match e {
+                                SendTimeoutError::Timeout(timeout) => {
+                                    OperationResult::Retry(timeout)
+                                }
+                                SendTimeoutError::Disconnected(timeout) => {
+                                    OperationResult::Err(timeout)
+                                }
+                            },
                         }
                     });
 
                     match send_result {
                         Ok(_) => (),
-                        Err(e) => error!("Error sending download message on channel: {:?}", e)
+                        Err(e) => error!("Error sending download message on channel: {:?}", e),
                     }
                 } else {
                     debug!("{} already encountered {}", sftp_source.name, path_str);

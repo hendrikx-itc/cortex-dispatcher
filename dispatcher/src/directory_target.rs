@@ -1,20 +1,20 @@
+use std::fs::{copy, hard_link, set_permissions, Permissions};
 use std::os::unix::fs::symlink;
-use std::fs::{hard_link, copy, Permissions, set_permissions};
 use std::os::unix::fs::PermissionsExt;
 
 //use tokio::sync::mpsc::UnboundedReceiver;
 //use tokio::stream::StreamExt;
-use tokio_postgres::Socket;
 use postgres::tls::{MakeTlsConnect, TlsConnect};
+use tokio_postgres::Socket;
 
 use crate::event::FileEvent;
-use crate::{settings, settings::LocalTargetMethod};
 use crate::persistence::PostgresAsyncPersistence;
+use crate::{settings, settings::LocalTargetMethod};
 
 pub async fn handle_file_event<T>(
     settings: &settings::DirectoryTarget,
     file_event: FileEvent,
-    persistence: PostgresAsyncPersistence<T>
+    persistence: PostgresAsyncPersistence<T>,
 ) -> Result<FileEvent, String>
 where
     T: MakeTlsConnect<Socket> + Clone + 'static + Sync + Send,
@@ -32,7 +32,10 @@ where
     let file_name = match file_event.path.file_name() {
         Some(f) => f,
         None => {
-            return Err(format!("No file name from file event path '{}'", &source_path_str));
+            return Err(format!(
+                "No file name from file event path '{}'",
+                &source_path_str
+            ));
         }
     };
     let target_path = target_directory.join(file_name);
@@ -52,7 +55,7 @@ where
                 match e.kind() {
                     std::io::ErrorKind::NotFound => {
                         // Ok, this can happen
-                    },
+                    }
                     _ => {
                         // Unexpected error, so log it
                         error!("Error removing file '{}': {}", &target_path_str, e);
@@ -68,7 +71,10 @@ where
 
             match result {
                 Ok(size) => {
-                    debug!("'{}' copied {} bytes to '{}'", &source_path_str, size, &target_path_str);
+                    debug!(
+                        "'{}' copied {} bytes to '{}'",
+                        &source_path_str, size, &target_path_str
+                    );
                     Ok(())
                 }
                 Err(e) => {
@@ -84,17 +90,23 @@ where
                     }
                 }
             }
-        },
+        }
         LocalTargetMethod::Hardlink => {
             let result = hard_link(&file_event.path, &target_path);
 
             match result {
                 Ok(()) => {
-                    debug!("Hardlinked '{}' to '{}'", &source_path_str, &target_path_str);
+                    debug!(
+                        "Hardlinked '{}' to '{}'",
+                        &source_path_str, &target_path_str
+                    );
                     Ok(())
                 }
                 Err(e) => {
-                    debug!("Error hardlinking '{}' to '{}': {}", &source_path_str, &target_path_str, e);
+                    debug!(
+                        "Error hardlinking '{}' to '{}': {}",
+                        &source_path_str, &target_path_str, e
+                    );
 
                     if overwrite {
                         // When overwrite is enabled, this should not occur, because any existing file should first be removed
@@ -108,7 +120,7 @@ where
                     }
                 }
             }
-        },
+        }
         LocalTargetMethod::Symlink => {
             let result = symlink(&file_event.path, &target_path);
 
@@ -137,20 +149,26 @@ where
         let set_result = set_permissions(&target_path, target_perms);
 
         if let Err(e) = set_result {
-            error!("Could not set file permissions on '{}': {}", &target_path_str, e)
+            error!(
+                "Could not set file permissions on '{}': {}",
+                &target_path_str, e
+            )
         }
     }
 
-    let insert_result = persistence.insert_dispatched(&target_name, file_event.file_id).await;
+    let insert_result = persistence
+        .insert_dispatched(&target_name, file_event.file_id)
+        .await;
 
     match insert_result {
         Ok(_) => debug!("Dispatched to directory"),
-        Err(e) => debug!("Error persisting dispatch: {}", &e)
+        Err(e) => debug!("Error persisting dispatch: {}", &e),
     }
 
     Ok(FileEvent {
         file_id: file_event.file_id,
         source_name: target_name.clone(),
-        path: target_path
+        path: target_path,
+        hash: file_event.hash.clone(),
     })
 }

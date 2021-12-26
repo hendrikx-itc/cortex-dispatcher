@@ -1,7 +1,7 @@
-use std::thread;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
 
 use futures::stream::TryStreamExt;
 use futures_util::compat::Compat01As03;
@@ -24,8 +24,8 @@ extern crate lazy_static;
 
 extern crate chrono;
 extern crate postgres;
-extern crate serde_yaml;
 extern crate proctitle;
+extern crate serde_yaml;
 
 #[macro_use]
 extern crate error_chain;
@@ -34,12 +34,12 @@ extern crate cortex_core;
 
 use cortex_core::wait_for;
 
+mod amqp_sender;
 mod cmd;
 mod http_server;
 mod metrics;
 mod settings;
 mod sftp_scanner;
-mod amqp_sender;
 
 use sftp_scanner::Error;
 
@@ -48,7 +48,7 @@ use sftp_scanner::Error;
 // `error_chain!` creates.
 mod errors {
     // Create the Error, ErrorKind, ResultExt, and Result types
-    error_chain!{}
+    error_chain! {}
 }
 
 use settings::Settings;
@@ -61,9 +61,8 @@ fn main() {
     // When run as a service no timestamps are logged, we expect the service manager to append
     // timestamps to the logs.
     if matches.is_present("service") {
-        env_logger_builder.format(|buf, record| {
-            writeln!(buf, "{}  {}", record.level(), record.args())
-        });
+        env_logger_builder
+            .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
     }
 
     env_logger_builder.init();
@@ -118,9 +117,9 @@ fn main() {
         })
         .collect();
 
-
     // Start the built in web server that currently only serves metrics.
-    let (web_server_join_handle, actix_system, actix_http_server) = http_server::start_http_server(settings.http_server.address);
+    let (web_server_join_handle, actix_system, actix_http_server) =
+        http_server::start_http_server(settings.http_server.address);
 
     stop_commands.push(Box::new(move || {
         tokio::spawn(actix_http_server.stop(true));
@@ -130,7 +129,8 @@ fn main() {
         actix_system.stop();
     }));
 
-    let amqp_sender_join_handle = amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address);
+    let amqp_sender_join_handle =
+        amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address);
 
     let signal_handler_join_handle = runtime.spawn(setup_signal_handler(stop_commands));
 
@@ -148,13 +148,16 @@ fn main() {
     wait_for(amqp_sender_join_handle, "AMQP sender");
 }
 
-fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>) -> impl futures::future::Future<Output=()> + Send + 'static {
+fn setup_signal_handler(
+    stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>,
+) -> impl futures::future::Future<Output = ()> + Send + 'static {
     let signals = Signals::new(&[
         signal_hook::SIGHUP,
         signal_hook::SIGTERM,
         signal_hook::SIGINT,
         signal_hook::SIGQUIT,
-    ]).unwrap();
+    ])
+    .unwrap();
 
     let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
 
@@ -170,7 +173,6 @@ fn setup_signal_handler(stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'stat
         }
     }
 }
-
 
 fn load_settings(config_file: &str) -> Settings {
     info!("Loading configuration from file {}", config_file);
