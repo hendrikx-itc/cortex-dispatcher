@@ -87,7 +87,8 @@ where
         }
     }
 
-    /// Return information of the specified file if it has been previously ingested.
+    /// Return information of the specified file if it has been previously
+    /// ingested.
     pub fn get_file_info<P>(
         &self,
         source_name: &str,
@@ -170,13 +171,9 @@ where
             }
         };
 
-        let file_id = self.persistence.insert_file(
-            source_name,
-            &local_path_str,
-            &modified,
-            size,
-            hash,
-        )?;
+        let file_id =
+            self.persistence
+                .insert_file(source_name, &local_path_str, &modified, size, hash)?;
 
         debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
 

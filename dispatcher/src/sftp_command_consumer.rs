@@ -125,7 +125,14 @@ pub async fn start(
         .await?;
 
     while let Some(message) = consumer.next().await {
-        let (channel, delivery) = message.unwrap();
+        let (channel, delivery) = match message {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Could not read AMQP message: {}", e);
+                continue;
+            }
+        };
+
         let action_command_sender = command_sender.clone();
 
         debug!("Received message from AMQP queue '{}'", &queue_name);
@@ -161,7 +168,8 @@ pub async fn start(
                 ConsumeError::ChannelFull => {
                     debug!("Could not send command on channel: channel full");
                     tokio::time::sleep(time::Duration::from_millis(200)).await;
-                    // Put the message back on the queue, because we could temporarily not process it
+                    // Put the message back on the queue, because we could temporarily not process
+                    // it
                     true
                 }
                 ConsumeError::ChannelDisconnected => {

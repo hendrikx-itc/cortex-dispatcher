@@ -16,8 +16,6 @@ use log::{error, info};
 
 pub mod sftp_connection;
 
-pub use self::sftp_connection::SftpConnection;
-
 /// The set of commands that can be sent over the command queue
 #[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct SftpDownload {
@@ -62,7 +60,8 @@ impl fmt::Display for HttpDownload {
     }
 }
 
-/// Wait for a thread to finish, log error or success, ignoring the success value.
+/// Wait for a thread to finish, log error or success, ignoring the success
+/// value.
 pub fn wait_for<T>(join_handle: thread::JoinHandle<T>, thread_name: &str) {
     let join_result = join_handle.join();
 

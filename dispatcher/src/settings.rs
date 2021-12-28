@@ -8,7 +8,6 @@ use inotify::WatchMask;
 extern crate regex;
 extern crate serde_regex;
 
-
 fn default_false() -> bool {
     false
 }

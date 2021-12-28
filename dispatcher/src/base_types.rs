@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use tera::{Context, Tera};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};

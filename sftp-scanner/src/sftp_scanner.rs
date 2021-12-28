@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -9,12 +8,14 @@ use std::{thread, time};
 use crossbeam_channel::{SendTimeoutError, Sender};
 use log::{debug, error, info};
 
+use ssh2;
+
 use retry::{delay::Fixed, retry, OperationResult};
 
 extern crate chrono;
 use chrono::prelude::*;
 
-use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
+use cortex_core::sftp_connection::SftpConfig;
 use cortex_core::SftpDownload;
 
 use crate::metrics;
@@ -64,12 +65,13 @@ pub fn start_scanner(
             compress: false,
         };
 
-        let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
+        let mut session = sftp_config
+            .connect_loop(stop.clone())
+            .map_err(|e| Error::with_chain(e, "SFTP connect failed"))?;
 
-        let sftp_connection = match connect_result {
-            Ok(c) => Arc::new(RefCell::new(c)),
-            Err(e) => return Err(Error::with_chain(e, "Error reconnecting SFTP")),
-        };
+        let mut sftp = session
+            .sftp()
+            .map_err(|e| Error::with_chain(e, "SFTP connect failed"))?;
 
         let scan_interval = time::Duration::from_millis(sftp_source.scan_interval);
         let mut next_scan = time::Instant::now();
@@ -87,38 +89,35 @@ pub fn start_scanner(
                 info!("Started scanning {}", &sftp_source.name);
 
                 let scan_result = retry(Fixed::from_millis(1000), || {
-                    match scan_source(
-                        &stop,
-                        &sftp_source,
-                        sftp_connection.clone(),
-                        &mut conn,
-                        &mut sender,
-                    ) {
+                    match scan_source(&stop, &sftp_source, &sftp, &mut conn, &mut sender) {
                         Ok(v) => OperationResult::Ok(v),
                         Err(e) => match e {
                             Error(ErrorKind::DisconnectedError, _) => {
-                                let connect_result =
-                                    SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
-
-                                match connect_result {
-                                    Ok(c) => {
-                                        sftp_connection.replace(c);
-                                        OperationResult::Retry(Error::with_chain(
+                                info!("Sftp connection disconnected, reconnecting");
+                                session = match sftp_config.connect_loop(stop.clone()) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        return OperationResult::Err(Error::with_chain(
                                             e,
-                                            "Reconnected SFTP",
+                                            "SFTP connect failed",
                                         ))
                                     }
-                                    Err(er) => OperationResult::Err(Error::with_chain(
-                                        er,
-                                        "Error reconnecting SFTP",
-                                    )),
-                                }
+                                };
+
+                                sftp = match session.sftp() {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        return OperationResult::Err(Error::with_chain(
+                                            e,
+                                            "SFTP connect failed",
+                                        ))
+                                    }
+                                };
+
+                                info!("Sftp connection reconnected");
+                                OperationResult::Retry(e)
                             }
-                            _ => {
-                                let msg = format!("Unexpected error: {}", &e);
-                                error!("{}", &msg);
-                                OperationResult::Err(Error::with_chain(e, msg))
-                            }
+                            _ => OperationResult::Err(e),
                         },
                     }
                 });
@@ -194,7 +193,7 @@ impl fmt::Display for ScanResult {
 fn scan_source(
     stop: &Arc<AtomicBool>,
     sftp_source: &SftpSource,
-    sftp_connection: Arc<RefCell<SftpConnection>>,
+    sftp: &ssh2::Sftp,
     conn: &mut postgres::Client,
     sender: &mut Sender<SftpDownload>,
 ) -> Result<ScanResult> {
@@ -202,7 +201,7 @@ fn scan_source(
         stop,
         sftp_source,
         &Path::new(&sftp_source.directory),
-        sftp_connection,
+        sftp,
         conn,
         sender,
     )
@@ -212,7 +211,7 @@ fn scan_directory(
     stop: &Arc<AtomicBool>,
     sftp_source: &SftpSource,
     directory: &Path,
-    sftp_connection: Arc<RefCell<SftpConnection>>,
+    sftp: &ssh2::Sftp,
     conn: &mut postgres::Client,
     sender: &mut Sender<SftpDownload>,
 ) -> Result<ScanResult> {
@@ -222,17 +221,14 @@ fn scan_directory(
     );
     let mut scan_result = ScanResult::new();
 
-    let read_result = sftp_connection.borrow().sftp.readdir(directory);
+    let read_result = sftp.readdir(directory);
 
     let paths = match read_result {
         Ok(paths) => paths,
-        Err(e) => {
-            if e.code() == 0 {
-                return Err(ErrorKind::DisconnectedError.into());
-            } else {
-                return Err(Error::with_chain(e, "could not read directory"));
-            }
-        }
+        Err(e) => match e.code() {
+            ssh2::ErrorCode::Session(_) => return Err(ErrorKind::DisconnectedError.into()),
+            _ => return Err(Error::with_chain(e, "could not read directory")),
+        },
     };
 
     for (path, stat) in paths {
@@ -245,14 +241,7 @@ fn scan_directory(
         if stat.is_dir() && sftp_source.recurse {
             let mut dir = PathBuf::from(directory);
             dir.push(&file_name);
-            let result = scan_directory(
-                stop,
-                sftp_source,
-                &dir,
-                sftp_connection.clone(),
-                conn,
-                sender,
-            );
+            let result = scan_directory(stop, sftp_source, &dir, sftp, conn, sender);
 
             match result {
                 Ok(sr) => {

@@ -2,8 +2,6 @@ use std::fs::{copy, hard_link, set_permissions, Permissions};
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 
-//use tokio::sync::mpsc::UnboundedReceiver;
-//use tokio::stream::StreamExt;
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::Socket;
 
@@ -79,7 +77,8 @@ where
                 }
                 Err(e) => {
                     if overwrite {
-                        // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                        // When overwrite is enabled, this should not occur, because any existing
+                        // file should first be removed
                         error!(
                             "[E01005] Error copying '{}' to '{}': {}",
                             &source_path_str, &target_path_str, &e
@@ -103,19 +102,21 @@ where
                     Ok(())
                 }
                 Err(e) => {
-                    debug!(
-                        "Error hardlinking '{}' to '{}': {}",
-                        &source_path_str, &target_path_str, e
-                    );
-
                     if overwrite {
-                        // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                        // When overwrite is enabled, this should not occur, because any existing
+                        // file should first be removed
                         error!(
                             "[E01004] Error hardlinking '{}' to '{}': {}",
                             &source_path_str, &target_path_str, &e
                         );
                         Err(())
                     } else {
+                        // When overwrite is disabled, this might occur and is not an error, but it
+                        // is reported
+                        warn!(
+                            "Could not hardlink '{}' to '{}': {}",
+                            &source_path_str, &target_path_str, e
+                        );
                         Ok(())
                     }
                 }
@@ -131,13 +132,20 @@ where
                 }
                 Err(e) => {
                     if overwrite {
-                        // When overwrite is enabled, this should not occur, because any existing file should first be removed
+                        // When overwrite is enabled, this should not occur, because any existing
+                        // file should first be removed
                         error!(
                             "[E01007] Error symlinking '{}' to '{}': {}",
                             &source_path_str, &target_path_str, &e
                         );
                         Err(())
                     } else {
+                        // When overwrite is disabled, this might occur and is not an error, but it
+                        // is reported
+                        warn!(
+                            "Could not symlink '{}' to '{}': {}",
+                            &source_path_str, &target_path_str, e
+                        );
                         Ok(())
                     }
                 }

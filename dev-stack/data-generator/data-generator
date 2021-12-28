@@ -125,13 +125,13 @@ def check_path(sftp, path):
 def generate_data(sftp, storage_path, timestamp, volume):
     with sftp.cd('upload/blue/1'):
         for i in range(volume['blue1']):
-            file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
+            file_name = f'test_blue_1_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(1000, 30))
 
     with sftp.cd('upload/blue/2'):
         for i in range(volume['blue2']):
-            file_name = f'test_blue_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
+            file_name = f'test_blue_2_{i}_{timestamp:%Y%m%d:%H:%M:%S}.xml'
 
             send_file(sftp, storage_path, file_name, line_generator(50, 8))
 

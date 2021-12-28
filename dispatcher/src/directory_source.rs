@@ -445,12 +445,13 @@ where
     let file_hash = sha256_hash_file(&file_event.path)
         .map_err(|e| format!("Error calculating file hash: {}", e))?;
 
-    let file_info_result = local_storage.get_file_info(
-        &file_event.source_name,
-        &file_event.path,
-        &file_event.prefix,
-    )
-    .map_err(|e| format!("Error querying storage: {}", e))?;
+    let file_info_result = local_storage
+        .get_file_info(
+            &file_event.source_name,
+            &file_event.path,
+            &file_event.prefix,
+        )
+        .map_err(|e| format!("Error querying storage: {}", e))?;
 
     // Check if the file has been seen before
     if let Some(file_info) = file_info_result {
@@ -460,6 +461,14 @@ where
                     "Already in local file storage, so skipping '{}'",
                     &file_event.path.to_string_lossy()
                 );
+
+                fs::remove_file(&file_event.path).map_err(|e| {
+                    format!(
+                        "Error removing file '{}': {}",
+                        &file_event.path.to_string_lossy(),
+                        e
+                    )
+                })?;
 
                 return Ok(());
             }

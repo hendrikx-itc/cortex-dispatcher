@@ -5,9 +5,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time;
 
-use ssh2::{Session, Sftp};
-
-use owning_ref::OwningHandle;
+use ssh2::Session;
 
 use log::{debug, error, info};
 
@@ -19,10 +17,6 @@ error_chain! {
     }
 }
 
-pub struct SftpConnection {
-    pub sftp: OwningHandle<Box<Session>, Box<Sftp>>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SftpConfig {
     pub address: String,
@@ -32,21 +26,15 @@ pub struct SftpConfig {
     pub compress: bool,
 }
 
-impl SftpConnection {
-    pub fn connect(config: SftpConfig) -> Result<SftpConnection> {
-        let tcp_connect_result = TcpStream::connect(config.address);
+impl SftpConfig {
+    pub fn connect(&self) -> Result<Session> {
+        let tcp = TcpStream::connect(&self.address)
+            .map_err(|e| Error::with_chain(e, "TCP connect failed"))?;
 
-        let tcp = match tcp_connect_result {
-            Ok(v) => v,
-            Err(e) => return Err(Error::with_chain(e, "TCP connect failed")),
-        };
+        let mut session =
+            Session::new().map_err(|e| Error::with_chain(e, "Session setup failed"))?;
 
-        let mut session = match Session::new() {
-            Ok(s) => Box::new(s),
-            Err(e) => return Err(Error::with_chain(e, "Session setup failed")),
-        };
-
-        session.set_compress(config.compress);
+        session.set_compress(self.compress);
         session.set_tcp_stream(tcp);
         let handshake_result = session.handshake();
 
@@ -58,38 +46,33 @@ impl SftpConnection {
             }
         }
 
-        let auth_result = match config.key_file {
+        let auth_result = match &self.key_file {
             Some(key_file_path) => {
                 info!("Authorizing using key {}", &key_file_path.to_string_lossy());
-                session.userauth_pubkey_file(&config.username, None, key_file_path.as_path(), None)
+                session.userauth_pubkey_file(&self.username, None, key_file_path.as_path(), None)
             }
-            None => match config.password {
+            None => match &self.password {
                 Some(pw) => {
                     info!("Authorizing using password");
-                    session.userauth_password(&config.username, &pw)
+                    session.userauth_password(&self.username, &pw)
                 }
                 None => {
                     info!("Authorizing using ssh agent");
-                    session.userauth_agent(&config.username)
+                    session.userauth_agent(&self.username)
                 }
             },
         };
 
-        match auth_result {
-            Ok(()) => debug!("SSH authorization succeeded"),
-            Err(e) => return Err(Error::with_chain(e, "SSH authorization failed")),
-        }
+        auth_result.map_err(|e| Error::with_chain(e, "SSH authorization failed"))?;
 
-        // OwningHandle is needed to store a value and a reference to that value in the same struct
-        let sftp =
-            OwningHandle::new_with_fn(session, unsafe { |s| Box::new((*s).sftp().unwrap()) });
+        debug!("SSH authorization succeeded");
 
-        Ok(SftpConnection { sftp })
+        Ok(session)
     }
 
-    pub fn connect_loop(config: SftpConfig, stop: Arc<AtomicBool>) -> Result<SftpConnection> {
+    pub fn connect_loop(&self, stop: Arc<AtomicBool>) -> Result<Session> {
         while !stop.load(Ordering::Relaxed) {
-            let conn_result = SftpConnection::connect(config.clone());
+            let conn_result = self.connect();
 
             match conn_result {
                 Ok(c) => return Ok(c),

@@ -993,7 +993,7 @@ dependencies = [
  "owning_ref",
  "serde 1.0.132",
  "serde_derive",
- "ssh2 0.8.3",
+ "ssh2",
 ]
 
 [[package]]
@@ -1037,7 +1037,7 @@ dependencies = [
  "sha2 0.10.0",
  "signal-hook 0.3.12",
  "signal-hook-tokio",
- "ssh2 0.9.3",
+ "ssh2",
  "tee",
  "tera",
  "tokio 1.15.0",
@@ -1076,7 +1076,7 @@ dependencies = [
  "serde_regex",
  "serde_yaml",
  "signal-hook 0.1.17",
- "ssh2 0.8.3",
+ "ssh2",
  "tokio 0.2.25",
 ]
 
@@ -2256,16 +2256,6 @@ dependencies = [
 
 [[package]]
 name = "parking_lot"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3a704eb390aafdc107b0e392f56a82b668e3a71366993b5340f5833fd62505e"
-dependencies = [
- "lock_api 0.3.4",
- "parking_lot_core 0.7.2",
-]
-
-[[package]]
-name = "parking_lot"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
@@ -2287,20 +2277,6 @@ dependencies = [
  "redox_syscall 0.1.57",
  "rustc_version 0.2.3",
  "smallvec 0.6.14",
- "winapi 0.3.9",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d58c7c768d4ba344e3e8d72518ac13e259d7c7ade24167003b8488e10b6740a3"
-dependencies = [
- "cfg-if 0.1.10",
- "cloudabi",
- "libc",
- "redox_syscall 0.1.57",
- "smallvec 1.7.0",
  "winapi 0.3.9",
 ]
 
@@ -3247,18 +3223,6 @@ name = "spin"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
-
-[[package]]
-name = "ssh2"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c516996bbb84de5dba6e118406c1e1429111cfb4d844e20e1290e5b6ebe6ad5"
-dependencies = [
- "bitflags",
- "libc",
- "libssh2-sys",
- "parking_lot 0.10.2",
-]
 
 [[package]]
 name = "ssh2"

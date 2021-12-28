@@ -102,7 +102,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
         t_settings.directory_targets.iter().for_each(|target_conf| {
             let persistence = tokio_persistence.clone();
-            let (sender, mut receiver) = unbounded_channel();
+            let (sender, mut receiver) = unbounded_channel::<FileEvent>();
 
             let c_target_conf = target_conf.clone();
             let d_target_conf = target_conf.clone();
@@ -141,7 +141,6 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
                             let notify = RabbitMQNotify {
                                 message_template: notify_conf.message_template.clone(),
-                                //channel: amqp_channel,
                                 exchange: notify_conf.exchange.clone(),
                                 routing_key: notify_conf.routing_key.clone(),
                             };
@@ -415,11 +414,11 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
                         debug!("Interrupted SFTP command consumer stream '{}'", &channels.sftp_source.name);
                         Ok(())
                     }
-                )    
+                )
             }));
         }
 
-        let dispatcher_join_handles: Vec<tokio::task::JoinHandle<Result<(), ()>>> = sources
+        let _dispatcher_join_handles: Vec<tokio::task::JoinHandle<Result<(), ()>>> = sources
             .into_iter()
             .map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
                 // Filter connections to this source
@@ -438,7 +437,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
             .collect();
 
         // Await on futures so that the AMQP connection does not get destroyed.
-        let stream_results = join_all(stream_join_handles).await;
+        let _stream_results = join_all(stream_join_handles).await;
 
         Ok::<(), sftp_command_consumer::ConsumeError>(())
     });

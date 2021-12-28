@@ -58,8 +58,8 @@ fn main() {
 
     let mut env_logger_builder = env_logger::builder();
 
-    // When run as a service no timestamps are logged, we expect the service manager to append
-    // timestamps to the logs.
+    // When run as a service no timestamps are logged, we expect the service manager
+    // to append timestamps to the logs.
     if matches.is_present("service") {
         env_logger_builder
             .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
@@ -86,7 +86,8 @@ fn main() {
     // Will hold all functions that stop components of the SFTP scannner
     let mut stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>> = Vec::new();
 
-    // Setup the channel that connects to the RabbitMQ queue for SFTP download commands.
+    // Setup the channel that connects to the RabbitMQ queue for SFTP download
+    // commands.
     let (cmd_sender, cmd_receiver) = bounded(4096);
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -97,8 +98,8 @@ fn main() {
         stop_clone.swap(true, Ordering::Relaxed);
     }));
 
-    // Start every configured scanner in it's own thread and have them send commands to the
-    // command channel.
+    // Start every configured scanner in it's own thread and have them send commands
+    // to the command channel.
     let scanner_threads: Vec<(String, thread::JoinHandle<Result<(), Error>>)> = settings
         .sftp_sources
         .clone()

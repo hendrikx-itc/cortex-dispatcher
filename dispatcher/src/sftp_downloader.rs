@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io;
@@ -8,6 +7,8 @@ use std::sync::Arc;
 use std::{thread, time};
 
 extern crate failure;
+
+use ssh2;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 
@@ -20,7 +21,7 @@ use crate::metrics;
 use crate::persistence::Persistence;
 use crate::settings;
 
-use cortex_core::sftp_connection::{SftpConfig, SftpConnection};
+use cortex_core::sftp_connection::SftpConfig;
 use cortex_core::SftpDownload;
 
 use sha2::{Digest, Sha256};
@@ -73,15 +74,13 @@ where
                 compress: config.compress,
             };
 
-            let connect_result = SftpConnection::connect_loop(sftp_config.clone(), stop.clone());
+            let mut session = sftp_config
+                .connect_loop(stop.clone())
+                .map_err(|e| Error::with_chain(e, "SFTP connect failed"))?;
 
-            let sftp_connection = match connect_result {
-                Ok(c) => {
-                    debug!("SFTP connection to {} established", sftp_config.address);
-                    Arc::new(RefCell::new(c))
-                }
-                Err(e) => return Err(Error::with_chain(e, "SFTP connect failed")),
-            };
+            let mut sftp = session
+                .sftp()
+                .map_err(|e| Error::with_chain(e, "SFTP connect failed"))?;
 
             let mut sftp_downloader = SftpDownloader {
                 sftp_source: config.clone(),
@@ -99,27 +98,33 @@ where
                 match receive_result {
                     Ok((delivery_tag, command)) => {
                         let download_result = retry(Fixed::from_millis(1000), || {
-                            match sftp_downloader.handle(sftp_connection.clone(), &command) {
+                            match sftp_downloader.handle(&sftp, &command) {
                                 Ok(file_event) => OperationResult::Ok(file_event),
                                 Err(e) => match e {
                                     Error(ErrorKind::DisconnectedError, _) => {
                                         info!("Sftp connection disconnected, reconnecting");
-                                        let connect_result = SftpConnection::connect_loop(
-                                            sftp_config.clone(),
-                                            stop.clone(),
-                                        );
-
-                                        match connect_result {
-                                            Ok(c) => {
-                                                sftp_connection.replace(c);
-                                                info!("Sftp connection reconnected");
-                                                OperationResult::Retry(e)
+                                        session = match sftp_config.connect_loop(stop.clone()) {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                return OperationResult::Err(Error::with_chain(
+                                                    e,
+                                                    "SFTP connect failed",
+                                                ))
                                             }
-                                            Err(er) => OperationResult::Err(Error::with_chain(
-                                                er,
-                                                "Error reconnecting SFTP",
-                                            )),
-                                        }
+                                        };
+
+                                        sftp = match session.sftp() {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                return OperationResult::Err(Error::with_chain(
+                                                    e,
+                                                    "SFTP connect failed",
+                                                ))
+                                            }
+                                        };
+
+                                        info!("Sftp connection reconnected");
+                                        OperationResult::Retry(e)
                                     }
                                     _ => OperationResult::Err(e),
                                 },
@@ -140,15 +145,17 @@ where
                                     }
                                 }
 
-                                // Notify about new data from this SFTP source
-                                let send_result = sender.send(file_event);
+                                if let Some(f) = file_event {
+                                    // Notify about new data from this SFTP source
+                                    let send_result = sender.send(f);
 
-                                match send_result {
-                                    Ok(_) => {
-                                        debug!("Sent SFTP FileEvent to channel");
-                                    }
-                                    Err(e) => {
-                                        error!("Error notifying consumers of new file: {}", e);
+                                    match send_result {
+                                        Ok(_) => {
+                                            debug!("Sent SFTP FileEvent to channel");
+                                        }
+                                        Err(e) => {
+                                            error!("Error notifying consumers of new file: {}", e);
+                                        }
                                     }
                                 }
                             }
@@ -188,7 +195,8 @@ where
                         match e {
                             RecvTimeoutError::Timeout => (),
                             RecvTimeoutError::Disconnected => {
-                                // If the stop flag was set, the other side of the channel was dropped because of that, otherwise return an error
+                                // If the stop flag was set, the other side of the channel was
+                                // dropped because of that, otherwise return an error
                                 if stop.load(Ordering::Relaxed) {
                                     return Ok(());
                                 } else {
@@ -208,21 +216,15 @@ where
         })
     }
 
-    pub fn handle(
-        &mut self,
-        sftp_connection: Arc<RefCell<SftpConnection>>,
-        msg: &SftpDownload,
-    ) -> Result<FileEvent> {
+    pub fn handle(&mut self, sftp: &ssh2::Sftp, msg: &SftpDownload) -> Result<Option<FileEvent>> {
         let remote_path = Path::new(&msg.path);
 
-        let localize_result =
-            self.local_storage
-                .local_path(&self.sftp_source.name, &remote_path, &Path::new("/"));
+        let path_prefix = Path::new("");
 
-        let local_path = match localize_result {
-            Ok(p) => p,
-            Err(e) => return Err(Error::with_chain(e, "Could not localize path")),
-        };
+        let local_path = self
+            .local_storage
+            .local_path(&self.sftp_source.name, &remote_path, &Path::new("/"))
+            .map_err(|e| Error::with_chain(e, "Could not localize path"))?;
 
         match msg.size {
             Some(size) => {
@@ -242,185 +244,148 @@ where
             }
         }
 
-        let (copy_result, hash, stat) = {
-            let borrow = sftp_connection.borrow();
+        let open_result = sftp.open(&remote_path);
 
-            let open_result = borrow.sftp.open(&remote_path);
+        let mut remote_file = match open_result {
+            Ok(remote_file) => remote_file,
+            Err(e) => {
+                match e.code() {
+                    ssh2::ErrorCode::Session(_) => {
+                        // Probably a fault in the SFTP connection
+                        return Err(ErrorKind::DisconnectedError.into());
+                    }
+                    ssh2::ErrorCode::SFTP(2) => {
+                        let delete_result = self.persistence.delete_sftp_download_file(msg.id);
 
-            let mut remote_file = match open_result {
-                Ok(remote_file) => remote_file,
-                Err(e) => {
-                    match e.code() {
-                        0 => {
-                            // unknown error, probably a fault in the SFTP connection
-                            return Err(ErrorKind::DisconnectedError.into());
-                        }
-                        2 => {
-                            let delete_result = self.persistence.delete_sftp_download_file(msg.id);
-
-                            match delete_result {
-                                Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
-                                Err(e) => {
-                                    return Err(Error::with_chain(
-                                        e,
-                                        "Error removing record of non-existent remote file",
-                                    ))
-                                }
+                        match delete_result {
+                            Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
+                            Err(e) => {
+                                return Err(Error::with_chain(
+                                    e,
+                                    "Error removing record of non-existent remote file",
+                                ))
                             }
                         }
-                        -31 => {
-                            let delete_result = self.persistence.delete_sftp_download_file(msg.id);
-
-                            match delete_result {
-                                Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
-                                Err(e) => {
-                                    return Err(Error::with_chain(
-                                        e,
-                                        "Error removing record of non-existent remote file",
-                                    ))
-                                }
-                            }
-                        }
-                        _ => return Err(Error::with_chain(e, "Error opening remote file")),
                     }
+                    _ => return Err(Error::with_chain(e, "Error opening remote file")),
                 }
-            };
+            }
+        };
 
-            let stat_result = remote_file.stat();
+        let stat = remote_file.stat().map_err(|e| match e.code() {
+            ssh2::ErrorCode::Session(_) => {
+                // Probably a fault in the SFTP connection
+                return ErrorKind::DisconnectedError.into();
+            }
+            _ => return Error::with_chain(e, "Error retrieving stat for remote file"),
+        })?;
 
-            let stat = match stat_result {
-                Ok(s) => s,
-                Err(e) => {
-                    match e.code() {
-                        0 => {
-                            // unknown error, probably a fault in the SFTP connection
-                            return Err(ErrorKind::DisconnectedError.into());
-                        }
-                        -31 => {
-                            // SFTP protocol error
-                            return Err(ErrorKind::DisconnectedError.into());
-                        }
-                        _ => {
-                            return Err(Error::with_chain(
-                                e,
-                                "Error retrieving stat for remote file",
-                            ))
-                        }
-                    }
-                }
-            };
+        let mtime = stat.mtime.unwrap_or(0);
 
-            if let Some(local_path_parent) = local_path.parent() {
-                if !local_path_parent.exists() {
-                    std::fs::create_dir_all(local_path_parent).chain_err(|| {
-                        format!(
-                            "Error creating containing directory '{}'",
-                            local_path_parent.to_string_lossy()
-                        )
-                    })?;
+        let sec = i64::try_from(mtime)
+            .map_err(|e| Error::with_chain(e, "Error converting mtime to i64"))?;
+        let nsec = 0;
 
-                    info!(
-                        "Created containing directory '{}'",
+        let modified = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc);
+
+        let file_info_result = self
+            .local_storage
+            .get_file_info(&msg.sftp_source, &remote_path, &path_prefix)
+            .map_err(|e| {
+                Error::with_chain(e, "Could not get file information from internal storage")
+            })?;
+
+        if let Some(file_info) = file_info_result {
+            if file_info.modified == modified && msg.size == stat.size {
+                // A file with the same name, modified timestamp and size was already
+                // downloaded, so assume that it is the same and skip.
+                return Ok(None);
+            }
+        }
+
+        if let Some(local_path_parent) = local_path.parent() {
+            if !local_path_parent.exists() {
+                std::fs::create_dir_all(local_path_parent).chain_err(|| {
+                    format!(
+                        "Error creating containing directory '{}'",
                         local_path_parent.to_string_lossy()
+                    )
+                })?;
+
+                info!(
+                    "Created containing directory '{}'",
+                    local_path_parent.to_string_lossy()
+                );
+            }
+        }
+
+        let mut local_file = File::create(&local_path).chain_err(|| {
+            format!(
+                "Error creating local file '{}'",
+                local_path.to_string_lossy()
+            )
+        })?;
+
+        let mut sha256 = Sha256::new();
+
+        let mut tee_reader = TeeReader::new(&mut remote_file, &mut sha256);
+
+        let copy_result = io::copy(&mut tee_reader, &mut local_file);
+        let hash = format!("{:x}", sha256.finalize());
+
+        let bytes_copied = copy_result.map_err(|e| Error::with_chain(e, "Error copying file"))?;
+
+        info!(
+            "Downloaded <{}> '{}' {} bytes",
+            self.sftp_source.name, msg.path, bytes_copied
+        );
+
+        let file_size = i64::try_from(bytes_copied)
+            .map_err(|e| Error::with_chain(e, "Error converting bytes copied to i64"))?;
+
+        let file_id = match self.persistence.insert_file(
+            &self.sftp_source.name,
+            &local_path.to_string_lossy(),
+            &modified,
+            file_size,
+            Some(hash.clone()),
+        ) {
+            Ok(id) => id,
+            Err(_) => return Err(ErrorKind::PersistenceError.into()),
+        };
+
+        self.persistence
+            .set_sftp_download_file(msg.id, file_id)
+            .map_err(|e| Error::with_chain(e, "Error updating STFP download information"))?;
+
+        metrics::FILE_DOWNLOAD_COUNTER_VEC
+            .with_label_values(&[&self.sftp_source.name])
+            .inc();
+        metrics::BYTES_DOWNLOADED_COUNTER_VEC
+            .with_label_values(&[&self.sftp_source.name])
+            .inc_by(bytes_copied as u64);
+
+        if msg.remove {
+            let unlink_result = sftp.unlink(&remote_path);
+
+            match unlink_result {
+                Ok(_) => {
+                    debug!("Removed <{}> '{}'", self.sftp_source.name, msg.path);
+                }
+                Err(e) => {
+                    error!(
+                        "Error removing <{}> '{}': {}",
+                        self.sftp_source.name, msg.path, e
                     );
                 }
             }
-
-            let mut local_file = File::create(&local_path).chain_err(|| {
-                format!(
-                    "Error creating local file '{}'",
-                    local_path.to_string_lossy()
-                )
-            })?;
-
-            let mut sha256 = Sha256::new();
-
-            let mut tee_reader = TeeReader::new(&mut remote_file, &mut sha256);
-
-            (
-                io::copy(&mut tee_reader, &mut local_file),
-                format!("{:x}", sha256.finalize()),
-                stat,
-            )
-        };
-
-        match copy_result {
-            Ok(bytes_copied) => {
-                info!(
-                    "Downloaded <{}> '{}' {} bytes",
-                    self.sftp_source.name, msg.path, bytes_copied
-                );
-
-                let file_size = match i64::try_from(bytes_copied) {
-                    Ok(size) => size,
-                    Err(e) => {
-                        return Err(Error::with_chain(e, "Error converting bytes copied to i64"))
-                    }
-                };
-
-                let mtime = match stat.mtime {
-                    Some(t) => t,
-                    None => 0,
-                };
-
-                let sec = match i64::try_from(mtime) {
-                    Ok(s) => s,
-                    Err(e) => return Err(Error::with_chain(e, "Error converting mtime to i64")),
-                };
-                let nsec = 0;
-
-                let modified =
-                    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc);
-
-                let file_id = match self.persistence.insert_file(
-                    &self.sftp_source.name,
-                    &local_path.to_string_lossy(),
-                    &modified,
-                    file_size,
-                    Some(hash.clone()),
-                ) {
-                    Ok(id) => id,
-                    Err(e) => return Err(ErrorKind::PersistenceError.into()),
-                };
-
-                let set_result = self.persistence.set_sftp_download_file(msg.id, file_id);
-
-                match set_result {
-                    Ok(_) => {}
-                    Err(_) => return Err(ErrorKind::PersistenceError.into()),
-                }
-
-                metrics::FILE_DOWNLOAD_COUNTER_VEC
-                    .with_label_values(&[&self.sftp_source.name])
-                    .inc();
-                metrics::BYTES_DOWNLOADED_COUNTER_VEC
-                    .with_label_values(&[&self.sftp_source.name])
-                    .inc_by(bytes_copied as u64);
-
-                if msg.remove {
-                    let unlink_result = sftp_connection.borrow().sftp.unlink(&remote_path);
-
-                    match unlink_result {
-                        Ok(_) => {
-                            debug!("Removed <{}> '{}'", self.sftp_source.name, msg.path);
-                        }
-                        Err(e) => {
-                            error!(
-                                "Error removing <{}> '{}': {}",
-                                self.sftp_source.name, msg.path, e
-                            );
-                        }
-                    }
-                }
-
-                Ok(FileEvent {
-                    file_id: file_id,
-                    source_name: self.sftp_source.name.clone(),
-                    path: local_path,
-                    hash: hash,
-                })
-            }
-            Err(e) => Err(Error::with_chain(e, "Error copying file")),
         }
+
+        Ok(Some(FileEvent {
+            file_id: file_id,
+            source_name: self.sftp_source.name.clone(),
+            path: local_path,
+            hash: hash,
+        }))
     }
 }
