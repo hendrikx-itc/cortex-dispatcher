@@ -32,7 +32,7 @@ CREATE TABLE "dispatcher"."file"
 
 COMMENT ON TABLE "dispatcher"."file" IS 'All files in the internal storage area of Cortex are registered here.';
 
-CREATE INDEX "sftp_download_file_index" ON "dispatcher"."file" USING btree (source, path);
+CREATE UNIQUE INDEX "file_index" ON "dispatcher"."file" USING btree (source, path);
 
 
 

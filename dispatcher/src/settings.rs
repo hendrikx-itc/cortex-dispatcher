@@ -5,6 +5,10 @@ use regex::Regex;
 #[cfg(target_os = "linux")]
 use inotify::WatchMask;
 
+use chrono::prelude::{DateTime, Utc};
+
+use crate::base_types;
+
 extern crate regex;
 extern crate serde_regex;
 
@@ -97,6 +101,59 @@ impl FileSystemEvent {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileComparison {
+    pub size: bool,
+    pub modified: bool,
+    pub hash: bool,
+}
+
+impl FileComparison {
+    pub fn equal(
+        &self,
+        file_info: &base_types::FileInfo,
+        size: u64,
+        modified: DateTime<Utc>,
+        hash: Option<String>,
+    ) -> bool {
+        if self.size {
+            if (file_info.size as u64) != size {
+                return false;
+            }
+        }
+
+        if self.modified {
+            if file_info.modified != modified {
+                return false;
+            }
+        }
+
+        if self.hash {
+            if file_info.hash != hash {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Deduplication {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "check")]
+    Check(FileComparison),
+}
+
+fn default_directory_source_deduplication() -> Deduplication {
+    Deduplication::Check(FileComparison {
+        size: false,
+        modified: false,
+        hash: true,
+    })
+}
+
 /// A local directory where files can be placed that will be picked up for
 /// dispatching.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -113,10 +170,11 @@ pub struct DirectorySource {
     pub events: Vec<FileSystemEvent>,
     /// A filter to ingest only certain files in the source directory.
     pub filter: Option<Filter>,
-    /// Set to true to prevent the same file from being dispatched multiple
-    /// times, based on its contents.
-    #[serde(default = "default_false")]
-    pub deduplicate: bool,
+    /// Set to a file comparison method to prevent the same file from being
+    /// dispatched multiple times, or None if no deduplication must be
+    /// performed.
+    #[serde(default = "default_directory_source_deduplication")]
+    pub deduplication: Deduplication,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -155,6 +213,14 @@ fn default_local_target_method() -> LocalTargetMethod {
     LocalTargetMethod::Hardlink
 }
 
+fn default_sftp_source_deduplication() -> Deduplication {
+    Deduplication::Check(FileComparison {
+        size: true,
+        modified: true,
+        hash: false,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SftpSource {
     pub name: String,
@@ -166,6 +232,8 @@ pub struct SftpSource {
     pub thread_count: usize,
     #[serde(default = "default_false")]
     pub compress: bool,
+    #[serde(default = "default_sftp_source_deduplication")]
+    pub deduplication: Deduplication,
 }
 
 /// Default Sftp downloader thread count
@@ -237,7 +305,11 @@ impl Default for Settings {
                 events: vec![FileSystemEvent::MovedTo, FileSystemEvent::CloseWrite],
                 filter: None,
                 recursive: true,
-                deduplicate: false,
+                deduplication: Deduplication::Check(FileComparison {
+                    size: false,
+                    modified: false,
+                    hash: true,
+                }),
             }],
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),
@@ -261,6 +333,11 @@ impl Default for Settings {
                     key_file: None,
                     compress: false,
                     thread_count: 4,
+                    deduplication: Deduplication::Check(FileComparison {
+                        size: true,
+                        modified: true,
+                        hash: false,
+                    }),
                 },
                 SftpSource {
                     name: "blue".to_string(),
@@ -270,6 +347,11 @@ impl Default for Settings {
                     key_file: None,
                     compress: false,
                     thread_count: 4,
+                    deduplication: Deduplication::Check(FileComparison {
+                        size: true,
+                        modified: true,
+                        hash: false,
+                    }),
                 },
             ],
             connections: vec![],

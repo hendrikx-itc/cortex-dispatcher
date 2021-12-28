@@ -251,10 +251,19 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let event_dispatcher = EventDispatcher { senders: senders };
 
+    // Create a lookup table for directory sources that can be used by the intake
+    // thread
+    let directory_source_map: HashMap<String, settings::DirectorySource> = (&settings
+        .directory_sources)
+        .into_iter()
+        .map(|d| (d.name.clone(), d.clone()))
+        .collect();
+
     let (local_intake_handle, local_intake_stop_cmd) = start_local_intake_thread(
         local_intake_receiver,
         event_dispatcher,
         local_storage.clone(),
+        directory_source_map,
     );
 
     stop.lock().unwrap().add_command(local_intake_stop_cmd);
@@ -454,8 +463,6 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         let mut signals = signals.fuse();
 
         while let Some(signal) = signals.next().await {
-            let l_stop = Arc::try_unwrap(stop.clone()).unwrap().into_inner().unwrap();
-
             match signal {
                 signal_hook::consts::signal::SIGHUP => {
                     // Reload configuration
@@ -465,7 +472,16 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
                 | signal_hook::consts::signal::SIGINT
                 | signal_hook::consts::signal::SIGQUIT => {
                     // Shutdown the system;
-                    l_stop.stop();
+                    match Arc::try_unwrap(stop.clone()) {
+                        Ok(mutex) => {
+                            let l_stop = mutex.into_inner().unwrap();
+
+                            l_stop.stop();
+                        }
+                        Err(_) => {
+                            error!("Could not get mutex from Arc, not able to stop all tasks");
+                        }
+                    }
                 }
                 _ => unreachable!(),
             }

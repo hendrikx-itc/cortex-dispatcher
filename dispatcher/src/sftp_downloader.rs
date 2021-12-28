@@ -1,5 +1,5 @@
 use std::convert::TryFrom;
-use std::fs::File;
+use std::fs::{rename, File};
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -295,20 +295,29 @@ where
                 Error::with_chain(e, "Could not get file information from internal storage")
             })?;
 
-        if let Some(file_info) = file_info_result {
-            if file_info.modified == modified && msg.size == stat.size {
-                // A file with the same name, modified timestamp and size was already
-                // downloaded, so assume that it is the same and skip.
-                return Ok(None);
+        // Opportunity for duplicate check without hash check
+        if let Some(file_info) = &file_info_result {
+            // See if a deduplication check is configured
+            if let settings::Deduplication::Check(check) = &self.sftp_source.deduplication {
+                // Only check now if no hash check is required, because that is not calculated
+                // yet
+                if !check.hash {
+                    if check.equal(&file_info, stat.size.unwrap(), modified, None) {
+                        // A file with the same name, modified timestamp and/or size was already
+                        // downloaded, so assume that it is the same and skip.
+                        return Ok(None);
+                    }
+                }
             }
         }
 
         if let Some(local_path_parent) = local_path.parent() {
             if !local_path_parent.exists() {
-                std::fs::create_dir_all(local_path_parent).chain_err(|| {
+                std::fs::create_dir_all(local_path_parent).map_err(|e| {
                     format!(
-                        "Error creating containing directory '{}'",
-                        local_path_parent.to_string_lossy()
+                        "Error creating containing directory '{}': {}",
+                        local_path_parent.to_string_lossy(),
+                        e
                     )
                 })?;
 
@@ -319,10 +328,15 @@ where
             }
         }
 
-        let mut local_file = File::create(&local_path).chain_err(|| {
+        // Construct a temporary file name with the extension '.part'
+        let mut local_path_part = local_path.as_os_str().to_os_string();
+        local_path_part.push(".part");
+
+        let mut local_file_part = File::create(&local_path_part).map_err(|e| {
             format!(
-                "Error creating local file '{}'",
-                local_path.to_string_lossy()
+                "Error creating local file part '{}': {}",
+                local_path.to_string_lossy(),
+                e
             )
         })?;
 
@@ -330,8 +344,19 @@ where
 
         let mut tee_reader = TeeReader::new(&mut remote_file, &mut sha256);
 
-        let copy_result = io::copy(&mut tee_reader, &mut local_file);
+        let copy_result = io::copy(&mut tee_reader, &mut local_file_part);
         let hash = format!("{:x}", sha256.finalize());
+
+        if let Some(file_info) = &file_info_result {
+            // See if a deduplication check is configured
+            if let settings::Deduplication::Check(check) = &self.sftp_source.deduplication {
+                if check.equal(&file_info, stat.size.unwrap(), modified, Some(hash.clone())) {
+                    // A file with the same name, modified timestamp, size and/or hash was already
+                    // downloaded, so assume that it is the same and skip.
+                    return Ok(None);
+                }
+            }
+        }
 
         let bytes_copied = copy_result.map_err(|e| Error::with_chain(e, "Error copying file"))?;
 
@@ -339,6 +364,10 @@ where
             "Downloaded <{}> '{}' {} bytes",
             self.sftp_source.name, msg.path, bytes_copied
         );
+
+        // Rename the file to its regular name
+        rename(&local_path_part, &local_path)
+            .map_err(|e| Error::with_chain(e, "Error renaming part to its regular name"))?;
 
         let file_size = i64::try_from(bytes_copied)
             .map_err(|e| Error::with_chain(e, "Error converting bytes copied to i64"))?;

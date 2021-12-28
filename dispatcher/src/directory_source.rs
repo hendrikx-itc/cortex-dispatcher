@@ -365,6 +365,7 @@ pub fn start_local_intake_thread<T>(
     receiver: Receiver<LocalFileEvent>,
     mut event_dispatcher: EventDispatcher,
     local_storage: LocalStorage<T>,
+    sources: HashMap<String, settings::DirectorySource>,
 ) -> (thread::JoinHandle<()>, StopCmd)
 where
     T: Persistence,
@@ -386,11 +387,25 @@ where
             let receive_result = receiver.recv_timeout(timeout);
 
             if let Ok(file_event) = receive_result {
-                if let Err(e) =
-                    process_file_event(file_event, &mut event_dispatcher, &local_storage)
-                {
-                    error!("Error processing file event: {}", e);
-                }
+                // Lookup the corresponding directory source
+                match sources.get(&file_event.source_name) {
+                    Some(source) => {
+                        if let Err(e) = process_file_event(
+                            file_event,
+                            &source,
+                            &mut event_dispatcher,
+                            &local_storage,
+                        ) {
+                            error!("Error processing file event: {}", e);
+                        }
+                    }
+                    None => {
+                        error!(
+                            "No matching directory source found with name '{}'",
+                            &file_event.source_name
+                        );
+                    }
+                };
             }
         }
 
@@ -433,6 +448,7 @@ fn sha256_hash_file(path: &PathBuf) -> Result<String, std::io::Error> {
 
 fn process_file_event<T>(
     file_event: LocalFileEvent,
+    directory_source: &settings::DirectorySource,
     event_dispatcher: &mut EventDispatcher,
     local_storage: &LocalStorage<T>,
 ) -> Result<(), String>
@@ -455,8 +471,28 @@ where
 
     // Check if the file has been seen before
     if let Some(file_info) = file_info_result {
-        if let Some(hash) = file_info.hash {
-            if hash == file_hash {
+        // See if a deduplication check is configured
+        if let settings::Deduplication::Check(check) = &directory_source.deduplication {
+            let metadata = fs::metadata(&file_event.path).map_err(|e| {
+                format!(
+                    "Error getting file meta data for '{}': {}",
+                    &file_event.path.to_string_lossy(),
+                    e
+                )
+            })?;
+
+            let size = metadata.len();
+            let modified_systemtime = metadata.modified().map_err(|e| {
+                format!(
+                    "Could not get modified timestamp of '{}': {}",
+                    &file_event.path.to_string_lossy(),
+                    e
+                )
+            })?;
+
+            let modified = chrono::DateTime::from(modified_systemtime);
+
+            if check.equal(&file_info, size, modified, Some(file_hash.clone())) {
                 debug!(
                     "Already in local file storage, so skipping '{}'",
                     &file_event.path.to_string_lossy()

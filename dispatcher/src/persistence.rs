@@ -166,8 +166,14 @@ where
         let mut client = self.conn_pool.get().unwrap();
 
         let insert_result = client.query_one(
-            "insert into dispatcher.file (source, path, modified, size, hash) values ($1, $2, $3, $4, $5) returning id",
-            &[&source, &path, &modified, &size, &hash]
+            concat!(
+                "insert into dispatcher.file (source, path, modified, size, hash) ",
+                "values ($1, $2, $3, $4, $5) ",
+                "on conflict (source, path) do update ",
+                "set modified=EXCLUDED.modified, size=EXCLUDED.size, hash=EXCLUDED.hash ",
+                "returning id",
+            ),
+            &[&source, &path, &modified, &size, &hash],
         );
 
         match insert_result {

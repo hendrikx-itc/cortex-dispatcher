@@ -60,8 +60,8 @@ objects:
       columns:
       - id
     indexes:
-    - name: sftp_download_file_index
-      unique: false
+    - name: file_index
+      unique: true
       definition: btree (source, path)
 
 - table:
