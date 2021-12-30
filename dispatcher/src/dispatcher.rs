@@ -232,8 +232,6 @@ async fn sftp_sources_handler<T: 'static>(
     stop_flag: Arc<AtomicBool>,
     local_storage: LocalStorage<T>,
     persistence: T,
-    sources: Vec<Source>,
-    connections: Arc<Mutex<Vec<Connection>>>,
 ) -> Result<(), sftp_command_consumer::ConsumeError>
     where T: persistence::Persistence + Clone + Sync + Send
 {
@@ -306,29 +304,30 @@ async fn sftp_sources_handler<T: 'static>(
         }));
     }
 
-    let _dispatcher_join_handles: Vec<tokio::task::JoinHandle<Result<(), ()>>> = sources
-        .into_iter()
-        .map(|source| -> tokio::task::JoinHandle<Result<(), ()>> {
-            // Filter connections to this source
-            let source_connections: Vec<Connection> = connections
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|c| c.source_name == source.name)
-                .cloned()
-                .collect();
-
-            debug!("Spawing local event dispatcher task for {}", &source.name);
-
-            tokio::spawn(dispatch_stream(source, source_connections))
-        })
-        .collect();
-
     // Await on futures so that the AMQP connection does not get destroyed.
     let _stream_results = join_all(stream_join_handles).await;
 
     Ok::<(), sftp_command_consumer::ConsumeError>(())
 }
+
+pub fn start_dispatch_streams(sources: Vec<Source>, connections: Vec<Connection>) -> Vec<Option<tokio::task::JoinHandle<Result<(), ()>>>> {
+    sources
+        .into_iter()
+        .map(|source| -> Option<tokio::task::JoinHandle<Result<(), ()>>> {
+            // Filter connections to this source
+            let source_connections: Vec<Connection> = connections
+                .iter()
+                .filter(|c| c.source_name == source.name)
+                .cloned()
+                .collect();
+
+            debug!("Spawing local event dispatcher task for source '{}'", &source.name);
+
+            Some(tokio::spawn(dispatch_stream(source, source_connections)))
+        })
+        .collect()
+}
+
 
 pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     // List of targets with their file event channels
@@ -336,8 +335,6 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     // List of sources with their file event channels
     let mut sources: Vec<Source> = Vec::new();
-
-    let connections: Arc<Mutex<Vec<Connection>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Stop orchestrator
     let stop: Arc<Mutex<Stop>> = Arc::new(Mutex::new(Stop::new()));
@@ -425,29 +422,29 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         Err(e) => error!("Could not lock the Stop Arc for adding the sweep stop command: {}", e)
     }
 
-    settings.connections.iter().for_each(|conn_conf| {
+    let connections = settings.connections.iter().filter_map(|conn_conf| -> Option<Connection> {
         let target = match targets.lock() {
             Ok(guard) => {
                 match guard.get(&conn_conf.target) {
                     Some(target) => target.clone(),
                     None => {
                         error!("No target found matching name '{}'", &conn_conf.target);
-                        return
+                        return None
                     }
                 }
             },
             Err(e) => {
                 error!("Could not lock the targets Arc for getting a target: {}", e);
-                return
+                return None
             }
         };
 
-        connections.lock().unwrap().push(Connection {
+        Some(Connection {
             source_name: conn_conf.source.clone(),
             target: target,
             filter: conn_conf.filter.clone(),
-        });
-    });
+        })
+    }).collect();
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();
@@ -502,11 +499,12 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
             sftp_source_senders,
             stop_flag,
             local_storage,
-            persistence,
-            sources,
-            connections,
+            persistence
         )
     );
+
+    // Start the streams that dispatch messages from sources to targets
+    let _stream_join_handles = start_dispatch_streams(sources, connections);
 
     let signals = Signals::new(&[
         signal_hook::consts::signal::SIGHUP,
