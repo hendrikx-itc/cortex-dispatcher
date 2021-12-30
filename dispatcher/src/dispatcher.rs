@@ -38,11 +38,11 @@ use crate::base_types::MessageResponse;
 use crate::directory_target::handle_file_event;
 use crate::event::{EventDispatcher, FileEvent};
 use crate::local_storage::LocalStorage;
+use crate::persistence;
 use crate::persistence::{PostgresAsyncPersistence, PostgresPersistence};
 use crate::settings;
 use crate::sftp_command_consumer;
 use crate::sftp_downloader;
-use crate::persistence;
 
 pub struct Stop {
     stop_commands: Vec<StopCmd>,
@@ -72,8 +72,12 @@ impl Stop {
     }
 }
 
-pub async fn target_directory_handler<T>(tokio_persistence: PostgresAsyncPersistence<T>, settings: settings::Settings, stop: Arc<Mutex<Stop>>, targets: Arc<Mutex<HashMap<String, Arc<Target>>>>)
-where
+pub async fn target_directory_handler<T>(
+    tokio_persistence: PostgresAsyncPersistence<T>,
+    settings: settings::Settings,
+    stop: Arc<Mutex<Stop>>,
+    targets: Arc<Mutex<HashMap<String, Arc<Target>>>>,
+) where
     T: postgres::tls::MakeTlsConnect<tokio_postgres::Socket> + Clone + 'static + Sync + Send,
     T::TlsConnect: Send,
     T::Stream: Send + Sync,
@@ -127,12 +131,8 @@ where
                         let routing_key = notify_conf.routing_key.clone();
 
                         while let Some(file_event) = receiver.recv().await {
-                            match handle_file_event(
-                                &d_target_conf,
-                                file_event,
-                                persistence.clone(),
-                            )
-                            .await
+                            match handle_file_event(&d_target_conf, file_event, persistence.clone())
+                                .await
                             {
                                 Ok(result_event) => {
                                     debug!("Notifying with AMQP routing key {}", &routing_key);
@@ -158,8 +158,7 @@ where
                 let fut = async move {
                     while let Some(file_event) = receiver.recv().await {
                         if let Err(e) =
-                            handle_file_event(&d_target_conf, file_event, persistence.clone())
-                                .await
+                            handle_file_event(&d_target_conf, file_event, persistence.clone()).await
                         {
                             error!("Error handling event for directory target: {}", &e);
                         }
@@ -200,17 +199,23 @@ where
         match stop.lock() {
             Ok(mut guard) => {
                 guard.add_command(stop_cmd);
-            },
+            }
             Err(e) => {
-                error!("Could not lock on Stop struct for adding stop command: {}", e);
+                error!(
+                    "Could not lock on Stop struct for adding stop command: {}",
+                    e
+                );
             }
         };
 
         match targets.lock() {
             Ok(mut guard) => {
                 guard.insert(target_conf.name.clone(), target);
-            },
-            Err(e) => error!("Could not get lock on targets hash for adding Target: {}", e)
+            }
+            Err(e) => error!(
+                "Could not get lock on targets hash for adding Target: {}",
+                e
+            ),
         }
     });
 }
@@ -233,7 +238,8 @@ async fn sftp_sources_handler<T: 'static>(
     local_storage: LocalStorage<T>,
     persistence: T,
 ) -> Result<(), sftp_command_consumer::ConsumeError>
-    where T: persistence::Persistence + Clone + Sync + Send
+where
+    T: persistence::Persistence + Clone + Sync + Send,
 {
     debug!(
         "Connecting to AMQP service at {}",
@@ -310,24 +316,36 @@ async fn sftp_sources_handler<T: 'static>(
     Ok::<(), sftp_command_consumer::ConsumeError>(())
 }
 
-pub fn start_dispatch_streams(sources: Vec<Source>, connections: Vec<Connection>) -> Vec<Option<tokio::task::JoinHandle<Result<(), ()>>>> {
+/// Start the streams that dispatch messages from sources to targets
+///
+/// All connections from the same source are bundled into one stream that
+/// dispatches to all targets of those connections, because there is only one
+/// receiver per source.
+pub fn start_dispatch_streams(
+    sources: Vec<Source>,
+    connections: Vec<Connection>,
+) -> Vec<Option<tokio::task::JoinHandle<Result<(), ()>>>> {
     sources
         .into_iter()
-        .map(|source| -> Option<tokio::task::JoinHandle<Result<(), ()>>> {
-            // Filter connections to this source
-            let source_connections: Vec<Connection> = connections
-                .iter()
-                .filter(|c| c.source_name == source.name)
-                .cloned()
-                .collect();
+        .map(
+            |source| -> Option<tokio::task::JoinHandle<Result<(), ()>>> {
+                // Filter connections to this source
+                let source_connections: Vec<Connection> = connections
+                    .iter()
+                    .filter(|c| c.source_name == source.name)
+                    .cloned()
+                    .collect();
 
-            debug!("Spawing local event dispatcher task for source '{}'", &source.name);
+                debug!(
+                    "Spawing local event dispatcher task for source '{}'",
+                    &source.name
+                );
 
-            Some(tokio::spawn(dispatch_stream(source, source_connections)))
-        })
+                Some(tokio::spawn(dispatch_stream(source, source_connections)))
+            },
+        )
         .collect()
 }
-
 
 pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     // List of targets with their file event channels
@@ -341,19 +359,21 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     let postgres_config: postgres::Config = settings.postgresql.url.parse()?;
 
-    let connection_manager =
-        PostgresConnectionManager::new(postgres_config, NoTls);
+    let connection_manager = PostgresConnectionManager::new(postgres_config, NoTls);
 
     let postgres_config: tokio_postgres::Config = settings.postgresql.url.parse()?;
 
-    let tokio_connection_manager = bb8_postgres::PostgresConnectionManager::new(
-        postgres_config,
-        tokio_postgres::NoTls,
-    );
+    let tokio_connection_manager =
+        bb8_postgres::PostgresConnectionManager::new(postgres_config, tokio_postgres::NoTls);
 
     let tokio_persistence = PostgresAsyncPersistence::new(tokio_connection_manager).await;
 
-    tokio::spawn(target_directory_handler(tokio_persistence, settings.clone(), stop.clone(), targets.clone()));
+    tokio::spawn(target_directory_handler(
+        tokio_persistence,
+        settings.clone(),
+        stop.clone(),
+        targets.clone(),
+    ));
 
     let persistence = PostgresPersistence::new(connection_manager).map_err(|e| err_msg(e))?;
 
@@ -396,7 +416,10 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     match stop.lock() {
         Ok(mut guard) => guard.add_command(local_intake_stop_cmd),
-        Err(e) => error!("Could not lock the Stop Arc for adding the directory source stop command: {}", e)
+        Err(e) => error!(
+            "Could not lock the Stop Arc for adding the directory source stop command: {}",
+            e
+        ),
     }
 
     #[cfg(target_os = "linux")]
@@ -408,7 +431,10 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     #[cfg(target_os = "linux")]
     match stop.lock() {
         Ok(mut guard) => guard.add_command(inotify_stop_cmd),
-        Err(e) => error!("Could not lock the Stop Arc for adding the inotify stop command: {}", e)
+        Err(e) => error!(
+            "Could not lock the Stop Arc for adding the inotify stop command: {}",
+            e
+        ),
     }
 
     let (directory_sweep_join_handle, sweep_stop_cmd) = start_directory_sweep(
@@ -419,32 +445,11 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     match stop.lock() {
         Ok(mut guard) => guard.add_command(sweep_stop_cmd),
-        Err(e) => error!("Could not lock the Stop Arc for adding the sweep stop command: {}", e)
+        Err(e) => error!(
+            "Could not lock the Stop Arc for adding the sweep stop command: {}",
+            e
+        ),
     }
-
-    let connections = settings.connections.iter().filter_map(|conn_conf| -> Option<Connection> {
-        let target = match targets.lock() {
-            Ok(guard) => {
-                match guard.get(&conn_conf.target) {
-                    Some(target) => target.clone(),
-                    None => {
-                        error!("No target found matching name '{}'", &conn_conf.target);
-                        return None
-                    }
-                }
-            },
-            Err(e) => {
-                error!("Could not lock the targets Arc for getting a target: {}", e);
-                return None
-            }
-        };
-
-        Some(Connection {
-            source_name: conn_conf.source.clone(),
-            target: target,
-            filter: conn_conf.filter.clone(),
-        })
-    }).collect();
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_clone = stop_flag.clone();
@@ -453,7 +458,10 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         Ok(mut guard) => guard.add_command(Box::new(move || {
             stop_clone.swap(true, Ordering::Relaxed);
         })),
-        Err(e) => error!("Could not lock the Stop Arc for adding stop flag setting stop command: {}", e)
+        Err(e) => error!(
+            "Could not lock the Stop Arc for adding stop flag setting stop command: {}",
+            e
+        ),
     }
 
     let sftp_join_handles: Arc<Mutex<Vec<SftpJoinHandle>>> = Arc::new(Mutex::new(Vec::new()));
@@ -492,16 +500,40 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
 
     sources.append(&mut sftp_sources);
 
-    let _sftp_sources_join_handle = tokio::spawn(
-        sftp_sources_handler(
-            settings.clone(),
-            sftp_join_handles.clone(),
-            sftp_source_senders,
-            stop_flag,
-            local_storage,
-            persistence
-        )
-    );
+    let _sftp_sources_join_handle = tokio::spawn(sftp_sources_handler(
+        settings.clone(),
+        sftp_join_handles.clone(),
+        sftp_source_senders,
+        stop_flag,
+        local_storage,
+        persistence,
+    ));
+
+    let connections = settings
+        .connections
+        .iter()
+        .filter_map(|conn_conf| -> Option<Connection> {
+            let target = match targets.lock() {
+                Ok(guard) => match guard.get(&conn_conf.target) {
+                    Some(target) => target.clone(),
+                    None => {
+                        error!("No target found matching name '{}'", &conn_conf.target);
+                        return None;
+                    }
+                },
+                Err(e) => {
+                    error!("Could not lock the targets Arc for getting a target: {}", e);
+                    return None;
+                }
+            };
+
+            Some(Connection {
+                source_name: conn_conf.source.clone(),
+                target: target,
+                filter: conn_conf.filter.clone(),
+            })
+        })
+        .collect();
 
     // Start the streams that dispatch messages from sources to targets
     let _stream_join_handles = start_dispatch_streams(sources, connections);

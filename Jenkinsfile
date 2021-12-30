@@ -18,11 +18,6 @@ pipeline {
             }
         }
         stage('publish-dispatcher') {
-            agent {
-                node {
-                    label 'git'
-                }
-            }
             steps {
                 script {
                     publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
@@ -42,11 +37,6 @@ pipeline {
             }
         }
         stage('publish-sftp-scanner') {
-            agent {
-                node {
-                    label 'git'
-                }
-            }
             steps {
                 script {
                     publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
