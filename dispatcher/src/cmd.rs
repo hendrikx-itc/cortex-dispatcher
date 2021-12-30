@@ -1,7 +1,7 @@
-use clap::{crate_authors, crate_description, crate_version, App, Arg};
+use clap::{crate_name, crate_authors, crate_description, crate_version, App, Arg};
 
 pub fn app() -> App<'static, 'static> {
-    App::new("Cortex")
+    App::new(crate_name!())
         .version(crate_version!())
         .about(crate_description!())
         .author(crate_authors!())
