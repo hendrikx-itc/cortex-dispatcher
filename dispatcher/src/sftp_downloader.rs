@@ -8,8 +8,6 @@ use std::{thread, time};
 
 extern crate failure;
 
-use ssh2;
-
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 
 use retry::{delay::Fixed, retry, OperationResult};
@@ -275,9 +273,9 @@ where
         let stat = remote_file.stat().map_err(|e| match e.code() {
             ssh2::ErrorCode::Session(_) => {
                 // Probably a fault in the SFTP connection
-                return ErrorKind::DisconnectedError.into();
+                ErrorKind::DisconnectedError.into()
             }
-            _ => return Error::with_chain(e, "Error retrieving stat for remote file"),
+            _ => Error::with_chain(e, "Error retrieving stat for remote file"),
         })?;
 
         let mtime = stat.mtime.unwrap_or(0);

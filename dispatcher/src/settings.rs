@@ -116,25 +116,19 @@ impl FileComparison {
         modified: DateTime<Utc>,
         hash: Option<String>,
     ) -> bool {
-        if self.size {
-            if (file_info.size as u64) != size {
-                return false;
-            }
+        if self.size && (file_info.size as u64) != size {
+            return false;
         }
 
-        if self.modified {
-            if file_info.modified != modified {
-                return false;
-            }
+        if self.modified && file_info.modified != modified {
+            return false;
         }
 
-        if self.hash {
-            if file_info.hash != hash {
-                return false;
-            }
+        if self.hash && file_info.hash != hash {
+            return false;
         }
 
-        return true;
+        true
     }
 }
 

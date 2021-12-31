@@ -391,12 +391,12 @@ where
                 match sources.get(&file_event.source_name) {
                     Some(source) => {
                         if let Err(e) = process_file_event(
-                            file_event,
+                            &file_event,
                             &source,
                             &mut event_dispatcher,
                             &local_storage,
                         ) {
-                            error!("Error processing file event: {}", e);
+                            error!("Error processing file event for '{}': {}", &file_event.path.to_string_lossy(), e);
                         }
                     }
                     None => {
@@ -440,14 +440,14 @@ fn sha256_hash<R: std::io::Read>(mut reader: R) -> Result<String, std::io::Error
 ///
 /// The file is read until the end and the SHA265 hash is returned in the form
 /// of its hexadecimal representation string.
-fn sha256_hash_file(path: &PathBuf) -> Result<String, std::io::Error> {
+fn sha256_hash_file(path: &Path) -> Result<String, std::io::Error> {
     let file = std::fs::File::open(&path)?;
 
     sha256_hash(file)
 }
 
 fn process_file_event<T>(
-    file_event: LocalFileEvent,
+    file_event: &LocalFileEvent,
     directory_source: &settings::DirectorySource,
     event_dispatcher: &mut EventDispatcher,
     local_storage: &LocalStorage<T>,
@@ -525,7 +525,7 @@ where
     let source_file_event = FileEvent {
         file_id: file_id,
         source_name: file_event.source_name.clone(),
-        path: target_path.clone(),
+        path: target_path,
         hash: file_hash,
     };
 

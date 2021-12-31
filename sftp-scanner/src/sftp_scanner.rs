@@ -8,8 +8,6 @@ use std::{thread, time};
 use crossbeam_channel::{SendTimeoutError, Sender};
 use log::{debug, error, info};
 
-use ssh2;
-
 use retry::{delay::Fixed, retry, OperationResult};
 
 extern crate chrono;
@@ -200,7 +198,7 @@ fn scan_source(
     scan_directory(
         stop,
         sftp_source,
-        &Path::new(&sftp_source.directory),
+        Path::new(&sftp_source.directory),
         sftp,
         conn,
         sender,

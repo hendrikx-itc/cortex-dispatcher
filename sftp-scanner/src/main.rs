@@ -68,8 +68,8 @@ fn main() {
     env_logger_builder.init();
 
     if matches.is_present("sample_config") {
-        print!(
-            "{}\n",
+        println!(
+            "{}",
             serde_yaml::to_string(&settings::Settings::default()).unwrap()
         );
         ::std::process::exit(0);

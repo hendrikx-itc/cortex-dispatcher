@@ -375,7 +375,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         targets.clone(),
     ));
 
-    let persistence = PostgresPersistence::new(connection_manager).map_err(|e| err_msg(e))?;
+    let persistence = PostgresPersistence::new(connection_manager).map_err(err_msg)?;
 
     let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
 
@@ -403,7 +403,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     // thread
     let directory_source_map: HashMap<String, settings::DirectorySource> = (&settings
         .directory_sources)
-        .into_iter()
+        .iter()
         .map(|d| (d.name.clone(), d.clone()))
         .collect();
 
