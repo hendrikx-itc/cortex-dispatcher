@@ -282,9 +282,10 @@ where
             guard.unwrap().push(join_handle);
 
             info!(
-                "Started SFTP download thread '{}' ({})",
+                "Started SFTP download thread for source '{}' ({}/{})",
                 &channels.sftp_source.name,
-                n + 1
+                n + 1,
+                channels.sftp_source.thread_count
             );
         }
 

@@ -493,8 +493,9 @@ where
             let modified = chrono::DateTime::from(modified_systemtime);
 
             if check.equal(&file_info, size, modified, Some(file_hash.clone())) {
-                debug!(
-                    "Already in local file storage, so skipping '{}'",
+                info!(
+                    "Source '{}' already processed '{}' so skipping",
+                    &file_event.source_name,
                     &file_event.path.to_string_lossy()
                 );
 
