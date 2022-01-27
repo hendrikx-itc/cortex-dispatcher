@@ -138,7 +138,7 @@ pub fn start_scanner(
                             .inc();
                         metrics::DIR_SCAN_DURATION
                             .with_label_values(&[&sftp_source.name])
-                            .inc_by(scan_duration.as_millis() as i64);
+                            .inc_by(scan_duration.as_millis() as u64);
                     }
                     Err(e) => {
                         error!("Error scanning {}: {}", &sftp_source.name, e);

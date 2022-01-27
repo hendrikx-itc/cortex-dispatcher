@@ -10,9 +10,9 @@ homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
 [dependencies]
-clap = "2.33"
-config = "0.10"
-env_logger = "0.7"
+clap = { version = "3.0", features = ["cargo"] }
+config = "0.11"
+env_logger = "0.9"
 failure = "0.1"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
@@ -28,14 +28,14 @@ serde_regex = "1.1"
 ssh2 = "0.9"
 tokio = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
-prometheus = { version = "0.9" }
+prometheus = { version = "0.13" }
 lazy_static = "1.4"
-postgres = { version = "0.17", features = ["with-chrono-0_4"] }
+postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 cortex-core = { path = "../core" }
 actix-web = "2.0"
 actix-rt = "1.1"
 signal-hook = { version = "0.1", features = ["tokio-support"] }
 retry = "1.0"
-crossbeam-channel = "0.4"
+crossbeam-channel = "0.5"
 proctitle = "0.1"
 error-chain = "0.12"

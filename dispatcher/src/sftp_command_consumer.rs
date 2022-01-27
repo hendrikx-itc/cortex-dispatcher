@@ -5,7 +5,7 @@ extern crate lapin;
 use futures::StreamExt;
 
 use lapin::options::{
-    BasicAckOptions, BasicConsumeOptions, BasicNackOptions, QueueBindOptions, QueueDeclareOptions,
+    BasicAckOptions, BasicConsumeOptions, BasicNackOptions,
 };
 use lapin::types::FieldTable;
 
