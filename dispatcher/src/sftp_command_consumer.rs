@@ -87,33 +87,6 @@ pub async fn start(
     let consumer_tag = "cortex-dispatcher";
     let queue_name = format!("source.{}", &sftp_source_name);
 
-    //let _queue = amqp_channel
-    //    .queue_declare(
-    //        &queue_name,
-    //        QueueDeclareOptions::default(),
-    //        FieldTable::default(),
-    //    )
-    //    .await?;
-
-    //info!("channel {} declared queue '{}'", id, &queue_name);
-    //let routing_key = format!("source.{}", &sftp_source_name);
-    //let exchange = "amq.direct";
-
-    //amqp_channel
-    //    .queue_bind(
-    //        &queue_name,
-    //        &exchange,
-    //        &routing_key,
-    //        QueueBindOptions::default(),
-    //        FieldTable::default(),
-    //    )
-    //    .await?;
-
-    //debug!(
-    //    "Queue '{}' bound to exchange '{}' for routing key '{}'",
-    //    &queue_name, &exchange, &routing_key
-    //);
-
     // Setup command consuming stream
     let mut consumer = amqp_channel
         .basic_consume(
