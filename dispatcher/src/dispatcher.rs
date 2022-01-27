@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::iter::Iterator;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 
 #[cfg(target_os = "linux")]
@@ -75,7 +75,7 @@ impl Stop {
 pub async fn target_directory_handler<T>(
     tokio_persistence: PostgresAsyncPersistence<T>,
     settings: settings::Settings,
-    stop: Arc<Mutex<Stop>>,
+    stop: Weak<Mutex<Stop>>,
     targets: Arc<Mutex<HashMap<String, Arc<Target>>>>,
 ) where
     T: postgres::tls::MakeTlsConnect<tokio_postgres::Socket> + Clone + 'static + Sync + Send,
@@ -196,7 +196,7 @@ pub async fn target_directory_handler<T>(
             sender: sender,
         });
 
-        match stop.lock() {
+        match stop.upgrade().unwrap().lock() {
             Ok(mut guard) => {
                 guard.add_command(stop_cmd);
             }
@@ -372,7 +372,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
     tokio::spawn(target_directory_handler(
         tokio_persistence,
         settings.clone(),
-        stop.clone(),
+        Arc::downgrade(&stop),
         targets.clone(),
     ));
 
@@ -546,10 +546,14 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         signal_hook::consts::signal::SIGQUIT,
     ])?;
 
+    let stop = Arc::downgrade(&stop);
+
     let signal_handler_join_handle = tokio::spawn(async move {
         let mut signals = signals.fuse();
 
         while let Some(signal) = signals.next().await {
+            let l_stop = stop.clone();
+
             match signal {
                 signal_hook::consts::signal::SIGHUP => {
                     // Reload configuration
@@ -558,16 +562,9 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
                 signal_hook::consts::signal::SIGTERM
                 | signal_hook::consts::signal::SIGINT
                 | signal_hook::consts::signal::SIGQUIT => {
-                    // Shutdown the system;
-                    match Arc::try_unwrap(stop.clone()) {
-                        Ok(mutex) => {
-                            let l_stop = mutex.into_inner().unwrap();
-
-                            l_stop.stop();
-                        }
-                        Err(_) => {
-                            error!("Could not get mutex from Arc, not able to stop all tasks");
-                        }
+                    match l_stop.upgrade().unwrap().into_inner() {
+                        Ok(s) => s.stop(),
+                        Err(_) => ()
                     }
                 }
                 _ => unreachable!(),
