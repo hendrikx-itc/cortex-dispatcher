@@ -499,13 +499,15 @@ where
                     &file_event.path.to_string_lossy()
                 );
 
-                fs::remove_file(&file_event.path).map_err(|e| {
-                    format!(
-                        "Error removing file '{}': {}",
-                        &file_event.path.to_string_lossy(),
-                        e
-                    )
-                })?;
+                if directory_source.delete {
+                    fs::remove_file(&file_event.path).map_err(|e| {
+                        format!(
+                            "Error removing file '{}': {}",
+                            &file_event.path.to_string_lossy(),
+                            e
+                        )
+                    })?;
+                }
 
                 return Ok(());
             }
@@ -520,6 +522,7 @@ where
             &file_event.path,
             &file_event.prefix,
             Some(file_hash.clone()),
+            directory_source.delete,
         )
         .map_err(|e| format!("Error storing file '{}': {}", &source_path_str, &e))?;
 

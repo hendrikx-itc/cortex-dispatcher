@@ -169,6 +169,9 @@ pub struct DirectorySource {
     /// performed.
     #[serde(default = "default_directory_source_deduplication")]
     pub deduplication: Deduplication,
+    /// Set to true to remove the source file after ingestion
+    #[serde(default = "default_true")]
+    pub delete: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -304,6 +307,7 @@ impl Default for Settings {
                     modified: false,
                     hash: true,
                 }),
+                delete: true,
             }],
             directory_targets: vec![DirectoryTarget {
                 name: "red".to_string(),

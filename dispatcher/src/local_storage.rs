@@ -119,6 +119,7 @@ where
         file_path: P,
         prefix: P,
         hash: Option<String>,
+        delete: bool,
     ) -> Result<(i64, PathBuf), LocalStorageError>
     where
         P: AsRef<Path>,
@@ -177,7 +178,9 @@ where
 
         debug!("Stored '{}' to '{}'", &source_path_str, &local_path_str);
 
-        remove_file(&file_path)?;
+        if delete {
+            remove_file(&file_path)?;
+        }
 
         debug!("Removed '{}'", &source_path_str);
 
