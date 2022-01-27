@@ -24,7 +24,7 @@ pipeline {
         stage('publish-dispatcher') {
             agent {
                 node {
-                    label 'git'
+                    label 'docker'
                 }
             }
             steps {
@@ -48,7 +48,7 @@ pipeline {
         stage('publish-sftp-scanner') {
             agent {
                 node {
-                    label 'git'
+                    label 'docker'
                 }
             }
             steps {
