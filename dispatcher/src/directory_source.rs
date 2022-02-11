@@ -14,7 +14,7 @@ use std::collections::HashMap;
 extern crate inotify;
 
 #[cfg(target_os = "linux")]
-use inotify::{Inotify, WatchMask};
+use inotify::{Inotify, WatchMask, EventMask};
 
 extern crate failure;
 extern crate lapin;
@@ -183,14 +183,16 @@ pub fn start_directory_sources(
     directory_sources.iter().for_each(|directory_source| {
         info!("Directory source: {}", directory_source.name);
 
-        let mut watch_mask = construct_watch_mask(directory_source.events.clone());
+        let watch_mask = construct_watch_mask(directory_source.events.clone());
 
-        if directory_source.recursive {
-            watch_mask |= WatchMask::CREATE
-        }
+        // The mask for registration differs from the configured mask in case we want to recursively monitor a directory
+        let register_mask = match directory_source.recursive {
+            true => watch_mask | WatchMask::CREATE,
+            false => watch_mask,
+        };
 
         let mut register_watch = |path: &Path| {
-            let watch_result = inotify.add_watch(path, watch_mask);
+            let watch_result = inotify.add_watch(path, register_mask);
 
             match watch_result {
                 Ok(w) => {
@@ -230,6 +232,14 @@ pub fn start_directory_sources(
     });
 
     start_inotify_event_thread(inotify, watch_mapping, local_intake_sender)
+}
+
+fn event_type_matches(watch_mask: WatchMask, event_mask: EventMask) -> bool {
+    let mask = EventMask::from_bits(
+        watch_mask.bits() & EventMask::all().bits()
+    ).unwrap();
+
+    mask.contains(event_mask)
 }
 
 /// Start thread for monitoring for new files using inotify
@@ -323,7 +333,7 @@ fn start_inotify_event_thread(
                                 None => true,
                             };
 
-                            if file_matches {
+                            if file_matches && event_type_matches(event_context.watch_mask, event.mask) {
                                 debug!("Event for {} matches filter", &source_path_str);
 
                                 let file_event = LocalFileEvent {
