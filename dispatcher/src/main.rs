@@ -20,8 +20,6 @@ mod settings;
 mod sftp_command_consumer;
 mod sftp_downloader;
 
-use settings::Settings;
-
 #[macro_use]
 extern crate serde_derive;
 
@@ -71,28 +69,19 @@ async fn main() {
         .value_of("config")
         .unwrap_or("/etc/cortex/cortex.yaml");
 
-    let mut settings = config::Config::new();
-
     info!("Loading configuration");
 
-    let merge_result = settings.merge(config::File::new(config_file, config::FileFormat::Yaml));
+    let merge_result = config::Config::builder()
+        .add_source(config::File::new(config_file, config::FileFormat::Yaml)).build();
 
-    match merge_result {
-        Ok(_config) => {
+    let settings = match merge_result {
+        Ok(config) => {
             info!("Configuration loaded from file {}", config_file);
+
+            config.try_deserialize().unwrap()
         }
         Err(e) => {
             error!("Error merging configuration: {}", e);
-            ::std::process::exit(1);
-        }
-    }
-
-    let into_result = settings.try_into();
-
-    let settings: Settings = match into_result {
-        Ok(s) => s,
-        Err(e) => {
-            error!("Error loading configuration: {}", e);
             ::std::process::exit(1);
         }
     };

@@ -98,7 +98,7 @@ pub async fn start(
         .await?;
 
     while let Some(message) = consumer.next().await {
-        let (channel, delivery) = match message {
+        let delivery = match message {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not read AMQP message: {}", e);
@@ -155,7 +155,7 @@ pub async fn start(
                 }
             };
 
-            channel
+            amqp_channel
                 .basic_nack(
                     delivery.delivery_tag,
                     BasicNackOptions {

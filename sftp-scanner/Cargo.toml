@@ -11,12 +11,12 @@ repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
 [dependencies]
 clap = { version = "3.0", features = ["cargo"] }
-config = "0.11"
+config = "0.13"
 env_logger = "0.9"
 failure = "0.1"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
-lapin = "1.2"
+lapin = "2.1"
 log = "0.4"
 owning_ref = "0.4"
 regex = "1.3"
@@ -26,15 +26,16 @@ serde_json = "1.0"
 serde_yaml = "0.8"
 serde_regex = "1.1"
 ssh2 = "0.9"
-tokio = "0.2"
+tokio = "1.18"
 chrono = { version = "0.4", features = ["serde"] }
 prometheus = { version = "0.13" }
 lazy_static = "1.4"
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 cortex-core = { path = "../core" }
-actix-web = "2.0"
-actix-rt = "1.1"
-signal-hook = { version = "0.1", features = ["tokio-support"] }
+actix-web = "4.0"
+actix-rt = "2.7"
+signal-hook = { version = "0.3" }
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 retry = "1.0"
 crossbeam-channel = "0.5"
 proctitle = "0.1"

@@ -11,6 +11,9 @@ directory_sources:
     events:
       - CloseWrite
       - MovedTo
+    filter:
+      Regex:
+        pattern: ".*\\.txt$"
 
 scan_interval: 5000
 

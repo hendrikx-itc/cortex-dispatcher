@@ -41,7 +41,7 @@ impl RabbitMQNotify {
                         &exchange,
                         &routing_key,
                         BasicPublishOptions::default(),
-                        message_str.as_bytes().to_vec(),
+                        message_str.as_bytes(),
                         BasicProperties::default(),
                     )
                     .await;
