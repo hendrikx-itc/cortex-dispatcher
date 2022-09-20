@@ -9,17 +9,26 @@ function absolute_dir {
 
 SHELL_NAME="${SHELL##*/}"
 
-if [ $SHELL_NAME = "bash" ]; then
+if [ "$SHELL_NAME" = "bash" ]; then
     SCRIPT_PATH="${BASH_SOURCE[0]}"
-elif [ $SHELL_NAME = "zsh" ]; then
+elif [ "$SHELL_NAME" = "zsh" ]; then
     SCRIPT_PATH="${(%):-%x}"
 fi
 
 RELATIVE_SCRIPT_DIR=${SCRIPT_PATH%/*}
 
-SCRIPT_DIR=$(absolute_dir $RELATIVE_SCRIPT_DIR)
+SCRIPT_DIR=$(absolute_dir "$RELATIVE_SCRIPT_DIR")
 
 export WORKSPACE=${SCRIPT_DIR%/*}
+
+CORTEX_CONFIG_FILE="$WORKSPACE/dev-stack/cortex-dispatcher.yml"
+ 
+if [ ! -f "$CORTEX_CONFIG_FILE" ]
+then
+    cat "$CORTEX_CONFIG_FILE.tmpl" | CORTEX_DATA_ROOT="$WORKSPACE/dev-stack/tmp" envsubst > "$CORTEX_CONFIG_FILE"
+
+    echo "Created '$CORTEX_CONFIG_FILE' for testing"
+fi
 
 export PATH=$WORKSPACE/bin:$PATH
 

@@ -108,7 +108,6 @@ version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ea16c295198e958ef31930a6ef37d0fb64e9ca3b6116e6b93a8bdae96ee1000"
 dependencies = [
- "actix-macros",
  "futures-core",
  "tokio 1.21.1",
 ]
@@ -792,7 +791,6 @@ version = "1.2.0"
 dependencies = [
  "actix-files",
  "actix-http",
- "actix-rt",
  "actix-web",
  "bb8",
  "bb8-postgres",
@@ -839,7 +837,6 @@ dependencies = [
 name = "cortex-sftp-scanner"
 version = "1.1.0"
 dependencies = [
- "actix-rt",
  "actix-web",
  "chrono",
  "clap",
