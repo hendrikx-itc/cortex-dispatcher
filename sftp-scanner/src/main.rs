@@ -3,13 +3,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use futures::stream::TryStreamExt;
-use futures_util::compat::Compat01As03;
+use futures::stream::StreamExt;
 use log::{error, info};
 
 use crossbeam_channel::bounded;
 
-use signal_hook::iterator::Signals;
+use signal_hook_tokio::Signals;
 
 extern crate config;
 
@@ -81,7 +80,7 @@ fn main() {
 
     let settings = load_settings(&config_file);
 
-    let mut runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     // Will hold all functions that stop components of the SFTP scannner
     let mut stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>> = Vec::new();
@@ -119,19 +118,14 @@ fn main() {
         .collect();
 
     // Start the built in web server that currently only serves metrics.
-    let (web_server_join_handle, actix_system, actix_http_server) =
+    let (web_server_join_handle, actix_system, _actix_http_server) =
         http_server::start_http_server(settings.http_server.address);
-
-    stop_commands.push(Box::new(move || {
-        tokio::spawn(actix_http_server.stop(true));
-    }));
 
     stop_commands.push(Box::new(move || {
         actix_system.stop();
     }));
 
-    let amqp_sender_join_handle =
-        amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address);
+    tokio::spawn(amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address));
 
     let signal_handler_join_handle = runtime.spawn(setup_signal_handler(stop_commands));
 
@@ -146,27 +140,22 @@ fn main() {
     }
 
     wait_for(web_server_join_handle, "Http server");
-    wait_for(amqp_sender_join_handle, "AMQP sender");
 }
 
 fn setup_signal_handler(
     stop_commands: Vec<Box<dyn FnOnce() -> () + Send + 'static>>,
 ) -> impl futures::future::Future<Output = ()> + Send + 'static {
-    let signals = Signals::new(&[
-        signal_hook::SIGHUP,
-        signal_hook::SIGTERM,
-        signal_hook::SIGINT,
-        signal_hook::SIGQUIT,
+    let mut signals = Signals::new(&[
+        signal_hook::consts::SIGHUP,
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGINT,
+        signal_hook::consts::SIGQUIT,
     ])
     .unwrap();
 
-    let mut signal_stream = Compat01As03::new(signals.into_async().unwrap());
-
     async move {
-        while let Ok(signal) = signal_stream.try_next().await {
-            if let Some(s) = signal {
-                info!("signal: {}", s);
-            }
+        while let Some(signal) = signals.next().await {
+            info!("signal: {}", signal);
         }
 
         for stop_command in stop_commands {
@@ -178,21 +167,23 @@ fn setup_signal_handler(
 fn load_settings(config_file: &str) -> Settings {
     info!("Loading configuration from file {}", config_file);
 
-    let mut settings = config::Config::new();
+    let mut settings = config::Config::builder();
+    settings = settings.add_source(config::File::new(config_file, config::FileFormat::Yaml));
 
-    let merge_result = settings.merge(config::File::new(config_file, config::FileFormat::Yaml));
+    let merge_result = settings.build();
 
-    match merge_result {
-        Ok(_config) => {
+    let settings = match merge_result {
+        Ok(config) => {
             info!("Configuration loaded from file {}", config_file);
+            config
         }
         Err(e) => {
             error!("Error loading configuration: {}", e);
             ::std::process::exit(1);
         }
-    }
+    };
 
-    let into_result = settings.try_into();
+    let into_result = settings.try_deserialize();
 
     let settings: Settings = match into_result {
         Ok(s) => s,

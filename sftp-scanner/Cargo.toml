@@ -1,8 +1,8 @@
 [package]
 name = "cortex-sftp-scanner"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
-edition = "2018"
+edition = "2021"
 description = "A service to scan for files on SFTP servers and enqueue jobs for the Cortex dispatcher."
 license = "GPL-3.0-or-later"
 documentation = "https://cortex-dispatcher.readthedocs.io/en/latest/"
@@ -10,7 +10,7 @@ homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
 [dependencies]
-clap = { version = "3.0", features = ["cargo"] }
+clap = { version = "3.2", features = ["cargo"] }
 config = "0.13"
 env_logger = "0.9"
 failure = "0.1"
@@ -19,24 +19,24 @@ futures-util = { version = "0.3", features = ["compat"] }
 lapin = "2.1"
 log = "0.4"
 owning_ref = "0.4"
-regex = "1.3"
+regex = "1.6"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
-serde_yaml = "0.8"
+serde_yaml = "0.9"
 serde_regex = "1.1"
 ssh2 = "0.9"
-tokio = "1.18"
+tokio = { version = "1.21", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 prometheus = { version = "0.13" }
 lazy_static = "1.4"
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 cortex-core = { path = "../core" }
-actix-web = "4.0"
+actix-web = "4.2"
 actix-rt = "2.7"
 signal-hook = { version = "0.3" }
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
-retry = "1.0"
+retry = "2.0"
 crossbeam-channel = "0.5"
 proctitle = "0.1"
 error-chain = "0.12"

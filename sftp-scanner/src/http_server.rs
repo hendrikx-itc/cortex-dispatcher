@@ -2,7 +2,7 @@ use std::thread;
 
 use log::{error, info};
 
-use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder, http::header::ContentType};
 
 use prometheus::{Encoder, TextEncoder};
 
@@ -17,7 +17,7 @@ pub fn start_http_server(
     let (tx_http, rx_http) = std::sync::mpsc::channel();
 
     let join_handle = thread::spawn(move || {
-        let system = actix_rt::System::new("http_server");
+        let system = actix_rt::System::new();
 
         let bind_result = HttpServer::new(|| {
             App::new()
@@ -68,5 +68,5 @@ async fn metrics() -> impl Responder {
         Err(e) => error!("Error encoding metrics: {}", e),
     }
 
-    HttpResponse::from(String::from_utf8(buffer).unwrap())
+    HttpResponse::Ok().content_type(ContentType::plaintext()).body(String::from_utf8(buffer).unwrap())
 }

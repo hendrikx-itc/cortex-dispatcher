@@ -300,11 +300,13 @@ where
             channels.cmd_sender.clone(),
         );
 
-        stream_join_handles.push(tokio::spawn(async {
+        let source_name = channels.sftp_source.name.clone();
+        
+        stream_join_handles.push(tokio::spawn(async move {
             tokio::select!(
                 a = consume_future => a,
                 _b = channels.stop_receiver => {
-                    debug!("Interrupted SFTP command consumer stream '{}'", &channels.sftp_source.name);
+                    debug!("Interrupted SFTP command consumer stream '{}'", &source_name);
                     Ok(())
                 }
             )

@@ -170,22 +170,7 @@ where
                                     }
                                 }
 
-                                let msg = match e {
-                                    retry::Error::<Error>::Operation {
-                                        error,
-                                        total_delay: _,
-                                        tries: _,
-                                    } => {
-                                        let msg_list: Vec<String> = error
-                                            .iter()
-                                            .map(|sub_err| sub_err.to_string())
-                                            .collect();
-                                        msg_list.join(": ").to_string()
-                                    }
-                                    retry::Error::Internal(int) => int,
-                                };
-
-                                error!("[E01003] Error downloading '{}': {}", &command.path, msg);
+                                error!("[E01003] Error downloading '{}': {}", &command.path, e);
                             }
                         }
                     }
