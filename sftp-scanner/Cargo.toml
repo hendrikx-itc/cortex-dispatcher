@@ -13,7 +13,7 @@ repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 clap = { version = "3.2", features = ["cargo"] }
 config = "0.13"
 env_logger = "0.9"
-failure = "0.1"
+anyhow = "1.0"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
 lapin = "2.1"
