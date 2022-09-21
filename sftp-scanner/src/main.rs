@@ -117,16 +117,15 @@ fn main() {
         })
         .collect();
 
-    // Start the built-in web server that currently only serves metrics.
-    tokio::spawn(http_server::start_http_server(settings.http_server.address));
-
-    tokio::spawn(amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address));
-
-    let signal_handler_join_handle = runtime.spawn(setup_signal_handler(stop_commands));
-
     runtime
-        .block_on(signal_handler_join_handle)
-        .expect("Shutdown cannot error");
+        .block_on(async {
+            // Start the built-in web server that currently only serves metrics.
+            tokio::spawn(http_server::start_http_server(settings.http_server.address));
+
+            tokio::spawn(amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address));
+
+            setup_signal_handler(stop_commands).await;
+        });
 
     for (source_name, scanner_thread) in scanner_threads {
         info!("Waiting for scanner thread '{}' to stop", &source_name);
