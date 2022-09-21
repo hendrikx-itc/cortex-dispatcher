@@ -1,57 +1,21 @@
-use std::thread;
-
-use log::{error, info};
+use log::error;
 
 use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder, http::header::ContentType};
 
 use prometheus::{Encoder, TextEncoder};
 
-pub fn start_http_server(
+pub async fn start_http_server(
     addr: std::net::SocketAddr,
-) -> (
-    thread::JoinHandle<()>,
-    actix_rt::System,
-    actix_web::dev::Server,
-) {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let (tx_http, rx_http) = std::sync::mpsc::channel();
+) -> std::io::Result<()> {
+    let server = HttpServer::new(|| {
+        App::new()
+            .wrap(middleware::Logger::default())
+            .service(web::resource("/api/metrics").to(metrics))
+    })
+    .bind(addr)?
+    .run();
 
-    let join_handle = thread::spawn(move || {
-        let system = actix_rt::System::new();
-
-        let bind_result = HttpServer::new(|| {
-            App::new()
-                .wrap(middleware::Logger::default())
-                .service(web::resource("/api/metrics").to(metrics))
-        })
-        .bind(addr);
-
-        let server = match bind_result {
-            Ok(http_server) => {
-                info!("Web server bound to address: {}", addr);
-                Some(http_server.run())
-            }
-            Err(e) => {
-                error!("Could not bind to address {}: {}", addr, e);
-                None
-            }
-        };
-
-        tx.send(actix_rt::System::current()).unwrap();
-
-        match server {
-            Some(s) => tx_http.send(s).unwrap(),
-            None => (),
-        }
-
-        system.run().unwrap();
-    });
-
-    // Get data from the thread that was just started
-    let system = rx.recv().unwrap();
-    let server = rx_http.recv().unwrap();
-
-    (join_handle, system, server)
+    server.await
 }
 
 async fn metrics() -> impl Responder {

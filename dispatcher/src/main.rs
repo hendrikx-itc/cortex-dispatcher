@@ -23,9 +23,6 @@ mod sftp_downloader;
 #[macro_use]
 extern crate serde_derive;
 
-extern crate failure;
-extern crate failure_derive;
-
 extern crate postgres;
 
 extern crate chrono;

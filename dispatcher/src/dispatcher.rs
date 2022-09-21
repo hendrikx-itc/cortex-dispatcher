@@ -9,8 +9,6 @@ use std::thread;
 #[cfg(target_os = "linux")]
 extern crate inotify;
 
-use failure::{err_msg, Error};
-
 extern crate lapin;
 use lapin::ConnectionProperties;
 
@@ -350,7 +348,7 @@ pub fn start_dispatch_streams(
         .collect()
 }
 
-pub async fn run(settings: settings::Settings) -> Result<(), Error> {
+pub async fn run(settings: settings::Settings) -> Result<(), anyhow::Error> {
     // List of targets with their file event channels
     let targets: Arc<Mutex<HashMap<String, Arc<Target>>>> = Arc::new(Mutex::new(HashMap::new()));
 
@@ -378,7 +376,7 @@ pub async fn run(settings: settings::Settings) -> Result<(), Error> {
         targets.clone(),
     ));
 
-    let persistence = PostgresPersistence::new(connection_manager).map_err(err_msg)?;
+    let persistence = PostgresPersistence::new(connection_manager).map_err(anyhow::Error::msg)?;
 
     let local_storage = LocalStorage::new(&settings.storage.directory, persistence.clone());
 

@@ -16,7 +16,6 @@ extern crate inotify;
 #[cfg(target_os = "linux")]
 use inotify::{Inotify, WatchMask, EventMask};
 
-extern crate failure;
 extern crate lapin;
 
 use sha2::{Digest, Sha256};

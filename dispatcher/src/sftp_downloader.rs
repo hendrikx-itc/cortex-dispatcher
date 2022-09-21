@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
-extern crate failure;
-
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 
 use retry::{delay::Fixed, retry, OperationResult};

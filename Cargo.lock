@@ -312,6 +312,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.65"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98161a4e3e2184da77bb14f02184cdd111e83bbbcc9979dfee3c44b9a85f5602"
+
+[[package]]
 name = "askama_escape"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -792,6 +798,7 @@ dependencies = [
  "actix-files",
  "actix-http",
  "actix-web",
+ "anyhow",
  "bb8",
  "bb8-postgres",
  "chrono",
@@ -801,8 +808,6 @@ dependencies = [
  "crossbeam-channel",
  "env_logger",
  "error-chain",
- "failure",
- "failure_derive",
  "futures 0.3.24",
  "futures-retry",
  "futures-util",
@@ -828,6 +833,7 @@ dependencies = [
  "ssh2",
  "tee",
  "tera",
+ "thiserror",
  "tokio 1.21.1",
  "tokio-postgres",
  "tokio-timer",

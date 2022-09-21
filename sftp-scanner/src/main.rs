@@ -117,13 +117,8 @@ fn main() {
         })
         .collect();
 
-    // Start the built in web server that currently only serves metrics.
-    let (web_server_join_handle, actix_system, _actix_http_server) =
-        http_server::start_http_server(settings.http_server.address);
-
-    stop_commands.push(Box::new(move || {
-        actix_system.stop();
-    }));
+    // Start the built-in web server that currently only serves metrics.
+    tokio::spawn(http_server::start_http_server(settings.http_server.address));
 
     tokio::spawn(amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address));
 
@@ -138,8 +133,6 @@ fn main() {
 
         wait_for(scanner_thread, "Scanner");
     }
-
-    wait_for(web_server_join_handle, "Http server");
 }
 
 fn setup_signal_handler(
