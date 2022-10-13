@@ -22,7 +22,8 @@ pipeline {
             steps {
                 unstash name: 'deb'
                 script {
-                    publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                    publishPackages 'target/debian', 'kpn/focal/stable', 'focal'
+                    publishPackages 'target/debian', 'kpn/jammy/stable', 'jammy'
                 }
             }
         }
@@ -43,7 +44,8 @@ pipeline {
             steps {
                 unstash name: 'deb'
                 script {
-                    publishPackages 'target/debian', 'kpn/bionic/stable', 'bionic'
+                    publishPackages 'target/debian', 'kpn/focal/stable', 'focal'
+                    publishPackages 'target/debian', 'kpn/jammy/stable', 'jammy'
                 }
             }
         }
