@@ -1,6 +1,5 @@
 use std::io::Write;
 
-extern crate clap;
 extern crate config;
 
 #[macro_use]
@@ -8,7 +7,6 @@ extern crate log;
 extern crate env_logger;
 
 mod base_types;
-mod cmd;
 mod directory_source;
 mod directory_target;
 mod dispatcher;
@@ -41,20 +39,33 @@ extern crate lazy_static;
 
 extern crate cortex_core;
 
+use clap::Parser;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// Path to config file
+    #[arg(short, long)]
+    config: Option<String>,
+
+    /// Show example config
+    #[arg(short, long)]
+    example_config: bool,
+}
+
 #[tokio::main]
 async fn main() {
-    let matches = cmd::app().get_matches();
+    let args = Args::parse();
 
     let mut env_logger_builder = env_logger::builder();
 
-    if matches.is_present("service") {
-        env_logger_builder
-            .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
-    }
+    env_logger_builder
+        .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
 
     env_logger_builder.init();
 
-    if matches.is_present("sample_config") {
+    if args.example_config {
         println!(
             "{}",
             serde_yaml::to_string(&settings::Settings::default()).unwrap()
@@ -62,14 +73,13 @@ async fn main() {
         ::std::process::exit(0);
     }
 
-    let config_file = matches
-        .value_of("config")
-        .unwrap_or("/etc/cortex/cortex.yaml");
+    let config_file = args.config.unwrap_or("/etc/cortex/cortex.yaml".into());
 
     info!("Loading configuration");
 
     let merge_result = config::Config::builder()
-        .add_source(config::File::new(config_file, config::FileFormat::Yaml)).build();
+        .add_source(config::File::new(&config_file, config::FileFormat::Yaml))
+        .build();
 
     let settings = match merge_result {
         Ok(config) => {

@@ -10,8 +10,7 @@ pub fn app() -> App<'static> {
                 .short('c')
                 .long("config")
                 .value_name("CONFIG_FILE")
-                .help("Specify config file")
-                .takes_value(true),
+                .help("Specify config file"),
         )
         .arg(
             Arg::new("sample_config")

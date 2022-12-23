@@ -267,7 +267,8 @@ where
             .map_err(|e| Error::with_chain(e, "Error converting mtime to i64"))?;
         let nsec = 0;
 
-        let modified = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc);
+        let modified =
+            DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(sec, nsec).unwrap(), Utc);
 
         let file_info_result = self
             .local_storage

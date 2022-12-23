@@ -299,7 +299,7 @@ where
         );
 
         let source_name = channels.sftp_source.name.clone();
-        
+
         stream_join_handles.push(tokio::spawn(async move {
             tokio::select!(
                 a = consume_future => a,

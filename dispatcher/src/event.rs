@@ -20,7 +20,12 @@ impl EventDispatcher {
     pub fn dispatch_event(&mut self, file_event: &FileEvent) -> Result<(), String> {
         let sender = match self.senders.get_mut(&file_event.source_name) {
             Some(s) => s,
-            None => return Err(format!("No sendor for source matching name '{}'", &file_event.source_name))
+            None => {
+                return Err(format!(
+                    "No sendor for source matching name '{}'",
+                    &file_event.source_name
+                ))
+            }
         };
 
         let send_result = sender.send(file_event.clone());

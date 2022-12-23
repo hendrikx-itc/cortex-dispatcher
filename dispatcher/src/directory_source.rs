@@ -14,7 +14,7 @@ use std::collections::HashMap;
 extern crate inotify;
 
 #[cfg(target_os = "linux")]
-use inotify::{Inotify, WatchMask, EventMask};
+use inotify::{EventMask, Inotify, WatchMask};
 
 extern crate lapin;
 
@@ -234,9 +234,7 @@ pub fn start_directory_sources(
 }
 
 fn event_type_matches(watch_mask: WatchMask, event_mask: EventMask) -> bool {
-    let mask = EventMask::from_bits(
-        watch_mask.bits() & EventMask::all().bits()
-    ).unwrap();
+    let mask = EventMask::from_bits(watch_mask.bits() & EventMask::all().bits()).unwrap();
 
     mask.contains(event_mask)
 }
@@ -332,7 +330,9 @@ fn start_inotify_event_thread(
                                 None => true,
                             };
 
-                            if file_matches && event_type_matches(event_context.watch_mask, event.mask) {
+                            if file_matches
+                                && event_type_matches(event_context.watch_mask, event.mask)
+                            {
                                 debug!("Event for {} matches filter", &source_path_str);
 
                                 let file_event = LocalFileEvent {
@@ -405,7 +405,11 @@ where
                             &mut event_dispatcher,
                             &local_storage,
                         ) {
-                            error!("Error processing file event for '{}': {}", &file_event.path.to_string_lossy(), e);
+                            error!(
+                                "Error processing file event for '{}': {}",
+                                &file_event.path.to_string_lossy(),
+                                e
+                            );
                         }
                     }
                     None => {

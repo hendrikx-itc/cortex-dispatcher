@@ -4,9 +4,7 @@ extern crate lapin;
 
 use futures::StreamExt;
 
-use lapin::options::{
-    BasicAckOptions, BasicConsumeOptions, BasicNackOptions,
-};
+use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions};
 use lapin::types::FieldTable;
 
 use crossbeam_channel::{Sender, TrySendError};

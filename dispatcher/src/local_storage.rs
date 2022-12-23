@@ -202,5 +202,5 @@ fn system_time_to_date_time(t: SystemTime) -> DateTime<Utc> {
         }
     };
 
-    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(sec, nsec), Utc)
+    DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(sec, nsec).unwrap(), Utc)
 }
