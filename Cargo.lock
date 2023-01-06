@@ -15,7 +15,7 @@ dependencies = [
  "log",
  "memchr",
  "pin-project-lite 0.2.9",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tokio-util",
 ]
 
@@ -109,7 +109,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ea16c295198e958ef31930a6ef37d0fb64e9ca3b6116e6b93a8bdae96ee1000"
 dependencies = [
  "futures-core",
- "tokio 1.23.0",
+ "tokio 1.23.1",
 ]
 
 [[package]]
@@ -126,7 +126,7 @@ dependencies = [
  "mio 0.8.5",
  "num_cpus",
  "socket2",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tracing",
 ]
 
@@ -476,7 +476,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "parking_lot 0.12.1",
- "tokio 1.23.0",
+ "tokio 1.23.1",
 ]
 
 [[package]]
@@ -487,7 +487,7 @@ checksum = "56ac82c42eb30889b5c4ee4763a24b8c566518171ebea648cd7e3bc532c60680"
 dependencies = [
  "async-trait",
  "bb8",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tokio-postgres",
 ]
 
@@ -839,7 +839,7 @@ dependencies = [
  "tee",
  "tera",
  "thiserror",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tokio-postgres",
 ]
 
@@ -874,7 +874,7 @@ dependencies = [
  "signal-hook",
  "signal-hook-tokio",
  "ssh2",
- "tokio 1.23.0",
+ "tokio 1.23.1",
 ]
 
 [[package]]
@@ -1243,7 +1243,7 @@ checksum = "fde5a672a61f96552aa5ed9fd9c81c3fbdae4be9b1e205d6eaf17c83705adc0f"
 dependencies = [
  "futures 0.3.25",
  "pin-project-lite 0.2.9",
- "tokio 1.23.0",
+ "tokio 1.23.1",
 ]
 
 [[package]]
@@ -1342,7 +1342,7 @@ dependencies = [
  "http",
  "indexmap",
  "slab",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tokio-util",
  "tracing",
 ]
@@ -2175,7 +2175,7 @@ dependencies = [
  "fallible-iterator",
  "futures-util",
  "log",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tokio-postgres",
 ]
 
@@ -2706,7 +2706,7 @@ dependencies = [
  "futures-core",
  "libc",
  "signal-hook",
- "tokio 1.23.0",
+ "tokio 1.23.1",
 ]
 
 [[package]]
@@ -2954,9 +2954,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.23.0"
+version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eab6d665857cc6ca78d6e80303a02cea7a7851e85dfbd77cbdc09bd129f1ef46"
+checksum = "38a54aca0c15d014013256222ba0ebed095673f89345dd79119d912eb561b7a8"
 dependencies = [
  "autocfg",
  "bytes 1.3.0",
@@ -3003,7 +3003,7 @@ dependencies = [
  "postgres-protocol",
  "postgres-types",
  "socket2",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tokio-util",
 ]
 
@@ -3017,7 +3017,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project-lite 0.2.9",
- "tokio 1.23.0",
+ "tokio 1.23.1",
  "tracing",
 ]
 
