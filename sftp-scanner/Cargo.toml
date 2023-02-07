@@ -10,7 +10,7 @@ homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
 [dependencies]
-clap = { version = "4.0", features = ["cargo"] }
+clap = { version = "4.1", features = ["cargo", "derive"] }
 config = "0.13"
 env_logger = "0.10"
 anyhow = "1.0"
@@ -25,7 +25,7 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 serde_regex = "1.1"
 ssh2 = "0.9"
-tokio = { version = "1.21", features = ["full"] }
+tokio = { version = "1.25", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 prometheus = { version = "0.13" }
 lazy_static = "1.4"

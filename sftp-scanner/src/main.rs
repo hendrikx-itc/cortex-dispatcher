@@ -10,6 +10,8 @@ use crossbeam_channel::bounded;
 
 use signal_hook_tokio::Signals;
 
+use clap::Parser;
+
 extern crate config;
 
 #[macro_use]
@@ -34,7 +36,6 @@ extern crate cortex_core;
 use cortex_core::wait_for;
 
 mod amqp_sender;
-mod cmd;
 mod http_server;
 mod metrics;
 mod settings;
@@ -52,21 +53,37 @@ mod errors {
 
 use settings::Settings;
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// Path to config file
+    #[arg(short, long)]
+    config: Option<String>,
+
+    /// Show example configuration file
+    #[arg(short, long)]
+    sample_config: bool,
+
+    /// Run in service mode
+    #[arg(short, long)]
+    service: bool,
+}
+
 fn main() {
-    let matches = cmd::app().get_matches();
+    let args = Args::parse();
 
     let mut env_logger_builder = env_logger::builder();
 
     // When run as a service no timestamps are logged, we expect the service manager
     // to append timestamps to the logs.
-    if matches.is_present("service") {
+    if args.service {
         env_logger_builder
             .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
     }
 
     env_logger_builder.init();
 
-    if matches.is_present("sample_config") {
+    if args.sample_config {
         println!(
             "{}",
             serde_yaml::to_string(&settings::Settings::default()).unwrap()
@@ -74,9 +91,8 @@ fn main() {
         ::std::process::exit(0);
     }
 
-    let config_file = matches
-        .value_of("config")
-        .unwrap_or("/etc/cortex/sftp-scanner.yaml");
+    let config_file = args.config
+        .unwrap_or("/etc/cortex/sftp-scanner.yaml".to_string());
 
     let settings = load_settings(&config_file);
 
