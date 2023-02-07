@@ -4,6 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::Socket;
+use log::{error, debug, warn};
 
 use crate::event::FileEvent;
 use crate::persistence::PostgresAsyncPersistence;

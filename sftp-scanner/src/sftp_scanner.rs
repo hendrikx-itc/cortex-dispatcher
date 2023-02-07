@@ -10,8 +10,10 @@ use log::{debug, error, info};
 
 use retry::{delay::Fixed, retry, OperationResult};
 
-extern crate chrono;
+use chrono;
 use chrono::prelude::*;
+
+use error_chain::error_chain;
 
 use cortex_core::sftp_connection::SftpConfig;
 use cortex_core::SftpDownload;

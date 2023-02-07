@@ -12,26 +12,11 @@ use signal_hook_tokio::Signals;
 
 use clap::Parser;
 
-extern crate config;
+use config;
 
-#[macro_use]
-extern crate serde_derive;
+use serde_yaml;
 
-#[macro_use]
-extern crate prometheus;
-
-#[macro_use]
-extern crate lazy_static;
-
-extern crate chrono;
-extern crate postgres;
-extern crate proctitle;
-extern crate serde_yaml;
-
-#[macro_use]
-extern crate error_chain;
-
-extern crate cortex_core;
+use cortex_core;
 
 use cortex_core::wait_for;
 
@@ -47,6 +32,8 @@ use sftp_scanner::Error;
 // this crate will `use errors::*;` to get access to everything
 // `error_chain!` creates.
 mod errors {
+    use error_chain::error_chain;
+
     // Create the Error, ErrorKind, ResultExt, and Result types
     error_chain! {}
 }

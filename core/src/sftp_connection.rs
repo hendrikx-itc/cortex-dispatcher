@@ -6,6 +6,9 @@ use std::thread;
 use std::time;
 
 use ssh2::Session;
+use serde_derive::{Deserialize, Serialize};
+
+use error_chain::error_chain;
 
 use log::{debug, error, info};
 

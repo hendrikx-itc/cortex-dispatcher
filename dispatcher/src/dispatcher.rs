@@ -6,10 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-#[cfg(target_os = "linux")]
-extern crate inotify;
-
-extern crate lapin;
+use lapin;
 use lapin::ConnectionProperties;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -23,6 +20,8 @@ use r2d2_postgres::PostgresConnectionManager;
 use signal_hook_tokio::Signals;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
+
+use log::{error, debug, info};
 
 use cortex_core::{wait_for, SftpDownload, StopCmd};
 

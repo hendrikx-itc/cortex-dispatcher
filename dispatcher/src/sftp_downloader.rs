@@ -6,9 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
+use log::{debug, info, error};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 
 use retry::{delay::Fixed, retry, OperationResult};
+
+use error_chain::error_chain;
 
 use crate::base_types::MessageResponse;
 use crate::event::FileEvent;

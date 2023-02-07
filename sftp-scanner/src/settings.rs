@@ -1,8 +1,9 @@
 use regex::Regex;
 use std::path::PathBuf;
 
-extern crate regex;
-extern crate serde_regex;
+use regex;
+use serde_regex;
+use serde_derive::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommandQueue {

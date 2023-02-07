@@ -9,8 +9,10 @@ use chrono::prelude::{DateTime, Utc};
 
 use crate::base_types;
 
-extern crate regex;
-extern crate serde_regex;
+use serde_derive::{Deserialize, Serialize};
+
+use regex;
+use serde_regex;
 
 fn default_false() -> bool {
     false

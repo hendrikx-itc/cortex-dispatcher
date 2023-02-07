@@ -1,6 +1,7 @@
 use std::{fmt, fmt::Display, time};
 
-extern crate lapin;
+use log::{debug, info, error};
+use lapin;
 
 use futures::StreamExt;
 

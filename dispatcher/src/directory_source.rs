@@ -10,13 +10,13 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
 
+use log::{error, debug, info};
+
 #[cfg(target_os = "linux")]
-extern crate inotify;
+use inotify;
 
 #[cfg(target_os = "linux")]
 use inotify::{EventMask, Inotify, WatchMask};
-
-extern crate lapin;
 
 use sha2::{Digest, Sha256};
 

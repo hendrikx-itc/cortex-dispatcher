@@ -1,4 +1,5 @@
-use prometheus::IntCounterVec;
+use prometheus::{IntCounterVec, register_int_counter_vec};
+use lazy_static::lazy_static;
 
 lazy_static! {
     pub static ref FILE_DOWNLOAD_COUNTER_VEC: IntCounterVec = register_int_counter_vec!(

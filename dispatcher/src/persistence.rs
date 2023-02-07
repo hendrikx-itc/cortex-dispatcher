@@ -6,6 +6,7 @@ use chrono::prelude::*;
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use r2d2_postgres::PostgresConnectionManager;
 use tokio_postgres::Socket;
+use log::error;
 
 use crate::base_types::FileInfo;
 

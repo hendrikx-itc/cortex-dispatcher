@@ -1,10 +1,9 @@
 use std::io::Write;
 
-extern crate config;
+use config;
 
-#[macro_use]
-extern crate log;
-extern crate env_logger;
+use log::{info, error};
+use env_logger;
 
 mod base_types;
 mod directory_source;
@@ -17,27 +16,6 @@ mod persistence;
 mod settings;
 mod sftp_command_consumer;
 mod sftp_downloader;
-
-#[macro_use]
-extern crate serde_derive;
-
-extern crate postgres;
-
-extern crate chrono;
-extern crate serde_yaml;
-extern crate sha2;
-extern crate tee;
-
-#[macro_use]
-extern crate error_chain;
-
-#[macro_use]
-extern crate prometheus;
-
-#[macro_use]
-extern crate lazy_static;
-
-extern crate cortex_core;
 
 use clap::Parser;
 

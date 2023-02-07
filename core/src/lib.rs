@@ -1,16 +1,12 @@
 use std::fmt;
 use std::thread;
 
-#[macro_use]
-extern crate serde_derive;
+use serde_derive::{Deserialize, Serialize};
 
-extern crate chrono;
+use chrono;
 use chrono::prelude::*;
 
-#[macro_use]
-extern crate error_chain;
-
-extern crate log;
+use log;
 
 use log::{error, info};
 

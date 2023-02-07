@@ -6,6 +6,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use chrono::prelude::{DateTime, Utc};
 
+use log::{error, debug};
+
 use crate::event::FileEvent;
 use crate::settings;
 use lapin::options::BasicPublishOptions;
