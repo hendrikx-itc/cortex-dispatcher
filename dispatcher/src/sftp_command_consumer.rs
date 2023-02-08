@@ -1,14 +1,17 @@
 use std::{fmt, fmt::Display, time};
 
+use deadpool_lapin::lapin::message::Delivery;
 use log::{debug, info, error};
-use lapin;
 
 use futures::StreamExt;
 
-use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions};
-use lapin::types::FieldTable;
+use deadpool_lapin::lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions};
+use deadpool_lapin::lapin::types::FieldTable;
+use deadpool_lapin::lapin::{ConnectionProperties, Consumer};
+use deadpool_lapin::lapin;
 
 use crossbeam_channel::{Sender, TrySendError};
+use stream_reconnect::ReconnectStream;
 
 use crate::base_types::MessageResponse;
 use crate::metrics;
@@ -40,15 +43,15 @@ impl Display for ConsumeError {
 
 async fn setup_message_responder(
     channel: lapin::Channel,
-    mut ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
+    ack_receiver: async_channel::Receiver<MessageResponse>,
 ) -> Result<(), ConsumeError> {
-    while let Some(message_response) = ack_receiver.recv().await {
+    while let Ok(message_response) = ack_receiver.recv().await {
         match message_response {
             MessageResponse::Ack { delivery_tag } => {
                 channel
                     .basic_ack(delivery_tag, BasicAckOptions { multiple: false })
                     .await?;
-                debug!("Sent Ack for {}", delivery_tag);
+                debug!("Sent Ack for {delivery_tag}");
             }
             MessageResponse::Nack { delivery_tag } => {
                 channel
@@ -60,7 +63,7 @@ async fn setup_message_responder(
                         },
                     )
                     .await?;
-                debug!("Sent Nack for {}", delivery_tag);
+                debug!("Sent Nack for {delivery_tag}");
             }
         }
     }
@@ -68,48 +71,91 @@ async fn setup_message_responder(
     Ok(())
 }
 
-pub async fn start(
-    amqp_channel: lapin::Channel,
-    sftp_source_name: String,
-    ack_receiver: tokio::sync::mpsc::Receiver<MessageResponse>,
-    command_sender: Sender<(u64, SftpDownload)>,
-) -> Result<(), ConsumeError> {
-    let sftp_source_name_2 = sftp_source_name.clone();
+struct MessageStream(Consumer);
 
-    debug!("Creating SFTP command AMQP channel '{}'", &sftp_source_name);
+#[derive(Clone)]
+struct AMQPQueStreamConfig {
+    pub address: String,
+    pub queue_name: String,
+    ack_receiver: async_channel::Receiver<MessageResponse>,
+}
 
-    let id = amqp_channel.id();
-    info!("Created SFTP command AMQP channel with id {}", id);
+impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error> for MessageStream {
+    fn establish(config: AMQPQueStreamConfig) -> std::pin::Pin<Box<dyn futures::Future<Output = Result<Self, lapin::Error>> + Send>> {
+        Box::pin(async move {
+            let amqp_client = lapin::Connection::connect(
+                &config.address,
+                ConnectionProperties::default(),
+            )
+            .await?;
+        
+            let amqp_channel = amqp_client.create_channel().await?;
+        
+            let id = amqp_channel.id();
+            info!("Created SFTP command AMQP channel with id {id}");
+        
+            tokio::spawn(setup_message_responder(amqp_channel.clone(), config.ack_receiver));
+        
+            let consumer_tag = "cortex-dispatcher";
+        
+            // Setup command consuming stream
+            let mut consumer = amqp_channel
+                .basic_consume(
+                    &config.queue_name,
+                    &consumer_tag,
+                    BasicConsumeOptions::default(),
+                    FieldTable::default(),
+                )
+                .await?;
 
-    tokio::spawn(setup_message_responder(amqp_channel.clone(), ack_receiver));
+            Ok(MessageStream(consumer))
+        })
+    }
 
-    let consumer_tag = "cortex-dispatcher";
-    let queue_name = format!("source.{}", &sftp_source_name);
-
-    // Setup command consuming stream
-    let mut consumer = amqp_channel
-        .basic_consume(
-            &queue_name,
-            &consumer_tag,
-            BasicConsumeOptions::default(),
-            FieldTable::default(),
+    // The following errors are considered disconnect errors.
+    fn is_write_disconnect_error(&self, err: &lapin::Error) -> bool {
+        matches!(
+            err,
+            lapin::Error::IOError(_) | lapin::Error::ProtocolError(_)
         )
-        .await?;
+    }
 
-    while let Some(message) = consumer.next().await {
+    // If an `Err` is read, then there might be an disconnection.
+    fn is_read_disconnect_error(&self, item: &Result<Delivery, lapin::Error>) -> bool {
+        if let Err(e) = item {
+            self.is_write_disconnect_error(e)
+        } else {
+            false
+        }
+    }
+
+    // Return "Exhausted" if all retry attempts are failed.
+    fn exhaust_err() -> lapin::Error {
+        lapin::Error::IOError(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, "Exhausted")))
+    }
+}
+
+type ReconnectMessageStream = ReconnectStream<MessageStream, AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error>;
+
+struct MessageProcessor {
+    pub command_sender: Sender<(u64, SftpDownload)>,
+    pub sftp_source_name: String,
+}
+
+impl MessageProcessor {
+    pub async fn process_message(&self, message: Result<Delivery, lapin::Error>) -> Result<(), String> {
         let delivery = match message {
             Ok(v) => v,
             Err(e) => {
-                error!("Could not read AMQP message: {}", e);
-                continue;
+                error!("Could not read AMQP message: {e}");
+                return Ok(());
             }
         };
 
-        let action_command_sender = command_sender.clone();
+        let action_command_sender = self.command_sender.clone();
 
-        debug!("Received message from AMQP queue '{}'", &queue_name);
         metrics::MESSAGES_RECEIVED_COUNTER
-            .with_label_values(&[&sftp_source_name_2])
+            .with_label_values(&[&self.sftp_source_name])
             .inc();
 
         let deserialize_result: serde_json::Result<SftpDownload> =
@@ -134,7 +180,7 @@ pub async fn start(
         if let Err(e) = result {
             let requeue_message = match e {
                 ConsumeError::DeserializeError => {
-                    error!("Error deserializing message: {}", e);
+                    error!("Error deserializing message: {e}");
                     false
                 }
                 ConsumeError::ChannelFull => {
@@ -154,15 +200,50 @@ pub async fn start(
                 }
             };
 
-            amqp_channel
-                .basic_nack(
-                    delivery.delivery_tag,
-                    BasicNackOptions {
-                        multiple: false,
-                        requeue: requeue_message,
-                    },
-                )
-                .await?;
+            // amqp_channel
+            //     .basic_nack(
+            //         delivery.delivery_tag,
+            //         BasicNackOptions {
+            //             multiple: false,
+            //             requeue: requeue_message,
+            //         },
+            //     )
+            //     .await?;
+        }
+
+        Ok(())
+    }
+}
+
+pub async fn start(
+    amqp_address: String,
+    sftp_source_name: String,
+    ack_receiver: async_channel::Receiver<MessageResponse>,
+    command_sender: Sender<(u64, SftpDownload)>,
+) -> Result<(), ConsumeError> {
+    let queue_name = format!("source.{}", &sftp_source_name);
+
+    let amqpStreamConfig = AMQPQueStreamConfig {
+        address: amqp_address.clone(),
+        queue_name: queue_name.clone(),
+        ack_receiver: ack_receiver.clone(),
+    };
+
+    let consumer = ReconnectMessageStream::connect(amqpStreamConfig).await?;
+
+    let message_processor = MessageProcessor {
+        command_sender,
+        sftp_source_name: sftp_source_name.clone(),
+    };
+
+    while let Some(message) = consumer.next().await {
+        match message_processor.process_message(message).await {
+            Ok(_) => {
+                debug!("Received message from AMQP queue '{}'", &queue_name);
+            },
+            Err(e) => {
+                error!("Could not process message: {e}")
+            }
         }
     }
 

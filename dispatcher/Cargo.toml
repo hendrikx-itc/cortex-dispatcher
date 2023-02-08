@@ -32,7 +32,7 @@ clap = { version = "4.1", features = ["cargo", "derive"] }
 ssh2 = "0.9"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
-lapin = "2.1"
+deadpool-lapin = "0.10"
 tokio = { version = "1.25", features = ["full"] }
 anyhow = "1.0"
 thiserror = "1.0"
@@ -61,3 +61,5 @@ retry = "2.0"
 proctitle = "0.1"
 error-chain = "0.12"
 futures-retry = "0.6"
+stream-reconnect = { version = "0.3", default-features = false, features = ["tokio"] }
+async-channel = "1.8"

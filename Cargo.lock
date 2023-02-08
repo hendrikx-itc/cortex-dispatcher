@@ -813,6 +813,7 @@ dependencies = [
  "actix-http",
  "actix-web",
  "anyhow",
+ "async-channel",
  "bb8",
  "bb8-postgres",
  "chrono",
@@ -820,13 +821,13 @@ dependencies = [
  "config",
  "cortex-core",
  "crossbeam-channel",
+ "deadpool-lapin",
  "env_logger",
  "error-chain",
  "futures 0.3.26",
  "futures-retry",
  "futures-util",
  "inotify",
- "lapin",
  "lazy_static",
  "log",
  "postgres",
@@ -845,6 +846,7 @@ dependencies = [
  "signal-hook",
  "signal-hook-tokio",
  "ssh2",
+ "stream-reconnect",
  "tee",
  "tera",
  "thiserror",
@@ -975,6 +977,39 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "deadpool"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "421fe0f90f2ab22016f32a9881be5134fdd71c65298917084b0c7477cbc3856e"
+dependencies = [
+ "async-trait",
+ "deadpool-runtime",
+ "num_cpus",
+ "retain_mut",
+ "tokio 1.25.0",
+]
+
+[[package]]
+name = "deadpool-lapin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20ed9da47e51ead8acbf364b4c5c311fb4d7dd3efa9dab91ee41cac05b59f313"
+dependencies = [
+ "deadpool",
+ "lapin",
+ "tokio-executor-trait",
+]
+
+[[package]]
+name = "deadpool-runtime"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaa37046cc0f6c3cc6090fbdbf73ef0b8ef4cfcc37f6befc0020f63e8cf121e1"
+dependencies = [
+ "tokio 1.25.0",
 ]
 
 [[package]]
@@ -2401,6 +2436,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "456c603be3e8d448b072f410900c09faf164fbce2d480456f50eea6e25f9c848"
 
 [[package]]
+name = "retain_mut"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4389f1d5789befaf6029ebd9f7dac4af7f7e3d61b69d4f30e2ac02b57e7712b0"
+
+[[package]]
 name = "retry"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2790,6 +2831,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "stream-reconnect"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9831f47a89f0d699b3a0c74ae7c48b30974ccca14a571f342a0eb41b6f7f2a56"
+dependencies = [
+ "futures 0.3.26",
+ "log",
+ "tokio 1.25.0",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2983,6 +3035,17 @@ dependencies = [
  "socket2",
  "tokio-macros",
  "windows-sys 0.42.0",
+]
+
+[[package]]
+name = "tokio-executor-trait"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b78630814cbcdf383c949bd8f17c3cfe3142e93b0d5801bdcae4b2a5275db7e"
+dependencies = [
+ "async-trait",
+ "executor-trait",
+ "tokio 1.25.0",
 ]
 
 [[package]]
