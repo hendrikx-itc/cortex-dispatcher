@@ -7,7 +7,7 @@ use futures::StreamExt;
 
 use deadpool_lapin::lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions};
 use deadpool_lapin::lapin::types::FieldTable;
-use deadpool_lapin::lapin::{ConnectionProperties, Consumer};
+use deadpool_lapin::lapin::ConnectionProperties;
 use deadpool_lapin::lapin;
 
 use crossbeam_channel::{Sender, TrySendError};
@@ -71,16 +71,13 @@ async fn setup_message_responder(
     Ok(())
 }
 
-struct MessageStream(Consumer);
-
 #[derive(Clone)]
 struct AMQPQueStreamConfig {
     pub address: String,
     pub queue_name: String,
-    ack_receiver: async_channel::Receiver<MessageResponse>,
 }
 
-impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error> for MessageStream {
+impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error> for lapin::Consumer {
     fn establish(config: AMQPQueStreamConfig) -> std::pin::Pin<Box<dyn futures::Future<Output = Result<Self, lapin::Error>> + Send>> {
         Box::pin(async move {
             let amqp_client = lapin::Connection::connect(
@@ -93,13 +90,11 @@ impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, la
         
             let id = amqp_channel.id();
             info!("Created SFTP command AMQP channel with id {id}");
-        
-            tokio::spawn(setup_message_responder(amqp_channel.clone(), config.ack_receiver));
-        
+       
             let consumer_tag = "cortex-dispatcher";
         
             // Setup command consuming stream
-            let mut consumer = amqp_channel
+            let consumer = amqp_channel
                 .basic_consume(
                     &config.queue_name,
                     &consumer_tag,
@@ -108,7 +103,7 @@ impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, la
                 )
                 .await?;
 
-            Ok(MessageStream(consumer))
+            Ok(consumer)
         })
     }
 
@@ -135,8 +130,9 @@ impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, la
     }
 }
 
-type ReconnectMessageStream = ReconnectStream<MessageStream, AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error>;
+type ReconnectMessageStream = ReconnectStream<lapin::Consumer, AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error>;
 
+#[derive(Clone)]
 struct MessageProcessor {
     pub command_sender: Sender<(u64, SftpDownload)>,
     pub sftp_source_name: String,
@@ -200,7 +196,11 @@ impl MessageProcessor {
                 }
             };
 
-            // amqp_channel
+            if requeue_message {
+                debug!("Should requeue message");
+            }
+
+            // self.amqp_channel
             //     .basic_nack(
             //         delivery.delivery_tag,
             //         BasicNackOptions {
@@ -208,7 +208,8 @@ impl MessageProcessor {
             //             requeue: requeue_message,
             //         },
             //     )
-            //     .await?;
+            //     .await
+            //     .map_err(|e| format!("Error sending nack: {e}"))?;
         }
 
         Ok(())
@@ -218,26 +219,26 @@ impl MessageProcessor {
 pub async fn start(
     amqp_address: String,
     sftp_source_name: String,
-    ack_receiver: async_channel::Receiver<MessageResponse>,
     command_sender: Sender<(u64, SftpDownload)>,
 ) -> Result<(), ConsumeError> {
     let queue_name = format!("source.{}", &sftp_source_name);
 
-    let amqpStreamConfig = AMQPQueStreamConfig {
+    let amqp_stream_config = AMQPQueStreamConfig {
         address: amqp_address.clone(),
         queue_name: queue_name.clone(),
-        ack_receiver: ack_receiver.clone(),
     };
 
-    let consumer = ReconnectMessageStream::connect(amqpStreamConfig).await?;
+    let mut consumer = ReconnectMessageStream::connect(amqp_stream_config).await?;
 
     let message_processor = MessageProcessor {
         command_sender,
         sftp_source_name: sftp_source_name.clone(),
     };
 
+    let m = message_processor.clone();
+
     while let Some(message) = consumer.next().await {
-        match message_processor.process_message(message).await {
+        match m.process_message(message).await {
             Ok(_) => {
                 debug!("Received message from AMQP queue '{}'", &queue_name);
             },

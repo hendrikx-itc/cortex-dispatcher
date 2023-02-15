@@ -256,6 +256,13 @@ where
     for channels in sftp_source_senders {
         let (ack_sender, ack_receiver) = async_channel::bounded(100);
 
+        // For now only log the ack messages
+        tokio::spawn(ack_receiver
+            .for_each(|ack_message| async move {
+                debug!("Ack received from SftpDownloader: {:?}", &ack_message);
+            })
+        );
+
         for n in 0..channels.sftp_source.thread_count {
             debug!(
                 "Starting SFTP download thread '{}'",
@@ -289,7 +296,6 @@ where
         let consume_future = sftp_command_consumer::start(
             settings.command_queue.address.clone(),
             channels.sftp_source.name.clone(),
-            ack_receiver,
             channels.cmd_sender.clone(),
         );
 
