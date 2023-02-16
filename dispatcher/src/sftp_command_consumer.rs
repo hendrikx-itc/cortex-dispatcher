@@ -1,11 +1,11 @@
-use std::{fmt, fmt::Display, time};
+use std::{fmt, fmt::Display};
 
 use deadpool_lapin::lapin::message::Delivery;
 use log::{debug, info, error};
 
 use futures::StreamExt;
 
-use deadpool_lapin::lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions};
+use deadpool_lapin::lapin::options::BasicConsumeOptions;
 use deadpool_lapin::lapin::types::FieldTable;
 use deadpool_lapin::lapin::ConnectionProperties;
 use deadpool_lapin::lapin;
@@ -13,16 +13,12 @@ use deadpool_lapin::lapin;
 use crossbeam_channel::{Sender, TrySendError};
 use stream_reconnect::ReconnectStream;
 
-use crate::base_types::MessageResponse;
 use crate::metrics;
 
 use cortex_core::SftpDownload;
 
 #[derive(Clone, Debug)]
 pub enum ConsumeError {
-    ChannelFull,
-    ChannelDisconnected,
-    DeserializeError,
     RabbitMQError(lapin::Error),
 }
 
@@ -36,39 +32,8 @@ impl Display for ConsumeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ConsumeError::RabbitMQError(ref e) => e.fmt(f),
-            _ => f.write_str("ConsumeError"),
         }
     }
-}
-
-async fn setup_message_responder(
-    channel: lapin::Channel,
-    ack_receiver: async_channel::Receiver<MessageResponse>,
-) -> Result<(), ConsumeError> {
-    while let Ok(message_response) = ack_receiver.recv().await {
-        match message_response {
-            MessageResponse::Ack { delivery_tag } => {
-                channel
-                    .basic_ack(delivery_tag, BasicAckOptions { multiple: false })
-                    .await?;
-                debug!("Sent Ack for {delivery_tag}");
-            }
-            MessageResponse::Nack { delivery_tag } => {
-                channel
-                    .basic_nack(
-                        delivery_tag,
-                        BasicNackOptions {
-                            multiple: false,
-                            requeue: false,
-                        },
-                    )
-                    .await?;
-                debug!("Sent Nack for {delivery_tag}");
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(Clone)]
@@ -140,13 +105,10 @@ struct MessageProcessor {
 
 impl MessageProcessor {
     pub async fn process_message(&self, message: Result<Delivery, lapin::Error>) -> Result<(), String> {
-        let delivery = match message {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Could not read AMQP message: {e}");
-                return Ok(());
-            }
-        };
+        let delivery = message
+            .map_err(|e| {
+                format!("Could not read AMQP message: {e}")
+            })?;
 
         let action_command_sender = self.command_sender.clone();
 
@@ -154,63 +116,20 @@ impl MessageProcessor {
             .with_label_values(&[&self.sftp_source_name])
             .inc();
 
-        let deserialize_result: serde_json::Result<SftpDownload> =
-            serde_json::from_slice(delivery.data.as_slice());
+        let sftp_download: SftpDownload =
+            serde_json::from_slice(delivery.data.as_slice())
+            .map_err(|e| {
+                format!("Error deserializing message: {e}")
+            })?;
 
-        let result = match deserialize_result {
-            Ok(sftp_download) => {
-                let send_result =
-                    action_command_sender.try_send((delivery.delivery_tag, sftp_download));
-
-                match send_result {
-                    Ok(_) => Ok(()),
-                    Err(e) => match e {
-                        TrySendError::Disconnected(_) => Err(ConsumeError::ChannelDisconnected),
-                        TrySendError::Full(_) => Err(ConsumeError::ChannelFull),
-                    },
+        action_command_sender
+            .try_send((delivery.delivery_tag, sftp_download))
+            .map_err(|e| {
+                match e {
+                    TrySendError::Disconnected(_) => format!("Channel disconnected"),
+                    TrySendError::Full(_) => format!("Could not send command on channel: channel full"),
                 }
-            }
-            Err(_e) => Err(ConsumeError::DeserializeError),
-        };
-
-        if let Err(e) = result {
-            let requeue_message = match e {
-                ConsumeError::DeserializeError => {
-                    error!("Error deserializing message: {e}");
-                    false
-                }
-                ConsumeError::ChannelFull => {
-                    debug!("Could not send command on channel: channel full");
-                    tokio::time::sleep(time::Duration::from_millis(200)).await;
-                    // Put the message back on the queue, because we could temporarily not process
-                    // it
-                    true
-                }
-                ConsumeError::ChannelDisconnected => {
-                    error!("Channel disconnected");
-                    true
-                }
-                ConsumeError::RabbitMQError(e) => {
-                    error!("{}", e);
-                    true
-                }
-            };
-
-            if requeue_message {
-                debug!("Should requeue message");
-            }
-
-            // self.amqp_channel
-            //     .basic_nack(
-            //         delivery.delivery_tag,
-            //         BasicNackOptions {
-            //             multiple: false,
-            //             requeue: requeue_message,
-            //         },
-            //     )
-            //     .await
-            //     .map_err(|e| format!("Error sending nack: {e}"))?;
-        }
+            })?;
 
         Ok(())
     }

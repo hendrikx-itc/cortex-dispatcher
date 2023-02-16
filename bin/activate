@@ -33,11 +33,11 @@ fi
 export PATH=$WORKSPACE/bin:$PATH
 
 function start-dev-stack {
-    docker-compose -f "${WORKSPACE}/docker-compose.yml" up -d
+    docker compose -f "${WORKSPACE}/docker-compose.yml" up -d
 }
 
 function stop-dev-stack {
-    docker-compose -f "${WORKSPACE}/docker-compose.yml" stop
+    docker compose -f "${WORKSPACE}/docker-compose.yml" stop
 }
 
 function help {
