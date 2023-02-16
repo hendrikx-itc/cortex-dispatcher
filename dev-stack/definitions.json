@@ -1,0 +1,60 @@
+{
+  "bindings": [],
+  "exchanges": [],
+  "global_parameters": [],
+  "parameters": [],
+  "permissions": [
+    {
+      "configure": ".*",
+      "read": ".*",
+      "user": "guest",
+      "vhost": "/",
+      "write": ".*"
+    }
+  ],
+  "policies": [],
+  "queues": [
+        {
+            "arguments":{
+                "x-queue-type":"classic"
+            },
+            "auto_delete":false,
+            "durable":true,
+            "name":"source.local-red",
+            "type":"classic","vhost":"/"
+        },
+        {
+            "arguments":{
+                "x-queue-type":"classic"
+            },
+            "auto_delete":false,
+            "durable":true,
+            "name":"source.local-blue",
+            "type":"classic","vhost":"/"
+        }
+  ],
+  "rabbit_version": "3.11.9",
+  "rabbitmq_version": "3.11.9",
+  "topic_permissions": [],
+  "users": [
+    {
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "limits": {},
+      "name": "guest",
+      "password_hash": "MO5CzibUcF+oV5ex5xvfCp03anaWk+sdVUCjV7VqjJaRTdhY",
+      "tags": [
+        "administrator"
+      ]
+    }
+  ],
+  "vhosts": [
+    {
+      "limits": [],
+      "metadata": {
+        "description": "Default virtual host",
+        "tags": []
+      },
+      "name": "/"
+    }
+  ]
+}

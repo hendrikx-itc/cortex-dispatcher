@@ -7,13 +7,13 @@ volumes:
 
 services:
   rabbitmq:
-    build: dev-stack/rabbitmq
+    image: rabbitmq:3.11-management
     ports:
       - 127.0.0.1:5672:5672
       - 127.0.0.1:15672:15672
     volumes:
-      - ./dev-stack/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
-      - ./dev-stack/definitions.conf:/etc/rabbitmq/definitions.conf
+      - ./dev-stack/rabbitmq.conf:/etc/rabbitmq/conf.d/20-dev.conf
+      - ./dev-stack/definitions.json:/etc/rabbitmq/definitions.json
       - rabbitmq-database:/var/lib/rabbitmq
 
   sftp:
