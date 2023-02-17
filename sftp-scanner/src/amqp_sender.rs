@@ -43,7 +43,8 @@ pub async fn start_sender(
                     )
                     .await
                     .expect("basic_publish");
-                debug!("Sent on AMQP");
+
+                debug!("Sent on AMQP with routing key '{}'", &routing_key);
             }
             Err(e) => match e {
                 RecvTimeoutError::Timeout => (),

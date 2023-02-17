@@ -1,7 +1,6 @@
 # Some comment
 command_queue:
   address: "amqp://127.0.0.1:5672/%2f"
-  queue_name: cortex-dispatcher 
 
 sftp_sources:
   - name: local-red
