@@ -6,8 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use lapin;
-use lapin::ConnectionProperties;
+use deadpool_lapin::{Config, Runtime};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::oneshot;
@@ -31,7 +30,6 @@ use crate::base_types::{Connection, RabbitMQNotify, Source, Target};
 use crate::directory_source::start_directory_sources;
 use crate::directory_source::{start_directory_sweep, start_local_intake_thread};
 
-use crate::base_types::MessageResponse;
 use crate::directory_target::handle_file_event;
 use crate::event::{EventDispatcher, FileEvent};
 use crate::local_storage::LocalStorage;
@@ -95,16 +93,22 @@ pub async fn target_directory_handler<T>(
                     let fut = async move {
                         debug!("Connecting notifier to directory target stream");
 
-                        let connect_result = lapin::Connection::connect(
-                            &notify_conf.address,
-                            lapin::ConnectionProperties::default(),
-                        )
-                        .await;
+                        let mut cfg = Config::default();
+                        cfg.url = Some(notify_conf.address.clone());
+                        let pool = match cfg.create_pool(Some(Runtime::Tokio1)) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("Error creating pool for AMQP server: {e}");
+                                return;
+                            }
+                        };
+
+                        let connect_result = pool.get().await;
 
                         let connection = match connect_result {
                             Ok(c) => c,
                             Err(e) => {
-                                error!("Error connecting to AMQP server: {}", e);
+                                error!("Error connecting to AMQP server: {e}");
                                 return;
                             }
                         };
@@ -114,7 +118,7 @@ pub async fn target_directory_handler<T>(
                         let amqp_channel = match amqp_channel_result {
                             Ok(c) => c,
                             Err(e) => {
-                                error!("Error creating AMQP channel: {}", e);
+                                error!("Error creating AMQP channel: {e}");
                                 return;
                             }
                         };
@@ -243,12 +247,6 @@ where
         &settings.command_queue.address
     );
 
-    let amqp_client = lapin::Connection::connect(
-        &settings.command_queue.address,
-        ConnectionProperties::default(),
-    )
-    .await?;
-
     debug!("Connected to AMQP service");
 
     let mut stream_join_handles: Vec<
@@ -256,7 +254,14 @@ where
     > = Vec::new();
 
     for channels in sftp_source_senders {
-        let (ack_sender, ack_receiver) = tokio::sync::mpsc::channel::<MessageResponse>(100);
+        let (ack_sender, ack_receiver) = async_channel::bounded(100);
+
+        // For now only log the ack messages
+        tokio::spawn(ack_receiver
+            .for_each(|ack_message| async move {
+                debug!("Ack received from SftpDownloader: {:?}", &ack_message);
+            })
+        );
 
         for n in 0..channels.sftp_source.thread_count {
             debug!(
@@ -286,14 +291,11 @@ where
             );
         }
 
-        let amqp_channel = amqp_client.create_channel().await?;
-
         debug!("Spawning AMQP stream task '{}'", &channels.sftp_source.name);
 
         let consume_future = sftp_command_consumer::start(
-            amqp_channel,
+            settings.command_queue.address.clone(),
             channels.sftp_source.name.clone(),
-            ack_receiver,
             channels.cmd_sender.clone(),
         );
 

@@ -48,11 +48,11 @@ pub struct Args {
     config: Option<String>,
 
     /// Show example configuration file
-    #[arg(short, long)]
+    #[arg(long)]
     sample_config: bool,
 
     /// Run in service mode
-    #[arg(short, long)]
+    #[arg(long)]
     service: bool,
 }
 

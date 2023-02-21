@@ -10,8 +10,8 @@ use log::{error, debug};
 
 use crate::event::FileEvent;
 use crate::settings;
-use lapin::options::BasicPublishOptions;
-use lapin::{BasicProperties, Channel};
+use deadpool_lapin::lapin::options::BasicPublishOptions;
+use deadpool_lapin::lapin::{BasicProperties, Channel};
 
 pub struct RabbitMQNotify {
     pub message_template: String,

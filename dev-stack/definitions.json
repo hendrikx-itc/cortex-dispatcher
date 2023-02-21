@@ -1,0 +1,75 @@
+{
+  "bindings": [
+    {
+      "arguments": {},
+      "destination": "source.local-blue",
+      "destination_type": "queue",
+      "routing_key": "source.local-blue",
+      "source": "amq.direct",
+      "vhost": "/"
+    },
+    {
+      "arguments": {},
+      "destination": "source.local-red",
+      "destination_type": "queue",
+      "routing_key": "source.local-red",
+      "source": "amq.direct",
+      "vhost": "/"
+    }
+  ],
+  "exchanges": [],
+  "global_parameters": [],
+  "parameters": [],
+  "permissions": [
+    {
+      "configure": ".*",
+      "read": ".*",
+      "user": "guest",
+      "vhost": "/",
+      "write": ".*"
+    }
+  ],
+  "policies": [],
+  "queues": [
+    {
+      "arguments": {},
+      "auto_delete": false,
+      "durable": true,
+      "name": "source.local-blue",
+      "type": "classic",
+      "vhost": "/"
+    },
+    {
+      "arguments": {},
+      "auto_delete": false,
+      "durable": true,
+      "name": "source.local-red",
+      "type": "classic",
+      "vhost": "/"
+    }
+  ],
+  "rabbit_version": "3.11.9",
+  "rabbitmq_version": "3.11.9",
+  "topic_permissions": [],
+  "users": [
+    {
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "limits": {},
+      "name": "guest",
+      "password_hash": "TyzK4TqTfwBGtChuwewjpJkJZTaF7scz6J+l6Gp20+xBQiMi",
+      "tags": [
+        "administrator"
+      ]
+    }
+  ],
+  "vhosts": [
+    {
+      "limits": [],
+      "metadata": {
+        "description": "Default virtual host",
+        "tags": []
+      },
+      "name": "/"
+    }
+  ]
+}

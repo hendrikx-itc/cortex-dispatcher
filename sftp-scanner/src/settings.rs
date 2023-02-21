@@ -8,7 +8,6 @@ use serde_derive::{Serialize, Deserialize};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommandQueue {
     pub address: String,
-    pub queue_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -57,7 +56,6 @@ impl Default for Settings {
         Settings {
             command_queue: CommandQueue {
                 address: "127.0.0.1:5672".parse().unwrap(),
-                queue_name: "cortex-dispatcher".to_string(),
             },
             sftp_sources: vec![
                 SftpSource {

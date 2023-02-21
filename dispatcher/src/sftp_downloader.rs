@@ -56,7 +56,7 @@ where
     pub fn start(
         stop: Arc<AtomicBool>,
         receiver: Receiver<(u64, SftpDownload)>,
-        ack_sender: tokio::sync::mpsc::Sender<MessageResponse>,
+        ack_sender: async_channel::Sender<MessageResponse>,
         config: settings::SftpSource,
         sender: tokio::sync::mpsc::UnboundedSender<FileEvent>,
         local_storage: LocalStorage<T>,
@@ -228,33 +228,30 @@ where
             }
         }
 
-        let open_result = sftp.open(&remote_path);
-
-        let mut remote_file = match open_result {
-            Ok(remote_file) => remote_file,
-            Err(e) => {
+        let mut remote_file = sftp
+            .open(&remote_path)
+            .map_err(|e| {
                 match e.code() {
                     ssh2::ErrorCode::Session(_) => {
                         // Probably a fault in the SFTP connection
-                        return Err(ErrorKind::DisconnectedError.into());
+                        ErrorKind::DisconnectedError.into()
                     }
                     ssh2::ErrorCode::SFTP(2) => {
                         let delete_result = self.persistence.delete_sftp_download_file(msg.id);
 
                         match delete_result {
-                            Ok(_) => return Err(ErrorKind::NoSuchFileError.into()),
+                            Ok(_) => ErrorKind::NoSuchFileError.into(),
                             Err(e) => {
-                                return Err(Error::with_chain(
+                                Error::with_chain(
                                     e,
                                     "Error removing record of non-existent remote file",
-                                ))
+                                )
                             }
                         }
                     }
-                    _ => return Err(Error::with_chain(e, "Error opening remote file")),
+                    _ => Error::with_chain(e, "Error opening remote file"),
                 }
-            }
-        };
+            })?;
 
         let stat = remote_file.stat().map_err(|e| match e.code() {
             ssh2::ErrorCode::Session(_) => {
@@ -357,16 +354,15 @@ where
         let file_size = i64::try_from(bytes_copied)
             .map_err(|e| Error::with_chain(e, "Error converting bytes copied to i64"))?;
 
-        let file_id = match self.persistence.insert_file(
-            &self.sftp_source.name,
-            &local_path.to_string_lossy(),
-            &modified,
-            file_size,
-            Some(hash.clone()),
-        ) {
-            Ok(id) => id,
-            Err(_) => return Err(ErrorKind::PersistenceError.into()),
-        };
+        let file_id = self.persistence
+            .insert_file(
+                &self.sftp_source.name,
+                &local_path.to_string_lossy(),
+                &modified,
+                file_size,
+                Some(hash.clone()),
+            )
+            .map_err(|_| ErrorKind::PersistenceError)?;
 
         self.persistence
             .set_sftp_download_file(msg.id, file_id)
