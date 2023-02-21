@@ -57,13 +57,17 @@ impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, la
             info!("Created SFTP command AMQP channel with id {id}");
        
             let consumer_tag = "cortex-dispatcher";
+
+            let mut options = BasicConsumeOptions::default();
+
+            options.no_ack = true;
         
             // Setup command consuming stream
             let consumer = amqp_channel
                 .basic_consume(
                     &config.queue_name,
                     &consumer_tag,
-                    BasicConsumeOptions::default(),
+                    options,
                     FieldTable::default(),
                 )
                 .await?;
