@@ -6,57 +6,115 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use chrono::prelude::{DateTime, Utc};
 
-use log::{error, debug};
+use deadpool_lapin::{Config, Runtime};
+use serde_json::json;
+
+use log::error;
 
 use crate::event::FileEvent;
-use crate::settings;
+use crate::settings::{self, RabbitMQNotify};
 use deadpool_lapin::lapin::options::BasicPublishOptions;
 use deadpool_lapin::lapin::{BasicProperties, Channel};
 
-pub struct RabbitMQNotify {
+pub struct RabbitMQNotifier {
+    pub address: String,
     pub message_template: String,
     pub exchange: String,
     pub routing_key: String,
+    channel: Option<Channel>,
 }
 
-impl RabbitMQNotify {
-    pub async fn notify(&self, channel: &Channel, file_event: FileEvent) {
-        let template_name = "notification";
-        let exchange = self.exchange.clone();
-        let routing_key = self.routing_key.clone();
-
-        let mut tera = Tera::default();
-
-        if let Err(e) = tera.add_raw_template(template_name, &self.message_template) {
-            error!("Error adding template: {}", e);
+impl From<&RabbitMQNotify> for RabbitMQNotifier {
+    fn from(value: &RabbitMQNotify) -> Self {
+        RabbitMQNotifier {
+            address: value.address.clone(),
+            message_template: value.message_template.clone(),
+            exchange: value.exchange.clone(),
+            routing_key: value.routing_key.clone(),
+            channel: None,
         }
+    }
+}
 
-        let mut context = Context::new();
-        context.insert("file_path", &file_event.path);
+impl RabbitMQNotifier {
+    async fn connect(&mut self) -> Result<Channel, String> {
+        let mut cfg = Config::default();
+        cfg.url = Some(self.address.clone());
+        let pool = cfg
+            .create_pool(Some(Runtime::Tokio1))
+            .map_err(|e| format!("Error creating pool for AMQP server: {e}"))?;
 
-        let render_result = tera.render(template_name, &context);
+        let connection = pool
+            .get()
+            .await
+            .map_err(|e| format!("Error connecting to AMQP server: {e}"))?;
 
-        match render_result {
-            Ok(message_str) => {
-                let publish_result = channel
-                    .basic_publish(
-                        &exchange,
-                        &routing_key,
-                        BasicPublishOptions::default(),
-                        message_str.as_bytes(),
-                        BasicProperties::default(),
-                    )
-                    .await;
+        let amqp_channel = connection
+            .create_channel()
+            .await
+            .map_err(|e| format!("Error creating AMQP channel: {e}"))?;
 
-                match publish_result {
-                    Ok(_) => debug!("published"),
-                    Err(e) => error!("Error publishing notification: {}", e),
+        Ok(amqp_channel)
+    }
+
+    async fn publish(&mut self, message: &str) -> Result<(), String> {
+        self.channel.as_ref().unwrap()
+            .basic_publish(
+                &self.exchange.clone(),
+                &self.routing_key.clone(),
+                BasicPublishOptions::default(),
+                message.as_bytes(),
+                BasicProperties::default(),
+            )
+            .await
+            .map_err(|e| format!("Error publishing notification: {}", e))?;
+
+        Ok(())
+    }
+
+    async fn reconnect(&mut self) -> Result<(), String> {
+        self.channel = None;
+
+        while self.channel.is_none() {
+            match self.connect().await {
+                Ok(channel) => {
+                    self.channel = Some(channel);
+                }
+                Err(e) => {
+                    error!("{e}");
                 }
             }
-            Err(e) => {
-                error!("Error rendering template: {}", e);
+        }
+
+        Ok(())
+    }
+
+    pub async fn notify(&mut self, file_event: FileEvent) -> Result<(), String> {
+        if self.channel.is_none() {
+            self.channel = Some(self.connect().await?);
+        }
+
+        let context = Context::from_value(json!({"file_path": &file_event.path}))
+            .map_err(|e| format!("Could not create context: {e}"))?;
+
+        let message = Tera::one_off(&self.message_template, &context, true)
+            .map_err(|e| format!("Error rendering template: {}", e))?;
+
+        let mut published = false;
+
+        while !published {
+            match self.publish(&message).await {
+                Ok(_) => {
+                    published = true;
+                },
+                Err(e) => {
+                    error!("{e}");
+                    self.reconnect().await?;
+                }
             }
         }
+
+        Ok(())
     }
 }
 

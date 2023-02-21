@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use deadpool_lapin::{Config, Runtime};
-
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -20,11 +18,11 @@ use signal_hook_tokio::Signals;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
-use log::{error, debug, info};
+use log::{debug, error, info};
 
 use cortex_core::{wait_for, SftpDownload, StopCmd};
 
-use crate::base_types::{Connection, RabbitMQNotify, Source, Target};
+use crate::base_types::{Connection, RabbitMQNotifier, Source, Target};
 
 #[cfg(target_os = "linux")]
 use crate::directory_source::start_directory_sources;
@@ -93,41 +91,7 @@ pub async fn target_directory_handler<T>(
                     let fut = async move {
                         debug!("Connecting notifier to directory target stream");
 
-                        let mut cfg = Config::default();
-                        cfg.url = Some(notify_conf.address.clone());
-                        let pool = match cfg.create_pool(Some(Runtime::Tokio1)) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                error!("Error creating pool for AMQP server: {e}");
-                                return;
-                            }
-                        };
-
-                        let connect_result = pool.get().await;
-
-                        let connection = match connect_result {
-                            Ok(c) => c,
-                            Err(e) => {
-                                error!("Error connecting to AMQP server: {e}");
-                                return;
-                            }
-                        };
-
-                        let amqp_channel_result = connection.create_channel().await;
-
-                        let amqp_channel = match amqp_channel_result {
-                            Ok(c) => c,
-                            Err(e) => {
-                                error!("Error creating AMQP channel: {e}");
-                                return;
-                            }
-                        };
-
-                        let notify = RabbitMQNotify {
-                            message_template: notify_conf.message_template.clone(),
-                            exchange: notify_conf.exchange.clone(),
-                            routing_key: notify_conf.routing_key.clone(),
-                        };
+                        let mut notify = RabbitMQNotifier::from(&notify_conf);
 
                         let routing_key = notify_conf.routing_key.clone();
 
@@ -138,7 +102,10 @@ pub async fn target_directory_handler<T>(
                                 Ok(result_event) => {
                                     debug!("Notifying with AMQP routing key {}", &routing_key);
 
-                                    notify.notify(&amqp_channel, result_event).await;
+                                    match notify.notify(result_event).await {
+                                        Err(e) => error!("{e}"),
+                                        Ok(_) => debug!("published"),
+                                    };
                                 }
                                 Err(e) => {
                                     error!("Error handling event for directory target: {}", &e);
@@ -257,11 +224,9 @@ where
         let (ack_sender, ack_receiver) = async_channel::bounded(100);
 
         // For now only log the ack messages
-        tokio::spawn(ack_receiver
-            .for_each(|ack_message| async move {
-                debug!("Ack received from SftpDownloader: {:?}", &ack_message);
-            })
-        );
+        tokio::spawn(ack_receiver.for_each(|ack_message| async move {
+            debug!("Ack received from SftpDownloader: {:?}", &ack_message);
+        }));
 
         for n in 0..channels.sftp_source.thread_count {
             debug!(

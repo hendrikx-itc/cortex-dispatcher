@@ -15,6 +15,14 @@
       "routing_key": "source.local-red",
       "source": "amq.direct",
       "vhost": "/"
+    },
+    {
+      "arguments": {},
+      "destination": "processing-node-blue",
+      "destination_type": "queue",
+      "routing_key": "processing-node-blue",
+      "source": "amq.direct",
+      "vhost": "/"
     }
   ],
   "exchanges": [],
@@ -44,6 +52,14 @@
       "auto_delete": false,
       "durable": true,
       "name": "source.local-red",
+      "type": "classic",
+      "vhost": "/"
+    },
+    {
+      "arguments": {},
+      "auto_delete": false,
+      "durable": true,
+      "name": "processing-node-blue",
       "type": "classic",
       "vhost": "/"
     }
