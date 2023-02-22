@@ -1,10 +1,10 @@
 [package]
 name = "cortex-sftp-scanner"
-version = "1.1.0"
-authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "A service to scan for files on SFTP servers and enqueue jobs for the Cortex dispatcher."
-license = "GPL-3.0-or-later"
 documentation = "https://cortex-dispatcher.readthedocs.io/en/latest/"
 homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"

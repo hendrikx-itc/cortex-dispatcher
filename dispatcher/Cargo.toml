@@ -1,13 +1,13 @@
 [package]
 name = "cortex-dispatcher"
-version = "1.2.0"
-authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 description = """
 Cortex is system for efficiently collecting and distributing files with a
 choice of multiple protocols
 """
-license = "GPL-3.0-or-later"
 documentation = "https://cortex-dispatcher.readthedocs.io/en/latest/"
 homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"

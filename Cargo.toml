@@ -4,3 +4,9 @@ members = [
     "core",
     "dispatcher"
 ]
+
+[workspace.package]
+version = "1.3.0"
+authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
+edition = "2021"
+license = "GPL-3.0-or-later"
