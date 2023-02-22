@@ -1,8 +1,9 @@
 [package]
 name = "cortex-core"
-version = "0.1.21"
-authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 serde = "1.0"
