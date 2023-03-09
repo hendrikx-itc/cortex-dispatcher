@@ -18,15 +18,6 @@ pipeline {
                 stash name: 'deb', includes: 'target/debian/*.deb'
             }
         }
-        stage('publish-dispatcher') {
-            steps {
-                unstash name: 'deb'
-                script {
-                    publishPackages 'target/debian', 'kpn/focal/stable', 'focal'
-                    publishPackages 'target/debian', 'kpn/jammy/stable', 'jammy'
-                }
-            }
-        }
         stage ('build-sftp-scanner') {
             agent {
                 dockerfile {
@@ -40,7 +31,7 @@ pipeline {
                 stash name: 'deb', includes: 'target/debian/*.deb'
             }
         }
-        stage('publish-sftp-scanner') {
+        stage('publish-debian-packages') {
             steps {
                 unstash name: 'deb'
                 script {

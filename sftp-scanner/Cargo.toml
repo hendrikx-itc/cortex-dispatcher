@@ -38,3 +38,6 @@ retry = "2.0"
 crossbeam-channel = "0.5"
 proctitle = "0.1"
 error-chain = "0.12"
+
+[package.metadata.deb]
+section = "misc"
