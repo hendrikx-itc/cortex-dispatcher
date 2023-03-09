@@ -3,7 +3,7 @@ FROM ubuntu:18.04
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH \
-    RUST_VERSION=1.57.0
+    RUST_VERSION=1.67.0
 
 VOLUME ["/root/.cargo"]
 
