@@ -13,6 +13,7 @@ homepage = "https://github.com/hendrikx-itc/cortex-dispatcher"
 repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
 [package.metadata.deb]
+section = "misc"
 assets = [
     ["target/release/cortex-dispatcher", "/usr/bin/", "755"],
 ]
@@ -63,6 +64,3 @@ error-chain = "0.12"
 futures-retry = "0.6"
 stream-reconnect = { version = "0.3", default-features = false, features = ["tokio"] }
 async-channel = "1.8"
-
-[package.metadata.deb]
-section = "misc"
