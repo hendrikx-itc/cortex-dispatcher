@@ -181,9 +181,9 @@ where
 
         if delete {
             remove_file(&file_path)?;
-        }
 
-        debug!("Removed '{}'", &source_path_str);
+            debug!("Removed '{}'", &source_path_str);
+        }
 
         Ok((file_id, local_path))
     }
