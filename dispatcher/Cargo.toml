@@ -55,7 +55,7 @@ r2d2 = "0.8"
 r2d2_postgres = "0.18"
 bb8 = "0.8"
 bb8-postgres = "0.8"
-tera = "1.17"
+tera = "1.19"
 signal-hook = { version = "0.3" }
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 retry = "2.0"
