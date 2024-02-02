@@ -34,7 +34,7 @@ ssh2 = "0.9"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
 deadpool-lapin = "0.10"
-tokio = { version = "1.25", features = ["full"] }
+tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
 thiserror = "1.0"
 serde_json = "1.0"
