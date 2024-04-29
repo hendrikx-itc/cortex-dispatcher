@@ -29,7 +29,7 @@ serde_derive = "1.0"
 config = "0.13"
 regex = "1.6"
 serde_regex = "1.1"
-clap = { version = "4.1", features = ["cargo", "derive"] }
+clap = { version = "4.5.4", features = ["cargo", "derive"] }
 ssh2 = "0.9"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["compat"] }
