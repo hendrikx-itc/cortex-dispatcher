@@ -64,3 +64,4 @@ error-chain = "0.12"
 futures-retry = "0.6"
 stream-reconnect = { version = "0.3", default-features = false, features = ["tokio"] }
 async-channel = "1.8"
+flate2 = "1.0"

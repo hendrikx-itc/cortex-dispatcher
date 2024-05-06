@@ -3,10 +3,10 @@ use std::fmt;
 use std::path::PathBuf;
 
 use chrono::prelude::*;
+use log::error;
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use r2d2_postgres::PostgresConnectionManager;
 use tokio_postgres::Socket;
-use log::error;
 
 use crate::base_types::FileInfo;
 

@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{thread, time};
 
-use log::{debug, info, error};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
+use log::{debug, error, info};
 
 use retry::{delay::Fixed, retry, OperationResult};
 
@@ -228,30 +228,26 @@ where
             }
         }
 
-        let mut remote_file = sftp
-            .open(&remote_path)
-            .map_err(|e| {
-                match e.code() {
-                    ssh2::ErrorCode::Session(_) => {
-                        // Probably a fault in the SFTP connection
-                        ErrorKind::DisconnectedError.into()
-                    }
-                    ssh2::ErrorCode::SFTP(2) => {
-                        let delete_result = self.persistence.delete_sftp_download_file(msg.id);
-
-                        match delete_result {
-                            Ok(_) => ErrorKind::NoSuchFileError.into(),
-                            Err(e) => {
-                                Error::with_chain(
-                                    e,
-                                    "Error removing record of non-existent remote file",
-                                )
-                            }
-                        }
-                    }
-                    _ => Error::with_chain(e, "Error opening remote file"),
+        let mut remote_file = sftp.open(&remote_path).map_err(|e| {
+            match e.code() {
+                ssh2::ErrorCode::Session(_) => {
+                    // Probably a fault in the SFTP connection
+                    ErrorKind::DisconnectedError.into()
                 }
-            })?;
+                ssh2::ErrorCode::SFTP(2) => {
+                    let delete_result = self.persistence.delete_sftp_download_file(msg.id);
+
+                    match delete_result {
+                        Ok(_) => ErrorKind::NoSuchFileError.into(),
+                        Err(e) => Error::with_chain(
+                            e,
+                            "Error removing record of non-existent remote file",
+                        ),
+                    }
+                }
+                _ => Error::with_chain(e, "Error opening remote file"),
+            }
+        })?;
 
         let stat = remote_file.stat().map_err(|e| match e.code() {
             ssh2::ErrorCode::Session(_) => {
@@ -354,7 +350,8 @@ where
         let file_size = i64::try_from(bytes_copied)
             .map_err(|e| Error::with_chain(e, "Error converting bytes copied to i64"))?;
 
-        let file_id = self.persistence
+        let file_id = self
+            .persistence
             .insert_file(
                 &self.sftp_source.name,
                 &local_path.to_string_lossy(),

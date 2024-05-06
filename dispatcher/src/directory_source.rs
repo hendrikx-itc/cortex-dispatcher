@@ -10,7 +10,7 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
 
-use log::{error, debug, info};
+use log::{debug, error, info};
 
 #[cfg(target_os = "linux")]
 use inotify;
@@ -453,12 +453,26 @@ fn sha256_hash<R: std::io::Read>(mut reader: R) -> Result<String, std::io::Error
 ///
 /// The file is read until the end and the SHA265 hash is returned in the form
 /// of its hexadecimal representation string.
-fn sha256_hash_file(path: &Path) -> Result<String, std::io::Error> {
-    let file = std::fs::File::open(&path)?;
+fn sha256_hash_file(path: &Path, unpack: bool) -> Result<String, std::io::Error> {
+    let in_file = std::fs::File::open(&path)?;
 
-    sha256_hash(file)
+    if unpack {
+        match path.extension() {
+            Some(ext) => match ext.to_str() {
+                Some("gz") => {
+                    let file = flate2::read::GzDecoder::new(in_file);
+                    sha256_hash(file)
+                }
+                _ => sha256_hash(in_file),
+            },
+            None => sha256_hash(in_file),
+        }
+    } else {
+        sha256_hash(in_file)
+    }
 }
 
+/// Process event for a DirectorySource
 fn process_file_event<T>(
     file_event: &LocalFileEvent,
     directory_source: &settings::DirectorySource,
@@ -471,7 +485,7 @@ where
     T: Clone,
     T: 'static,
 {
-    let file_hash = sha256_hash_file(&file_event.path)
+    let file_hash = sha256_hash_file(&file_event.path, directory_source.unpack_before_hash)
         .map_err(|e| format!("Error calculating file hash: {}", e))?;
 
     let file_info_result = local_storage

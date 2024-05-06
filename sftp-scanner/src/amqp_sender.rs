@@ -15,10 +15,9 @@ pub async fn start_sender(
     receiver: Receiver<SftpDownload>,
     address: String,
 ) {
-    let amqp_conn =
-        lapin::Connection::connect(&address, lapin::ConnectionProperties::default())
-            .await
-            .expect("connection error");
+    let amqp_conn = lapin::Connection::connect(&address, lapin::ConnectionProperties::default())
+        .await
+        .expect("connection error");
 
     let channel = amqp_conn.create_channel().await.expect("create_channel");
     info!("Created channel with id {}", channel.id());

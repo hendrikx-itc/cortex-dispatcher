@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.3.0"
-authors = ["Alfred Blokland <alfred.blokland@hendrikx-itc.nl>"]
+version = "1.4.0"
+authors = ["1Optic B.V. <info@1optic.io>"]
 edition = "2021"
 license = "GPL-3.0-or-later"

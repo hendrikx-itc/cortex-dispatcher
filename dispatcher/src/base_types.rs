@@ -58,7 +58,9 @@ impl RabbitMQNotifier {
     }
 
     async fn publish(&mut self, message: &str) -> Result<(), String> {
-        self.channel.as_ref().unwrap()
+        self.channel
+            .as_ref()
+            .unwrap()
             .basic_publish(
                 &self.exchange.clone(),
                 &self.routing_key.clone(),
@@ -106,7 +108,7 @@ impl RabbitMQNotifier {
             match self.publish(&message).await {
                 Ok(_) => {
                     published = true;
-                },
+                }
                 Err(e) => {
                     error!("{e}");
                     self.reconnect().await?;

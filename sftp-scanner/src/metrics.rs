@@ -1,5 +1,5 @@
-use prometheus::{IntCounterVec, register_int_counter_vec};
 use lazy_static::lazy_static;
+use prometheus::{register_int_counter_vec, IntCounterVec};
 
 lazy_static! {
     pub static ref DIR_SCAN_COUNTER: IntCounterVec = register_int_counter_vec!(

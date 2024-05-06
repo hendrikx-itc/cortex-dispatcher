@@ -8,6 +8,7 @@ directory_sources:
   - name: mixed-directory
     directory: $CORTEX_DATA_ROOT/incoming
     recursive: True
+    unpack_before_hash: True
     events:
       - CloseWrite
       - MovedTo

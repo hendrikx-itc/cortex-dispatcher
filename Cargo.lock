@@ -824,6 +824,7 @@ dependencies = [
  "deadpool-lapin",
  "env_logger",
  "error-chain",
+ "flate2",
  "futures 0.3.26",
  "futures-retry",
  "futures-util",

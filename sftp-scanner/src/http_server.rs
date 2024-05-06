@@ -1,12 +1,12 @@
 use log::error;
 
-use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder, http::header::ContentType};
+use actix_web::{
+    http::header::ContentType, middleware, web, App, HttpResponse, HttpServer, Responder,
+};
 
 use prometheus::{Encoder, TextEncoder};
 
-pub async fn start_http_server(
-    addr: std::net::SocketAddr,
-) -> std::io::Result<()> {
+pub async fn start_http_server(addr: std::net::SocketAddr) -> std::io::Result<()> {
     let server = HttpServer::new(|| {
         App::new()
             .wrap(middleware::Logger::default())
@@ -32,5 +32,7 @@ async fn metrics() -> impl Responder {
         Err(e) => error!("Error encoding metrics: {}", e),
     }
 
-    HttpResponse::Ok().content_type(ContentType::plaintext()).body(String::from_utf8(buffer).unwrap())
+    HttpResponse::Ok()
+        .content_type(ContentType::plaintext())
+        .body(String::from_utf8(buffer).unwrap())
 }

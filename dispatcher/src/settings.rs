@@ -171,6 +171,8 @@ pub struct DirectorySource {
     /// performed.
     #[serde(default = "default_directory_source_deduplication")]
     pub deduplication: Deduplication,
+    #[serde(default = "default_false")]
+    pub unpack_before_hash: bool,
     /// Set to true to remove the source file after ingestion
     #[serde(default = "default_true")]
     pub delete: bool,
@@ -309,6 +311,7 @@ impl Default for Settings {
                     modified: false,
                     hash: true,
                 }),
+                unpack_before_hash: false,
                 delete: true,
             }],
             directory_targets: vec![DirectoryTarget {
