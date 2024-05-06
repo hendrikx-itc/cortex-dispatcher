@@ -2,8 +2,8 @@ use std::io::Write;
 
 use config;
 
-use log::{info, error};
 use env_logger;
+use log::{error, info};
 
 mod base_types;
 mod directory_source;
@@ -38,8 +38,7 @@ async fn main() {
 
     let mut env_logger_builder = env_logger::builder();
 
-    env_logger_builder
-        .format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
+    env_logger_builder.format(|buf, record| writeln!(buf, "{}  {}", record.level(), record.args()));
 
     env_logger_builder.init();
 

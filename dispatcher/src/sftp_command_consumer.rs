@@ -1,14 +1,14 @@
 use std::{fmt, fmt::Display};
 
 use deadpool_lapin::lapin::message::Delivery;
-use log::{debug, info, error};
+use log::{debug, error, info};
 
 use futures::StreamExt;
 
+use deadpool_lapin::lapin;
 use deadpool_lapin::lapin::options::BasicConsumeOptions;
 use deadpool_lapin::lapin::types::FieldTable;
 use deadpool_lapin::lapin::ConnectionProperties;
-use deadpool_lapin::lapin;
 
 use crossbeam_channel::{Sender, TrySendError};
 use stream_reconnect::ReconnectStream;
@@ -42,26 +42,32 @@ struct AMQPQueStreamConfig {
     pub queue_name: String,
 }
 
-impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error> for lapin::Consumer {
-    fn establish(config: AMQPQueStreamConfig) -> std::pin::Pin<Box<dyn futures::Future<Output = Result<Self, lapin::Error>> + Send>> {
+impl
+    stream_reconnect::UnderlyingStream<
+        AMQPQueStreamConfig,
+        Result<Delivery, lapin::Error>,
+        lapin::Error,
+    > for lapin::Consumer
+{
+    fn establish(
+        config: AMQPQueStreamConfig,
+    ) -> std::pin::Pin<Box<dyn futures::Future<Output = Result<Self, lapin::Error>> + Send>> {
         Box::pin(async move {
-            let amqp_client = lapin::Connection::connect(
-                &config.address,
-                ConnectionProperties::default(),
-            )
-            .await?;
-        
+            let amqp_client =
+                lapin::Connection::connect(&config.address, ConnectionProperties::default())
+                    .await?;
+
             let amqp_channel = amqp_client.create_channel().await?;
-        
+
             let id = amqp_channel.id();
             info!("Created SFTP command AMQP channel with id {id}");
-       
+
             let consumer_tag = "cortex-dispatcher";
 
             let mut options = BasicConsumeOptions::default();
 
             options.no_ack = true;
-        
+
             // Setup command consuming stream
             let consumer = amqp_channel
                 .basic_consume(
@@ -95,11 +101,19 @@ impl stream_reconnect::UnderlyingStream<AMQPQueStreamConfig, Result<Delivery, la
 
     // Return "Exhausted" if all retry attempts are failed.
     fn exhaust_err() -> lapin::Error {
-        lapin::Error::IOError(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, "Exhausted")))
+        lapin::Error::IOError(std::sync::Arc::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Exhausted",
+        )))
     }
 }
 
-type ReconnectMessageStream = ReconnectStream<lapin::Consumer, AMQPQueStreamConfig, Result<Delivery, lapin::Error>, lapin::Error>;
+type ReconnectMessageStream = ReconnectStream<
+    lapin::Consumer,
+    AMQPQueStreamConfig,
+    Result<Delivery, lapin::Error>,
+    lapin::Error,
+>;
 
 #[derive(Clone)]
 struct MessageProcessor {
@@ -108,11 +122,11 @@ struct MessageProcessor {
 }
 
 impl MessageProcessor {
-    pub async fn process_message(&self, message: Result<Delivery, lapin::Error>) -> Result<(), String> {
-        let delivery = message
-            .map_err(|e| {
-                format!("Could not read AMQP message: {e}")
-            })?;
+    pub async fn process_message(
+        &self,
+        message: Result<Delivery, lapin::Error>,
+    ) -> Result<(), String> {
+        let delivery = message.map_err(|e| format!("Could not read AMQP message: {e}"))?;
 
         let action_command_sender = self.command_sender.clone();
 
@@ -120,19 +134,14 @@ impl MessageProcessor {
             .with_label_values(&[&self.sftp_source_name])
             .inc();
 
-        let sftp_download: SftpDownload =
-            serde_json::from_slice(delivery.data.as_slice())
-            .map_err(|e| {
-                format!("Error deserializing message: {e}")
-            })?;
+        let sftp_download: SftpDownload = serde_json::from_slice(delivery.data.as_slice())
+            .map_err(|e| format!("Error deserializing message: {e}"))?;
 
         action_command_sender
             .try_send((delivery.delivery_tag, sftp_download))
-            .map_err(|e| {
-                match e {
-                    TrySendError::Disconnected(_) => format!("Channel disconnected"),
-                    TrySendError::Full(_) => format!("Could not send command on channel: channel full"),
-                }
+            .map_err(|e| match e {
+                TrySendError::Disconnected(_) => format!("Channel disconnected"),
+                TrySendError::Full(_) => format!("Could not send command on channel: channel full"),
             })?;
 
         Ok(())
@@ -164,7 +173,7 @@ pub async fn start(
         match m.process_message(message).await {
             Ok(_) => {
                 debug!("Received message from AMQP queue '{}'", &queue_name);
-            },
+            }
             Err(e) => {
                 error!("Could not process message: {e}")
             }

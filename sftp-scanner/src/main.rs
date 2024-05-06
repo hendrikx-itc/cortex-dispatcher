@@ -78,7 +78,8 @@ fn main() {
         ::std::process::exit(0);
     }
 
-    let config_file = args.config
+    let config_file = args
+        .config
         .unwrap_or("/etc/cortex/sftp-scanner.yaml".to_string());
 
     let settings = load_settings(&config_file);
@@ -120,15 +121,18 @@ fn main() {
         })
         .collect();
 
-    runtime
-        .block_on(async {
-            // Start the built-in web server that currently only serves metrics.
-            tokio::spawn(http_server::start_http_server(settings.http_server.address));
+    runtime.block_on(async {
+        // Start the built-in web server that currently only serves metrics.
+        tokio::spawn(http_server::start_http_server(settings.http_server.address));
 
-            tokio::spawn(amqp_sender::start_sender(stop, cmd_receiver, settings.command_queue.address));
+        tokio::spawn(amqp_sender::start_sender(
+            stop,
+            cmd_receiver,
+            settings.command_queue.address,
+        ));
 
-            setup_signal_handler(stop_commands).await;
-        });
+        setup_signal_handler(stop_commands).await;
+    });
 
     for (source_name, scanner_thread) in scanner_threads {
         info!("Waiting for scanner thread '{}' to stop", &source_name);

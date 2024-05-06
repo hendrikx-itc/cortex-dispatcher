@@ -10,7 +10,7 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::collections::HashMap;
 
-use log::{error, debug, info};
+use log::{debug, error, info};
 
 #[cfg(target_os = "linux")]
 use inotify;
@@ -453,21 +453,23 @@ fn sha256_hash<R: std::io::Read>(mut reader: R) -> Result<String, std::io::Error
 ///
 /// The file is read until the end and the SHA265 hash is returned in the form
 /// of its hexadecimal representation string.
-fn sha256_hash_file(path: &Path) -> Result<String, std::io::Error> {
-    let file = std::fs::File::open(&path)?;
+fn sha256_hash_file(path: &Path, unpack: bool) -> Result<String, std::io::Error> {
+    let in_file = std::fs::File::open(&path)?;
 
-    sha256_hash(file)
-}
-
-/// Calculate a SHA265 hash over the contents of a gzipped file
-///
-/// The file is decompressed, read until the end, and the SHA265 hash is returned in the form of
-/// its hexadecimal representation string.
-fn sha256_hash_gz_file(path: &Path) -> Result<String, std::io::Error> {
-    let gz_file = std::fs::File::open(&path)?;
-    let file = flate2::read::GzDecoder::new(gz_file);
-
-    sha256_hash(file)
+    if unpack {
+        match path.extension() {
+            Some(ext) => match ext.to_str() {
+                Some("gz") => {
+                    let file = flate2::read::GzDecoder::new(in_file);
+                    sha256_hash(file)
+                }
+                _ => sha256_hash(in_file),
+            },
+            None => sha256_hash(in_file),
+        }
+    } else {
+        sha256_hash(in_file)
+    }
 }
 
 /// Process event for a DirectorySource
@@ -483,18 +485,8 @@ where
     T: Clone,
     T: 'static,
 {
-    let file_hash = if directory_source.unpack_before_hash {
-        match file_event.path.extension() {
-            Some(ext) => match ext.to_str() {
-                Some("gz") => sha256_hash_gz_file(&file_event.path).map_err(|e| format!("Error calculating file hash: {}", e))?,
-                _ => sha256_hash_file(&file_event.path).map_err(|e| format!("Error calculating file hash: {}", e))?,
-            },
-            None => sha256_hash_file(&file_event.path).map_err(|e| format!("Error calculating file hash: {}", e))?
-        }
-    } else {
-        sha256_hash_file(&file_event.path)
-            .map_err(|e| format!("Error calculating file hash: {}", e))?
-    };
+    let file_hash = sha256_hash_file(&file_event.path, directory_source.unpack_before_hash)
+        .map_err(|e| format!("Error calculating file hash: {}", e))?;
 
     let file_info_result = local_storage
         .get_file_info(

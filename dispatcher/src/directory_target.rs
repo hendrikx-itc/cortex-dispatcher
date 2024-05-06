@@ -2,9 +2,9 @@ use std::fs::{copy, hard_link, set_permissions, Permissions};
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 
+use log::{debug, error, warn};
 use postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::Socket;
-use log::{error, debug, warn};
 
 use crate::event::FileEvent;
 use crate::persistence::PostgresAsyncPersistence;
