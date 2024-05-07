@@ -11,7 +11,7 @@ repository = "https://github.com/hendrikx-itc/cortex-dispatcher"
 
 [dependencies]
 clap = { version = "4.1", features = ["cargo", "derive"] }
-config = "0.13"
+config = "0.14"
 env_logger = "0.10"
 anyhow = "1.0"
 futures = "0.3"
