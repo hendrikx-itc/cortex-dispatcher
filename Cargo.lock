@@ -795,7 +795,7 @@ checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 
 [[package]]
 name = "cortex-core"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "chrono",
  "error-chain",
@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-dispatcher"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "actix-files",
  "actix-http",
@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-sftp-scanner"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "actix-web",
  "anyhow",

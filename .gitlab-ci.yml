@@ -5,7 +5,21 @@ variables:
 image: "harbor.hendrikx-itc.nl/1optic/rust-ci:1.75.0"
 
 stages:
+  - test
   - build
+
+# Use cargo to test the project
+test-cortex-dispatcher:cargo:
+  stage: test
+  before_script:
+    - rustup default nightly
+  script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - cargo test --package cortex-dispatcher --verbose -- --format=json  -Z unstable-options --report-time | cargo2junit > results.xml
+  artifacts:
+    when: always
+    reports:
+      junit: results.xml
 
 publish-cortex-dispatcher-deb:
   stage: build
@@ -15,14 +29,14 @@ publish-cortex-dispatcher-deb:
   before_script:
     - echo "$CACERT" > /ca.crt
   script:
-    - cargo deb -p cortex-dispatcher --target=x86_64-unknown-linux-musl
+    - cargo deb -p cortex-dispatcher
     - |
       curl \
       --fail \
       --cacert "/ca.crt" \
       -u "${REPO_USERNAME}:${REPO_PASSWORD}" \
       -H "Content-Type: multipart/form-data" \
-      --data-binary "@./target/x86_64-unknown-linux-musl/debian/cortex-dispatcher_${CI_COMMIT_TAG}-1_amd64.deb" \
+      --data-binary "@./target/debian/cortex-dispatcher_${CI_COMMIT_TAG}-1_amd64.deb" \
       "$REPO_URL"
   rules:
     - if: $CI_COMMIT_TAG
