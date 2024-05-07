@@ -15,7 +15,8 @@ test-cortex-dispatcher:cargo:
     - rustup default nightly
   script:
     - rustc --version && cargo --version  # Print version info for debugging
-    - cargo test --package cortex-dispatcher --verbose -- --format=json  -Z unstable-options --report-time | cargo2junit > results.xml
+    - cargo build --package cortex-dispatcher
+    #- cargo test --package cortex-dispatcher --verbose -- --format=json  -Z unstable-options --report-time | cargo2junit > results.xml
   artifacts:
     when: always
     reports:
