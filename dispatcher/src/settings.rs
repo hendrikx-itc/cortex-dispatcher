@@ -270,6 +270,7 @@ pub struct Settings {
     pub directory_sources: Vec<DirectorySource>,
     #[serde(default = "default_directory_targets")]
     pub directory_targets: Vec<DirectoryTarget>,
+    #[serde(default = "default_sftp_sources")]
     pub sftp_sources: Vec<SftpSource>,
     pub connections: Vec<Connection>,
     pub postgresql: Postgresql,
@@ -288,6 +289,10 @@ fn default_directory_sources() -> Vec<DirectorySource> {
 }
 
 fn default_directory_targets() -> Vec<DirectoryTarget> {
+    vec![]
+}
+
+fn default_sftp_sources() -> Vec<SftpSource> {
     vec![]
 }
 
